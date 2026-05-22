@@ -191,14 +191,24 @@ const App = {
       else if (delBtn) this.deleteExpense(delBtn.dataset.id);
     });
 
-    // Diary list edit/delete/pin + photo lightbox (相簿)
+    // Diary list edit/delete/pin + comment + photo lightbox
     document.getElementById('diary-list').addEventListener('click', e => {
       const editBtn = e.target.closest('[data-action="edit-diary"]');
       const delBtn = e.target.closest('[data-action="delete-diary"]');
       const pinBtn = e.target.closest('[data-action="pin-diary"]');
+      const delCommentBtn = e.target.closest('[data-action="delete-comment"]');
+      const sendBtn = e.target.closest('.comment-send');
       if (editBtn) { e.stopPropagation(); this.openDiaryModal(editBtn.dataset.id); return; }
       if (delBtn) { e.stopPropagation(); this.deleteDiary(delBtn.dataset.id); return; }
       if (pinBtn) { e.stopPropagation(); this.togglePin(pinBtn.dataset.id); return; }
+      if (delCommentBtn) { e.stopPropagation(); this.deleteComment(delCommentBtn.dataset.id); return; }
+      if (sendBtn) {
+        e.stopPropagation();
+        const wrap = sendBtn.closest('.comment-input-wrap');
+        const input = wrap.querySelector('.comment-input');
+        this.submitComment(wrap.dataset.diaryId, input.value, input);
+        return;
+      }
       const img = e.target.closest('.diary-photos img');
       if (img && img.dataset.photoId) {
         // 開相簿 — 帶整篇日記的所有照片進去，可左右切換
@@ -207,6 +217,15 @@ const App = {
         const ids = allImgs.map(im => im.dataset.photoId);
         const startIdx = ids.indexOf(img.dataset.photoId);
         this.openLightbox(ids, Math.max(0, startIdx));
+      }
+    });
+
+    // 留言 input Enter 鍵送出
+    document.getElementById('diary-list').addEventListener('keypress', e => {
+      if (e.key === 'Enter' && e.target.classList.contains('comment-input')) {
+        e.preventDefault();
+        const wrap = e.target.closest('.comment-input-wrap');
+        this.submitComment(wrap.dataset.diaryId, e.target.value, e.target);
       }
     });
 
@@ -578,7 +597,7 @@ const App = {
     if (!Trips.current) return;
     document.getElementById('trip-switch').textContent = `📍 ${Trips.current.name}`;
     document.getElementById('trip-dates').textContent = `${Trips.current.start_date || ''} ~ ${Trips.current.end_date || ''}`;
-    await Promise.all([Expenses.loadAll(), Diaries.loadAll(), Nicknames.loadAll()]);
+    await Promise.all([Expenses.loadAll(), Diaries.loadAll(), Nicknames.loadAll(), Comments.loadAll()]);
     this.renderSettlement();
     this.renderExpenses();
     this.renderDiaryFilters();
@@ -795,9 +814,57 @@ const App = {
           <div class="diary-content">${this.escapeHtml(d.content || '')}</div>
           ${photosHtml}
           ${actions}
+          ${this.renderCommentsSection(d.id)}
         </div>
       `;
     }).join('');
+  },
+
+  // 渲染一篇日記的留言區塊（留言列表 + 輸入框）
+  renderCommentsSection(diaryId) {
+    if (typeof Comments === 'undefined') return '';
+    const comments = Comments.getForDiary(diaryId);
+    return `
+      <div class="comments-section">
+        ${comments.length > 0 ? `
+          <div class="comments-list">
+            ${comments.map(c => {
+              const isMine = Auth.user && c.author === Auth.user.email;
+              return `
+                <div class="comment-item" data-comment-id="${this.escapeAttr(c.id)}">
+                  <div class="comment-header">
+                    <strong>${this.escapeHtml(this.nameOf(c.author))}</strong>
+                    <small class="comment-time">${this.formatRelativeTime(c.created_at)}</small>
+                    ${isMine ? `<button class="comment-delete" data-action="delete-comment" data-id="${this.escapeAttr(c.id)}" type="button" aria-label="刪除">×</button>` : ''}
+                  </div>
+                  <div class="comment-content">${this.escapeHtml(c.content)}</div>
+                </div>
+              `;
+            }).join('')}
+          </div>
+        ` : ''}
+        <div class="comment-input-wrap" data-diary-id="${this.escapeAttr(diaryId)}">
+          <input type="text" class="comment-input" placeholder="💬 留言..." maxlength="500">
+          <button type="button" class="comment-send">送出</button>
+        </div>
+      </div>
+    `;
+  },
+
+  // 相對時間：剛剛 / N 分鐘前 / N 小時前 / N 天前 / YYYY-MM-DD
+  formatRelativeTime(iso) {
+    if (!iso) return '';
+    const date = new Date(iso);
+    if (isNaN(date)) return '';
+    const diff = Date.now() - date.getTime();
+    const min = Math.floor(diff / 60000);
+    if (min < 1) return '剛剛';
+    if (min < 60) return `${min} 分鐘前`;
+    const hour = Math.floor(min / 60);
+    if (hour < 24) return `${hour} 小時前`;
+    const day = Math.floor(hour / 24);
+    if (day < 30) return `${day} 天前`;
+    return date.toISOString().slice(0, 10);
   },
 
   renderNicknamesUI() {
@@ -1332,6 +1399,46 @@ const App = {
     } catch (err) {
       console.warn('Image fallback failed:', err);
     }
+  },
+
+  // ===== 留言 =====
+  async submitComment(diaryId, content, inputEl) {
+    content = (content || '').trim();
+    if (!content) return;
+    try {
+      await Comments.create(diaryId, content);
+      if (inputEl) inputEl.value = '';
+      this.refreshDiaryComments(diaryId);
+    } catch (err) {
+      console.error(err);
+      this.toast('留言失敗：' + err.message);
+    }
+  },
+
+  async deleteComment(id) {
+    if (!confirm('確定刪除這則留言？')) return;
+    const c = Comments.list.find(x => x.id === id);
+    if (!c) return;
+    const diaryId = c.diary_id;
+    try {
+      await Comments.delete(id);
+      this.toast('✅ 已刪除留言');
+      this.refreshDiaryComments(diaryId);
+    } catch (err) {
+      console.error(err);
+      this.toast('刪除失敗：' + err.message);
+    }
+  },
+
+  // 只更新該日記的 comments 區塊（避免 full re-render 中斷其他人打字）
+  refreshDiaryComments(diaryId) {
+    const diaryEl = document.querySelector(`.diary-item[data-diary-id="${diaryId}"]`);
+    if (!diaryEl) return;
+    const section = diaryEl.querySelector('.comments-section');
+    if (!section) return;
+    const wrapper = document.createElement('div');
+    wrapper.innerHTML = this.renderCommentsSection(diaryId);
+    section.replaceWith(wrapper.firstElementChild);
   },
 
   toast(msg, ms = 3000) {
