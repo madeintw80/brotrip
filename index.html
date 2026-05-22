@@ -11,7 +11,7 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <meta name="mobile-web-app-capable" content="yes">
-  <link rel="stylesheet" href="styles.css?v=10">
+  <link rel="stylesheet" href="styles.css?v=11">
 </head>
 <body>
   <div id="pull-indicator" class="pull-indicator"></div>
@@ -100,8 +100,13 @@
             <small>看照片 / 分享給朋友</small>
           </button>
         </div>
+        <div class="nicknames-section">
+          <h4>💬 暱稱設定</h4>
+          <p class="hint">每人可以給任何人取暱稱，所有人都看得到。誰最後改算數（Meta Messenger 風格）</p>
+          <div id="nicknames-list"></div>
+        </div>
         <div class="version-info-wrap">
-          <span id="version-info">BroTrip v1.2.0</span>
+          <span id="version-info">BroTrip v1.3.0</span>
         </div>
       </section>
     </main>
@@ -240,9 +245,8 @@
         </label>
         <label>開始日期<input type="date" name="start_date" required></label>
         <label>結束日期<input type="date" name="end_date" required></label>
-        <label>成員 emails（逗號或換行分隔）
-          <textarea name="members" rows="3" required placeholder="a@gmail.com, b@gmail.com, ..."></textarea>
-        </label>
+        <label>成員（誰參加這趟）</label>
+        <div id="new-trip-members" class="member-checkboxes"></div>
         <div class="modal-actions">
           <button type="button" class="btn-cancel">取消</button>
           <button type="submit" class="btn-primary">建立</button>
@@ -254,23 +258,27 @@
   <!-- Toast -->
   <div id="toast" class="toast hidden"></div>
 
-  <!-- Photo Lightbox（點日記照片放大）-->
+  <!-- Photo Lightbox（相簿：點日記照片放大、左右切換）-->
   <dialog id="photo-lightbox">
     <button id="lightbox-close" type="button" aria-label="關閉">✕</button>
+    <button id="lightbox-prev" type="button" aria-label="上一張">‹</button>
     <img id="lightbox-img" alt="">
+    <button id="lightbox-next" type="button" aria-label="下一張">›</button>
+    <div id="lightbox-counter"></div>
   </dialog>
 
   <!-- Google Identity Services -->
   <script src="https://accounts.google.com/gsi/client" async defer></script>
 
   <!-- App 程式碼（順序很重要，後面的依賴前面的）-->
-  <script src="js/config.js?v=10"></script>
-  <script src="js/auth.js?v=10"></script>
-  <script src="js/api.js?v=10"></script>
-  <script src="js/trips.js?v=10"></script>
-  <script src="js/expenses.js?v=10"></script>
-  <script src="js/diaries.js?v=10"></script>
-  <script src="js/app.js?v=10"></script>
+  <script src="js/config.js?v=11"></script>
+  <script src="js/auth.js?v=11"></script>
+  <script src="js/api.js?v=11"></script>
+  <script src="js/trips.js?v=11"></script>
+  <script src="js/expenses.js?v=11"></script>
+  <script src="js/diaries.js?v=11"></script>
+  <script src="js/nicknames.js?v=11"></script>
+  <script src="js/app.js?v=11"></script>
 
   <!-- Service Worker -->
   <script>

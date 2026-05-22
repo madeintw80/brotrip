@@ -1,4 +1,6 @@
 // 日記模組：上傳照片 + 文字心情，依 trip 篩選顯示
+// v1.3.0：每篇日記獨立 Drive 資料夾 (BroTrip/photos/<trip>/<date>-<id>/)，
+//         Sheet 加 url 欄位指向該資料夾（按「📁 相簿」直接跳）
 
 const Diaries = {
   list: [],
@@ -11,7 +13,6 @@ const Diaries = {
     } else {
       this.list = [];
     }
-    // 新到舊
     this.list.sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''));
     return this.list;
   },
@@ -20,23 +21,24 @@ const Diaries = {
     if (!Trips.current) throw new Error('沒有當前 trip');
     const id = API.newId();
 
-    // 上傳照片：trip 一個資料夾 → date 一個資料夾
+    // 每篇日記自己一個資料夾
     const photoIds = [];
+    let driveFolderUrl = '';
     if (data.photos && data.photos.length > 0) {
       const tripFolderId = await API.ensureFolder(Trips.current.trip_id, CONFIG.PHOTOS_FOLDER_ID);
-      const dateFolderId = await API.ensureFolder(data.date, tripFolderId);
+      const diaryFolderName = `${data.date}-${id}`;
+      const diaryFolderId = await API.ensureFolder(diaryFolderName, tripFolderId);
+      driveFolderUrl = `https://drive.google.com/drive/folders/${diaryFolderId}`;
 
       for (let i = 0; i < data.photos.length; i++) {
         const file = data.photos[i];
         if (onProgress) onProgress(i + 1, data.photos.length);
-        const uploaded = await API.uploadFile(file, dateFolderId);
+        const uploaded = await API.uploadFile(file, diaryFolderId);
         photoIds.push(uploaded.id);
-        // 公開讀（讓朋友能看縮圖）
         try { await API.makePublic(uploaded.id); } catch {}
       }
     }
 
-    // 編碼 location：有 place（含座標）就存 JSON，否則純文字
     let locationStr = '';
     if (data.place) {
       locationStr = JSON.stringify({
@@ -61,7 +63,8 @@ const Diaries = {
       JSON.stringify(photoIds),
       locationStr,
       createdAt,
-      '',  // pinned (預設空字串 = 未置頂)
+      '',  // pinned
+      driveFolderUrl,  // url (K 欄)
     ];
     await API.appendRow('Diaries', row);
     const newDiary = {
@@ -75,12 +78,12 @@ const Diaries = {
       location: locationStr,
       created_at: createdAt,
       pinned: '',
+      url: driveFolderUrl,
     };
     this.list.unshift(newDiary);
     return newDiary;
   },
 
-  // 編輯（只能改自己的）
   async update(id, data) {
     const existing = this.list.find(d => d.id === id);
     if (!existing) throw new Error('找不到該日記');
@@ -106,10 +109,11 @@ const Diaries = {
       existing.author,
       data.content,
       data.mood || '',
-      existing.photo_ids,  // 編輯不改照片
+      existing.photo_ids,
       locationStr,
       existing.created_at,
       existing.pinned || '',
+      existing.url || '',
     ];
     await API.updateRow('Diaries', id, newRow);
     Object.assign(existing, {
@@ -121,7 +125,6 @@ const Diaries = {
     return existing;
   },
 
-  // 刪除（只能刪自己的）
   async delete(id) {
     const existing = this.list.find(d => d.id === id);
     if (!existing) throw new Error('找不到該日記');
@@ -131,7 +134,6 @@ const Diaries = {
     if (idx >= 0) this.list.splice(idx, 1);
   },
 
-  // 切換置頂（任何人都可以）
   async togglePinned(id) {
     const existing = this.list.find(d => d.id === id);
     if (!existing) throw new Error('找不到該日記');
@@ -148,6 +150,7 @@ const Diaries = {
       existing.location,
       existing.created_at,
       newPinned,
+      existing.url || '',
     ];
     await API.updateRow('Diaries', id, newRow);
     existing.pinned = newPinned;

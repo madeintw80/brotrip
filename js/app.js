@@ -1,6 +1,6 @@
 // BroTrip 主應用：UI router + 事件處理
 
-// Google Maps 動態載入（給 Places Autocomplete 用）
+// Google Maps 動態載入（給 Places Autocomplete + 地圖 view 用）
 const Maps = {
   loaded: false,
   loadPromise: null,
@@ -54,6 +54,8 @@ const App = {
   _map: null,
   _mapMarkers: null,
   _diaryFilter: { authors: [], dateFrom: '', dateTo: '' },
+  _lightboxPhotos: [],
+  _lightboxIndex: 0,
 
   async init() {
     await Auth.init();
@@ -61,14 +63,12 @@ const App = {
     this.initPullToRefresh();
     this.updateVersionInfo();
 
-    // 1. Token 還在 localStorage 且沒過期 → 直接進主畫面（最常見路徑）
     if (Auth.isLoggedIn()) {
       document.getElementById('loading').classList.add('hidden');
       await this.showMainApp();
       return;
     }
 
-    // 2. 有上次的 user 但 token 過期 → silent re-auth（5 秒超時 fallback）
     if (Auth.user) {
       try {
         const timeout = new Promise((_, rej) => setTimeout(() => rej(new Error('silent timeout')), 5000));
@@ -82,13 +82,11 @@ const App = {
       }
     }
 
-    // 3. 沒登入或 silent 失敗 → 顯示登入畫面
     document.getElementById('loading').classList.add('hidden');
     document.getElementById('login-screen').classList.remove('hidden');
   },
 
   bindUI() {
-    // Login
     document.getElementById('login-btn').addEventListener('click', async () => {
       try {
         await Auth.login();
@@ -100,7 +98,6 @@ const App = {
       }
     });
 
-    // Logout
     document.getElementById('logout-btn').addEventListener('click', () => {
       if (confirm('登出？')) {
         Auth.logout();
@@ -108,12 +105,10 @@ const App = {
       }
     });
 
-    // Tab switch
     document.querySelectorAll('.nav-btn').forEach(btn => {
       btn.addEventListener('click', () => this.switchTab(btn.dataset.tab));
     });
 
-    // FAB
     document.getElementById('fab').addEventListener('click', () => {
       if (!Trips.current) {
         this.openModal('modal-trips');
@@ -123,18 +118,15 @@ const App = {
       else if (this.currentTab === 'diaries') this.openDiaryModal();
     });
 
-    // Trip switch
     document.getElementById('trip-switch').addEventListener('click', () => {
       this.openTripsModal();
     });
 
-    // New trip btn
     document.getElementById('new-trip-btn').addEventListener('click', () => {
       this.closeModal('modal-trips');
       this.openNewTripModal();
     });
 
-    // Close modals
     document.querySelectorAll('.modal-close, .btn-cancel').forEach(btn => {
       btn.addEventListener('click', () => {
         const modal = btn.closest('.modal');
@@ -142,14 +134,12 @@ const App = {
       });
     });
 
-    // Click modal backdrop to close
     document.querySelectorAll('.modal').forEach(modal => {
       modal.addEventListener('click', e => {
         if (e.target === modal) modal.classList.add('hidden');
       });
     });
 
-    // Forms
     document.getElementById('expense-form').addEventListener('submit', e => this.handleExpenseSubmit(e));
     document.getElementById('diary-form').addEventListener('submit', e => this.handleDiarySubmit(e));
     document.getElementById('new-trip-form').addEventListener('submit', e => this.handleNewTripSubmit(e));
@@ -160,19 +150,40 @@ const App = {
     lightbox.addEventListener('click', e => {
       if (e.target === lightbox) lightbox.close();
     });
-    // Lightbox image fallback（lh3 失敗 → Drive API blob）
     document.getElementById('lightbox-img').addEventListener('error', async (e) => {
       const li = e.target;
       if (li.dataset.fallbackTried === '1') return;
       li.dataset.fallbackTried = '1';
       const id = li.dataset.photoId;
       if (!id) return;
-      try {
-        li.src = await API.fetchDriveBlobUrl(id);
-      } catch (err) { console.warn(err); }
+      try { li.src = await API.fetchDriveBlobUrl(id); } catch (err) { console.warn(err); }
+    });
+    document.getElementById('lightbox-prev').addEventListener('click', () => {
+      if (this._lightboxIndex > 0) {
+        this._lightboxIndex--;
+        this.showLightboxPhoto();
+      }
+    });
+    document.getElementById('lightbox-next').addEventListener('click', () => {
+      if (this._lightboxIndex < this._lightboxPhotos.length - 1) {
+        this._lightboxIndex++;
+        this.showLightboxPhoto();
+      }
+    });
+    document.addEventListener('keydown', (e) => {
+      if (!lightbox.open) return;
+      if (e.key === 'ArrowLeft' && this._lightboxIndex > 0) {
+        this._lightboxIndex--;
+        this.showLightboxPhoto();
+      } else if (e.key === 'ArrowRight' && this._lightboxIndex < this._lightboxPhotos.length - 1) {
+        this._lightboxIndex++;
+        this.showLightboxPhoto();
+      } else if (e.key === 'Escape') {
+        lightbox.close();
+      }
     });
 
-    // Expense list edit/delete (event delegation)
+    // Expense list edit/delete
     document.getElementById('expense-list').addEventListener('click', e => {
       const editBtn = e.target.closest('[data-action="edit-expense"]');
       const delBtn = e.target.closest('[data-action="delete-expense"]');
@@ -180,7 +191,7 @@ const App = {
       else if (delBtn) this.deleteExpense(delBtn.dataset.id);
     });
 
-    // Diary list edit/delete/pin/photo-lightbox (event delegation)
+    // Diary list edit/delete/pin + photo lightbox (相簿)
     document.getElementById('diary-list').addEventListener('click', e => {
       const editBtn = e.target.closest('[data-action="edit-diary"]');
       const delBtn = e.target.closest('[data-action="delete-diary"]');
@@ -190,15 +201,16 @@ const App = {
       if (pinBtn) { e.stopPropagation(); this.togglePin(pinBtn.dataset.id); return; }
       const img = e.target.closest('.diary-photos img');
       if (img && img.dataset.photoId) {
-        const li = document.getElementById('lightbox-img');
-        li.dataset.photoId = img.dataset.photoId;
-        delete li.dataset.fallbackTried;
-        li.src = API.driveImageUrl(img.dataset.photoId, 1600);
-        lightbox.showModal();
+        // 開相簿 — 帶整篇日記的所有照片進去，可左右切換
+        const card = img.closest('.diary-item');
+        const allImgs = Array.from(card.querySelectorAll('.diary-photos img'));
+        const ids = allImgs.map(im => im.dataset.photoId);
+        const startIdx = ids.indexOf(img.dataset.photoId);
+        this.openLightbox(ids, Math.max(0, startIdx));
       }
     });
 
-    // Trip list select / edit (event delegation)
+    // Trip list
     document.getElementById('trip-list').addEventListener('click', e => {
       const editBtn = e.target.closest('[data-action="edit-trip"]');
       if (editBtn) {
@@ -246,6 +258,30 @@ const App = {
       this.updateFilterSummary();
     });
 
+    // Nicknames edit
+    document.getElementById('nicknames-list').addEventListener('click', async (e) => {
+      const btn = e.target.closest('.btn-edit-nickname');
+      if (!btn) return;
+      const email = btn.dataset.email;
+      const current = Nicknames.get(email);
+      const member = CONFIG.ALLOWED_MEMBERS.find(m => m.email === email);
+      const targetName = member ? member.name : email;
+      const newNick = prompt(`給 ${targetName} 取暱稱（清空 = 移除暱稱）：`, current);
+      if (newNick === null) return;
+      try {
+        await Nicknames.set(email, newNick);
+        this.toast('✅ 暱稱已更新');
+        this.renderNicknamesUI();
+        this.renderSettlement();
+        this.renderExpenses();
+        this.renderDiaryFilters();
+        this.renderDiaries();
+      } catch (err) {
+        console.error(err);
+        this.toast('更新失敗：' + err.message);
+      }
+    });
+
     // Settings buttons
     document.getElementById('check-update-btn').addEventListener('click', () => this.checkUpdate());
     document.getElementById('open-sheet-btn').addEventListener('click', () => {
@@ -270,7 +306,7 @@ const App = {
     });
     tripIdInput.addEventListener('focus', () => { tripIdInput.dataset.touched = '1'; });
 
-    // Expense split form realtime calculation
+    // Expense split realtime
     const expenseForm = document.getElementById('expense-form');
     expenseForm.addEventListener('input', e => {
       if (e.target.matches('[name="amount"], #split-rows input')) {
@@ -284,7 +320,6 @@ const App = {
     });
   },
 
-  // ===== Pull to Refresh =====
   initPullToRefresh() {
     const indicator = document.getElementById('pull-indicator');
     if (!indicator) return;
@@ -293,7 +328,6 @@ const App = {
     const threshold = 60;
 
     document.addEventListener('touchstart', (e) => {
-      // 任何 modal 開著就不觸發
       if (document.querySelector('.modal:not(.hidden), dialog[open]')) return;
       if (window.scrollY === 0) {
         startY = e.touches[0].clientY;
@@ -358,7 +392,6 @@ const App = {
     }, 800);
   },
 
-  // 下拉軟更新：只重抓 Sheet 資料，不清快取、不重載、不會被登出
   async softRefresh(indicator) {
     try {
       if (!Trips.current) {
@@ -379,6 +412,127 @@ const App = {
     }
   },
 
+  async initOrRefreshMap() {
+    const mapEl = document.getElementById('trip-map');
+    const emptyEl = document.getElementById('trip-map-empty');
+
+    const diariesWithCoords = Diaries.list.map(d => {
+      if (d.location && d.location.startsWith('{')) {
+        try {
+          const info = JSON.parse(d.location);
+          if (info && info.lat && info.lng) {
+            return { ...info, diary: d };
+          }
+        } catch {}
+      }
+      return null;
+    }).filter(Boolean);
+
+    if (diariesWithCoords.length === 0) {
+      mapEl.style.display = 'none';
+      emptyEl.classList.remove('hidden');
+      return;
+    }
+
+    mapEl.style.display = '';
+    emptyEl.classList.add('hidden');
+
+    try {
+      await Maps.load();
+    } catch (err) {
+      mapEl.innerHTML = `<div class="list-empty">地圖載入失敗：${err.message}</div>`;
+      return;
+    }
+
+    if (!this._map) {
+      this._map = new google.maps.Map(mapEl, {
+        zoom: 12,
+        center: { lat: diariesWithCoords[0].lat, lng: diariesWithCoords[0].lng },
+        mapTypeControl: false,
+        streetViewControl: false,
+        fullscreenControl: false,
+      });
+    }
+
+    if (this._mapMarkers) {
+      this._mapMarkers.forEach(m => m.setMap(null));
+    }
+    this._mapMarkers = [];
+
+    let activeInfo = null;
+    const bounds = new google.maps.LatLngBounds();
+    diariesWithCoords.forEach(loc => {
+      const marker = new google.maps.Marker({
+        position: { lat: loc.lat, lng: loc.lng },
+        map: this._map,
+        title: loc.name,
+      });
+      // InfoWindow 含「點此查看完整日記 →」連結，點了切到日記 tab + 高亮
+      const content = `
+        <div style="max-width:220px; font-family:inherit; cursor:pointer;" onclick="App.openDiaryFromMap('${loc.diary.id}')">
+          <div style="font-weight:600; font-size:14px;">${this.escapeHtml(loc.diary.mood || '')} ${this.escapeHtml(this.nameOf(loc.diary.author))}</div>
+          <div style="font-size:12px; color:#6b7280;">${loc.diary.date} · ${this.escapeHtml(loc.name)}</div>
+          <div style="margin-top:6px; font-size:13px; white-space:pre-wrap;">${this.escapeHtml((loc.diary.content || '').slice(0, 200))}${(loc.diary.content || '').length > 200 ? '...' : ''}</div>
+          <div style="margin-top:8px; color:#3b82f6; font-size:12px; font-weight:600;">點此查看完整日記 →</div>
+        </div>
+      `;
+      const info = new google.maps.InfoWindow({ content });
+      marker.addListener('click', () => {
+        if (activeInfo) activeInfo.close();
+        info.open(this._map, marker);
+        activeInfo = info;
+      });
+      bounds.extend({ lat: loc.lat, lng: loc.lng });
+      this._mapMarkers.push(marker);
+    });
+
+    if (diariesWithCoords.length > 1) {
+      this._map.fitBounds(bounds);
+    } else {
+      this._map.setCenter({ lat: diariesWithCoords[0].lat, lng: diariesWithCoords[0].lng });
+      this._map.setZoom(14);
+    }
+  },
+
+  // 從地圖 marker 跳到某篇日記 — 切 tab + 捲動到 + 高亮閃爍
+  openDiaryFromMap(id) {
+    this.switchTab('diaries');
+    setTimeout(() => {
+      const target = document.querySelector(`.diary-item[data-diary-id="${id}"]`);
+      if (target) {
+        target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        target.classList.add('highlight-flash');
+        setTimeout(() => target.classList.remove('highlight-flash'), 2500);
+      }
+    }, 150);
+  },
+
+  // 相簿：給定照片 IDs + 起始 index，開 lightbox
+  openLightbox(photoIds, startIdx) {
+    this._lightboxPhotos = photoIds;
+    this._lightboxIndex = startIdx;
+    this.showLightboxPhoto();
+    document.getElementById('photo-lightbox').showModal();
+  },
+
+  showLightboxPhoto() {
+    if (!this._lightboxPhotos.length) return;
+    const id = this._lightboxPhotos[this._lightboxIndex];
+    const li = document.getElementById('lightbox-img');
+    li.dataset.photoId = id;
+    delete li.dataset.fallbackTried;
+    li.src = API.driveImageUrl(id, 1600);
+    document.getElementById('lightbox-prev').style.visibility = this._lightboxIndex > 0 ? '' : 'hidden';
+    document.getElementById('lightbox-next').style.visibility = this._lightboxIndex < this._lightboxPhotos.length - 1 ? '' : 'hidden';
+    const counter = document.getElementById('lightbox-counter');
+    if (this._lightboxPhotos.length > 1) {
+      counter.textContent = `${this._lightboxIndex + 1} / ${this._lightboxPhotos.length}`;
+      counter.style.display = '';
+    } else {
+      counter.style.display = 'none';
+    }
+  },
+
   async showMainApp() {
     document.getElementById('login-screen').classList.add('hidden');
     document.getElementById('app').classList.remove('hidden');
@@ -392,7 +546,7 @@ const App = {
     }
 
     await this.ensureMemberRegistered();
-    await Trips.loadAll();
+    await Promise.all([Trips.loadAll(), Nicknames.loadAll()]);
 
     if (Trips.list.length === 0) {
       this.toast('還沒有任何 trip，先建一個吧');
@@ -400,6 +554,7 @@ const App = {
     } else {
       await this.refreshAll();
     }
+    this.renderNicknamesUI();
   },
 
   async ensureMemberRegistered() {
@@ -422,13 +577,13 @@ const App = {
   async refreshAll() {
     if (!Trips.current) return;
     document.getElementById('trip-switch').textContent = `📍 ${Trips.current.name}`;
-    document.getElementById('trip-dates').textContent =
-      `${Trips.current.start_date || ''} ~ ${Trips.current.end_date || ''}`;
-    await Promise.all([Expenses.loadAll(), Diaries.loadAll()]);
+    document.getElementById('trip-dates').textContent = `${Trips.current.start_date || ''} ~ ${Trips.current.end_date || ''}`;
+    await Promise.all([Expenses.loadAll(), Diaries.loadAll(), Nicknames.loadAll()]);
     this.renderSettlement();
     this.renderExpenses();
     this.renderDiaryFilters();
     this.renderDiaries();
+    this.renderNicknamesUI();
   },
 
   switchTab(tab) {
@@ -440,7 +595,6 @@ const App = {
     document.getElementById('tab-diaries').classList.toggle('hidden', tab !== 'diaries');
     document.getElementById('tab-map').classList.toggle('hidden', tab !== 'map');
     document.getElementById('tab-settings').classList.toggle('hidden', tab !== 'settings');
-    // FAB 只在記帳/日記 tab 顯示
     document.getElementById('fab').style.display = (tab === 'expenses' || tab === 'diaries') ? '' : 'none';
     if (tab === 'map') this.initOrRefreshMap();
   },
@@ -453,7 +607,6 @@ const App = {
     const currencies = Object.keys(result);
     const hasUnsettled = currencies.some(c => result[c].length > 0);
 
-    // 計算本次 trip 總花費（by currency）
     const totals = {};
     Expenses.list.forEach(e => {
       const amount = parseFloat(e.amount);
@@ -486,8 +639,17 @@ const App = {
     el.innerHTML = html;
   },
 
+  // 顯示順序：暱稱 > ALLOWED_MEMBERS 名 > 「我」（自己 fallback）> email 部分
   nameOf(email) {
     if (!email) return '?';
+    if (typeof Nicknames !== 'undefined') {
+      const nick = Nicknames.get(email);
+      if (nick) return nick;
+    }
+    if (CONFIG.ALLOWED_MEMBERS) {
+      const m = CONFIG.ALLOWED_MEMBERS.find(x => x.email === email);
+      if (m) return m.name;
+    }
     if (Auth.user && email === Auth.user.email) return '我';
     return email.split('@')[0];
   },
@@ -528,7 +690,6 @@ const App = {
   renderDiaryFilters() {
     const el = document.getElementById('filter-authors');
     if (!el) return;
-    // 所有 distinct 作者
     const allAuthors = [...new Set(Diaries.list.map(d => d.author))];
     el.innerHTML = allAuthors.map(email => {
       const active = this._diaryFilter.authors.includes(email);
@@ -564,7 +725,6 @@ const App = {
     const el = document.getElementById('diary-list');
     let list = this.applyDiaryFilter(Diaries.list);
 
-    // 排序：置頂的先，再按 created_at 新到舊
     list = [...list].sort((a, b) => {
       const pa = String(a.pinned).toUpperCase() === 'TRUE';
       const pb = String(b.pinned).toUpperCase() === 'TRUE';
@@ -586,7 +746,6 @@ const App = {
           ${photoIds.map(id => `<img src="${API.driveImageUrl(id)}" alt="" loading="lazy" referrerpolicy="no-referrer" data-photo-id="${id}" onerror="App.handleImgError(this)">`).join('')}
         </div>` : '';
 
-      // 解析 location（兼容純文字跟 JSON）
       let locHtml = '';
       if (d.location) {
         let info = null;
@@ -611,10 +770,13 @@ const App = {
         }
       }
 
+      const driveLink = d.url ? `<a href="${this.escapeAttr(d.url)}" target="_blank" rel="noopener" class="diary-drive-link" title="開啟 Drive 相簿資料夾">📁</a>` : '';
+
       const isMine = Auth.user && d.author === Auth.user.email;
       const isPinned = String(d.pinned).toUpperCase() === 'TRUE';
       const actions = `
         <div class="item-actions">
+          ${driveLink}
           <button data-action="pin-diary" data-id="${this.escapeAttr(d.id)}" type="button" title="${isPinned ? '取消置頂' : '置頂'}">${isPinned ? '⭐' : '☆'}</button>
           ${isMine ? `
             <button data-action="edit-diary" data-id="${this.escapeAttr(d.id)}" type="button" title="編輯">✏️</button>
@@ -622,7 +784,7 @@ const App = {
         </div>`;
 
       return `
-        <div class="diary-item ${isPinned ? 'pinned' : ''}">
+        <div class="diary-item ${isPinned ? 'pinned' : ''}" data-diary-id="${this.escapeAttr(d.id)}">
           <div class="diary-header">
             <div>
               <span class="diary-mood">${this.escapeHtml(d.mood || '')}</span>
@@ -633,6 +795,27 @@ const App = {
           <div class="diary-content">${this.escapeHtml(d.content || '')}</div>
           ${photosHtml}
           ${actions}
+        </div>
+      `;
+    }).join('');
+  },
+
+  renderNicknamesUI() {
+    const el = document.getElementById('nicknames-list');
+    if (!el || typeof Nicknames === 'undefined') return;
+    el.innerHTML = CONFIG.ALLOWED_MEMBERS.map((m) => {
+      const entry = Nicknames.getEntry(m.email);
+      const nick = entry ? entry.nickname : '';
+      const byInfo = (entry && entry.updated_by && entry.updated_by !== m.email)
+        ? `<small class="nick-by">（${this.escapeHtml(this.nameOf(entry.updated_by))} 改的）</small>`
+        : '';
+      return `
+        <div class="nickname-row">
+          <div class="nickname-info">
+            <div><strong>${this.escapeHtml(m.name)}</strong> <small style="color:var(--text-light);">${this.escapeHtml(m.email)}</small></div>
+            <div class="current-nick">${nick ? '「' + this.escapeHtml(nick) + '」' : '<span style="color:var(--text-light);">(無暱稱)</span>'} ${byInfo}</div>
+          </div>
+          <button class="btn-edit-nickname" data-email="${this.escapeAttr(m.email)}" type="button">改</button>
         </div>
       `;
     }).join('');
@@ -669,12 +852,10 @@ const App = {
 
     form.elements['date'].value = new Date().toISOString().slice(0, 10);
 
-    // 付款人 dropdown
     form.elements['payer'].innerHTML = members.map(m =>
       `<option value="${this.escapeAttr(m)}" ${m === Auth.user.email ? 'selected' : ''}>${this.nameOf(m)}</option>`
     ).join('');
 
-    // 分帳 rows（預設全勾、空白）
     const rowsEl = document.getElementById('split-rows');
     rowsEl.innerHTML = members.map((m, idx) => `
       <div class="split-row">
@@ -684,7 +865,6 @@ const App = {
       </div>
     `).join('');
 
-    // 編輯模式：填入既有資料
     if (id) {
       const e = Expenses.list.find(x => x.id === id);
       if (!e) { this.toast('找不到該支出'); return; }
@@ -709,7 +889,6 @@ const App = {
             if (splitMap[m].share !== undefined) {
               amtInput.value = splitMap[m].share;
             } else if (splitMap[m].ratio !== undefined) {
-              // 舊版 ratio 格式 → 算 share
               const totalRatio = splits.reduce((s, x) => s + (parseFloat(x.ratio) || 0), 0);
               if (totalRatio > 0) {
                 const share = parseFloat(e.amount) * (parseFloat(splitMap[m].ratio) || 0) / totalRatio;
@@ -729,7 +908,6 @@ const App = {
     this.openModal('modal-expense');
   },
 
-  // 即時算「未填欄位均分多少」+「合計確認」
   updateSplitPreview() {
     const form = document.getElementById('expense-form');
     const totalAmount = parseFloat(form.elements['amount'].value) || 0;
@@ -754,7 +932,6 @@ const App = {
     const remaining = totalAmount - filledTotal;
     const perEmpty = emptyCount > 0 ? remaining / emptyCount : 0;
 
-    // 更新空欄位的 placeholder
     checkedRows.forEach(r => {
       const amtInput = r.querySelector('input[type="number"]');
       if (amtInput.value === '' || isNaN(parseFloat(amtInput.value))) {
@@ -764,14 +941,12 @@ const App = {
       }
     });
 
-    // 未勾的人：清空、變 "不分"
     rows.filter(r => !r.querySelector('input[type="checkbox"]').checked).forEach(r => {
       const inp = r.querySelector('input[type="number"]');
       inp.value = '';
       inp.placeholder = '不分';
     });
 
-    // 合計確認
     const summary = document.getElementById('split-summary');
     if (summary) {
       const computedTotal = filledTotal + (emptyCount * perEmpty);
@@ -806,11 +981,9 @@ const App = {
 
     form.elements['date'].value = new Date().toISOString().slice(0, 10);
 
-    // 編輯模式不開啟照片上傳（避免不小心改）
     const photosLabel = form.querySelector('input[name="photos"]').closest('label');
     photosLabel.style.display = id ? 'none' : '';
 
-    // Places Autocomplete
     const locInput = form.elements['location'];
     try {
       await Maps.load();
@@ -824,7 +997,6 @@ const App = {
       console.warn('Places autocomplete 未啟用：', err.message);
     }
 
-    // 編輯模式：填既有資料
     if (id) {
       const d = Diaries.list.find(x => x.id === id);
       if (!d) { this.toast('找不到該日記'); return; }
@@ -862,20 +1034,33 @@ const App = {
     this.openModal('modal-trips');
   },
 
+  renderTripMemberCheckboxes(existingMembers) {
+    const el = document.getElementById('new-trip-members');
+    if (!el) return;
+    el.innerHTML = CONFIG.ALLOWED_MEMBERS.map((m, i) => {
+      const checked = (existingMembers.length === 0 || existingMembers.includes(m.email)) ? 'checked' : '';
+      return `
+        <div class="member-check-row">
+          <input type="checkbox" id="ntmem-${i}" value="${this.escapeAttr(m.email)}" ${checked}>
+          <label for="ntmem-${i}">${this.escapeHtml(this.nameOf(m.email))}</label>
+        </div>
+      `;
+    }).join('');
+  },
+
   openNewTripModal() {
     const form = document.getElementById('new-trip-form');
     form.reset();
     this._editingTripId = null;
     form.elements['trip_id'].disabled = false;
     form.elements['start_date'].value = new Date().toISOString().slice(0, 10);
-    form.elements['members'].value = Auth.user.email;
     delete form.elements['trip_id'].dataset.touched;
+    this.renderTripMemberCheckboxes([]);  // 空 = 預設全勾 5 人
     document.querySelector('#modal-new-trip .modal-header h2').textContent = '新增 Trip';
     document.querySelector('#modal-new-trip [type="submit"]').textContent = '建立';
     this.openModal('modal-new-trip');
   },
 
-  // 編輯既有 trip（reuse new-trip modal）
   openEditTripModal(tripId) {
     const t = Trips.list.find(x => x.trip_id === tripId);
     if (!t) { this.toast('找不到該 trip'); return; }
@@ -883,15 +1068,15 @@ const App = {
     form.reset();
     this._editingTripId = tripId;
     form.elements['trip_id'].value = t.trip_id;
-    form.elements['trip_id'].disabled = true;  // ID 不能改
+    form.elements['trip_id'].disabled = true;
     form.elements['name'].value = t.name;
     form.elements['start_date'].value = t.start_date;
     form.elements['end_date'].value = t.end_date;
     try {
       const members = JSON.parse(t.members || '[]');
-      form.elements['members'].value = Array.isArray(members) ? members.join('\n') : '';
+      this.renderTripMemberCheckboxes(Array.isArray(members) ? members : []);
     } catch {
-      form.elements['members'].value = '';
+      this.renderTripMemberCheckboxes([]);
     }
     document.querySelector('#modal-new-trip .modal-header h2').textContent = '編輯 Trip';
     document.querySelector('#modal-new-trip [type="submit"]').textContent = '儲存';
@@ -915,7 +1100,6 @@ const App = {
         return;
       }
 
-      // 收集 splits
       const rowsEl = document.getElementById('split-rows');
       const rows = Array.from(rowsEl.querySelectorAll('.split-row'));
       const checkedRows = rows.filter(r => r.querySelector('input[type="checkbox"]').checked);
@@ -950,7 +1134,6 @@ const App = {
         return;
       }
 
-      // 把剩餘金額均分給空欄位的人，最後一人吸收 rounding 差
       if (emptyEmails.length > 0) {
         const perEmpty = remaining / emptyEmails.length;
         emptyEmails.forEach((email, i) => {
@@ -1048,15 +1231,15 @@ const App = {
     submitBtn.textContent = this._editingTripId ? '更新中...' : '建立中...';
 
     try {
-      const members = form.elements['members'].value
-        .split(/[,，\n]/).map(s => s.trim()).filter(s => s);
+      // 從 checkbox 收集成員
+      const members = Array.from(document.querySelectorAll('#new-trip-members input[type="checkbox"]:checked'))
+        .map(cb => cb.value);
       if (members.length === 0) {
-        this.toast('至少填一個成員 email');
+        this.toast('至少選一個成員');
         return;
       }
 
       if (this._editingTripId) {
-        // 編輯模式
         await Trips.update(this._editingTripId, {
           name: form.elements['name'].value.trim(),
           start_date: form.elements['start_date'].value,
@@ -1067,7 +1250,6 @@ const App = {
         this.toast('✅ Trip 已更新');
         await this.refreshAll();
       } else {
-        // 新增模式
         const tripId = form.elements['trip_id'].value.trim().toLowerCase();
         if (!/^[a-z0-9-]+$/.test(tripId)) {
           this.toast('Trip ID 只能用英文小寫、數字、減號');
@@ -1140,7 +1322,6 @@ const App = {
     }
   },
 
-  // 照片 thumbnail 載入失敗時改用 Drive API blob URL
   async handleImgError(img) {
     if (img.dataset.fallbackTried === '1') return;
     img.dataset.fallbackTried = '1';
@@ -1150,87 +1331,6 @@ const App = {
       img.src = await API.fetchDriveBlobUrl(id);
     } catch (err) {
       console.warn('Image fallback failed:', err);
-    }
-  },
-
-  // Trip 地圖：當前 trip 所有有座標的日記點在 Google Map 上
-  async initOrRefreshMap() {
-    const mapEl = document.getElementById('trip-map');
-    const emptyEl = document.getElementById('trip-map-empty');
-
-    const diariesWithCoords = Diaries.list.map(d => {
-      if (d.location && d.location.startsWith('{')) {
-        try {
-          const info = JSON.parse(d.location);
-          if (info && info.lat && info.lng) {
-            return { ...info, diary: d };
-          }
-        } catch {}
-      }
-      return null;
-    }).filter(Boolean);
-
-    if (diariesWithCoords.length === 0) {
-      mapEl.style.display = 'none';
-      emptyEl.classList.remove('hidden');
-      return;
-    }
-
-    mapEl.style.display = '';
-    emptyEl.classList.add('hidden');
-
-    try {
-      await Maps.load();
-    } catch (err) {
-      mapEl.innerHTML = `<div class="list-empty">地圖載入失敗：${err.message}</div>`;
-      return;
-    }
-
-    if (!this._map) {
-      this._map = new google.maps.Map(mapEl, {
-        zoom: 12,
-        center: { lat: diariesWithCoords[0].lat, lng: diariesWithCoords[0].lng },
-        mapTypeControl: false,
-        streetViewControl: false,
-        fullscreenControl: false,
-      });
-    }
-
-    if (this._mapMarkers) {
-      this._mapMarkers.forEach(m => m.setMap(null));
-    }
-    this._mapMarkers = [];
-
-    let activeInfo = null;
-    const bounds = new google.maps.LatLngBounds();
-    diariesWithCoords.forEach(loc => {
-      const marker = new google.maps.Marker({
-        position: { lat: loc.lat, lng: loc.lng },
-        map: this._map,
-        title: loc.name,
-      });
-      const content = `
-        <div style="max-width:220px; font-family:inherit;">
-          <div style="font-weight:600; font-size:14px;">${this.escapeHtml(loc.diary.mood || '')} ${this.escapeHtml(this.nameOf(loc.diary.author))}</div>
-          <div style="font-size:12px; color:#6b7280;">${loc.diary.date} · ${this.escapeHtml(loc.name)}</div>
-          <div style="margin-top:6px; font-size:13px; white-space:pre-wrap;">${this.escapeHtml((loc.diary.content || '').slice(0, 200))}${(loc.diary.content || '').length > 200 ? '...' : ''}</div>
-        </div>
-      `;
-      const info = new google.maps.InfoWindow({ content });
-      marker.addListener('click', () => {
-        if (activeInfo) activeInfo.close();
-        info.open(this._map, marker);
-        activeInfo = info;
-      });
-      bounds.extend({ lat: loc.lat, lng: loc.lng });
-      this._mapMarkers.push(marker);
-    });
-
-    if (diariesWithCoords.length > 1) {
-      this._map.fitBounds(bounds);
-    } else {
-      this._map.setCenter({ lat: diariesWithCoords[0].lat, lng: diariesWithCoords[0].lng });
-      this._map.setZoom(14);
     }
   },
 

@@ -1,6 +1,7 @@
 // Google Identity Services (GIS) OAuth 封裝
 // 用 popup mode 拿 access token，不需要 redirect URI
 // localStorage 存 access_token + user，下次開 app 1 小時內不用重登
+// v1.3.0：加白名單，限 CONFIG.ALLOWED_MEMBERS 5 人
 
 const Auth = {
   user: null,
@@ -8,7 +9,6 @@ const Auth = {
   tokenClient: null,
   expiresAt: 0,
 
-  // 等 GIS library 載入完成，同時嘗試從 localStorage 恢復 session
   init() {
     return new Promise((resolve) => {
       const wait = () => {
@@ -16,7 +16,7 @@ const Auth = {
           this.tokenClient = google.accounts.oauth2.initTokenClient({
             client_id: CONFIG.CLIENT_ID,
             scope: CONFIG.SCOPES,
-            callback: () => {},  // 動態覆寫
+            callback: () => {},
           });
           this.restoreSession();
           resolve();
@@ -28,17 +28,28 @@ const Auth = {
     });
   },
 
-  // 從 localStorage 還原 user + token（如果還沒過期）
+  // 檢查 email 是否在白名單
+  isAllowed(email) {
+    return CONFIG.ALLOWED_MEMBERS && CONFIG.ALLOWED_MEMBERS.some(m => m.email === email);
+  },
+
   restoreSession() {
     try {
       const savedUser = localStorage.getItem('brotrip_user');
       if (savedUser) {
-        this.user = JSON.parse(savedUser);
+        const u = JSON.parse(savedUser);
+        if (this.isAllowed(u.email)) {
+          this.user = u;
+        } else {
+          // 不在白名單，清掉 session
+          localStorage.removeItem('brotrip_user');
+          localStorage.removeItem('brotrip_token');
+          return false;
+        }
       }
       const savedToken = localStorage.getItem('brotrip_token');
       if (savedToken) {
         const { accessToken, expiresAt } = JSON.parse(savedToken);
-        // 還有 60 秒以上才算有效（避免邊界 race）
         if (accessToken && expiresAt > Date.now() + 60000) {
           this.accessToken = accessToken;
           this.expiresAt = expiresAt;
@@ -51,7 +62,6 @@ const Auth = {
     return false;
   },
 
-  // 把 token 存進 localStorage 給下次 reload 用
   saveToken() {
     if (this.accessToken && this.expiresAt) {
       try {
@@ -63,7 +73,6 @@ const Auth = {
     }
   },
 
-  // 主動登入（用戶按按鈕觸發）
   async login() {
     return new Promise((resolve, reject) => {
       this.tokenClient.callback = async (resp) => {
@@ -76,6 +85,15 @@ const Auth = {
         this.saveToken();
         try {
           const userInfo = await this.fetchUserInfo();
+          // 白名單檢查
+          if (!this.isAllowed(userInfo.email)) {
+            try { google.accounts.oauth2.revoke(this.accessToken, () => {}); } catch {}
+            this.accessToken = null;
+            this.expiresAt = 0;
+            localStorage.removeItem('brotrip_token');
+            reject(new Error(`此 app 只限 5 位指定成員使用，你的 email (${userInfo.email}) 不在名單`));
+            return;
+          }
           this.user = userInfo;
           localStorage.setItem('brotrip_user', JSON.stringify(this.user));
           resolve(this.user);
@@ -87,7 +105,6 @@ const Auth = {
     });
   },
 
-  // 拿用戶基本資料
   async fetchUserInfo() {
     const r = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
       headers: { Authorization: `Bearer ${this.accessToken}` }
@@ -96,7 +113,6 @@ const Auth = {
     return await r.json();
   },
 
-  // 確保 token 還沒過期；過期就 silent 重新拿（不需用戶互動，但可能 popup 一閃）
   async ensureToken() {
     if (this.accessToken && Date.now() < this.expiresAt) {
       return this.accessToken;
