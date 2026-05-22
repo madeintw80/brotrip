@@ -123,6 +123,20 @@ const App = {
     document.getElementById('diary-form').addEventListener('submit', e => this.handleDiarySubmit(e));
     document.getElementById('new-trip-form').addEventListener('submit', e => this.handleNewTripSubmit(e));
 
+    // Photo lightbox — 點日記照片放大顯示
+    const lightbox = document.getElementById('photo-lightbox');
+    document.getElementById('diary-list').addEventListener('click', e => {
+      const img = e.target.closest('.diary-photos img');
+      if (img && img.dataset.photoId) {
+        document.getElementById('lightbox-img').src = API.driveImageUrl(img.dataset.photoId, 1600);
+        lightbox.showModal();
+      }
+    });
+    document.getElementById('lightbox-close').addEventListener('click', () => lightbox.close());
+    lightbox.addEventListener('click', e => {
+      if (e.target === lightbox) lightbox.close();
+    });
+
     // Trip ID 自動產生 slug
     const tripIdInput = document.querySelector('#new-trip-form [name="trip_id"]');
     const tripNameInput = document.querySelector('#new-trip-form [name="name"]');
@@ -262,7 +276,7 @@ const App = {
       try { photoIds = JSON.parse(d.photo_ids || '[]'); } catch {}
       const photosHtml = photoIds.length ? `
         <div class="diary-photos">
-          ${photoIds.map(id => `<img src="${API.driveImageUrl(id)}" alt="" loading="lazy" referrerpolicy="no-referrer">`).join('')}
+          ${photoIds.map(id => `<img src="${API.driveImageUrl(id)}" alt="" loading="lazy" referrerpolicy="no-referrer" data-photo-id="${id}">`).join('')}
         </div>` : '';
       // 解析 location（兼容純文字跟 JSON 兩種格式）
       let locHtml = '';

@@ -504,3 +504,46 @@ summary {
   .bottom-nav { max-width: 600px; left: 50%; transform: translateX(-50%); border-radius: 16px 16px 0 0; }
   .fab { right: calc(50% - 300px + 16px); }
 }
+
+/* Photo lightbox */
+#photo-lightbox {
+  border: none;
+  padding: 0;
+  background: transparent;
+  max-width: 95vw;
+  max-height: 95vh;
+  overflow: visible;
+}
+#photo-lightbox::backdrop {
+  background: rgba(0,0,0,0.9);
+  cursor: zoom-out;
+}
+#lightbox-img {
+  max-width: 95vw;
+  max-height: 95vh;
+  object-fit: contain;
+  display: block;
+  border-radius: 8px;
+}
+#lightbox-close {
+  position: absolute;
+  top: -16px;
+  right: -16px;
+  font-size: 20px;
+  background: rgba(0,0,0,0.75);
+  color: white;
+  border: 2px solid white;
+  border-radius: 50%;
+  width: 44px;
+  height: 44px;
+  cursor: pointer;
+  z-index: 10;
+  line-height: 1;
+}
+.diary-photos img {
+  cursor: zoom-in;
+  transition: transform 0.15s;
+}
+.diary-photos img:active {
+  transform: scale(0.97);
+}
