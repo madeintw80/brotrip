@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>BroTrip — 五人出遊紀錄</title>
+  <link rel="manifest" href="manifest.json">
+  <link rel="icon" type="image/svg+xml" href="icons/icon.svg">
+  <link rel="apple-touch-icon" href="icons/icon.svg">
+  <meta name="theme-color" content="#3b82f6">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="mobile-web-app-capable" content="yes">
+  <link rel="stylesheet" href="styles.css?v=3">
+</head>
+<body>
+  <!-- 載入中 -->
+  <div id="loading" class="screen">
+    <div class="logo">BroTrip</div>
+    <p class="subtitle">載入中...</p>
+  </div>
+
+  <!-- 登入畫面 -->
+  <div id="login-screen" class="screen hidden">
+    <div class="logo">BroTrip</div>
+    <p class="subtitle">五人出遊專屬紀錄空間</p>
+    <button id="login-btn" class="btn-primary">用 Google 登入</button>
+    <p class="hint">只有被加入 testers 的 Gmail 可以登入</p>
+  </div>
+
+  <!-- 主畫面 -->
+  <div id="app" class="screen hidden">
+    <header class="app-header">
+      <div class="trip-info">
+        <button id="trip-switch" class="trip-name">📍 載入中...</button>
+        <small id="trip-dates"></small>
+      </div>
+      <div class="user-info">
+        <img id="user-avatar" alt="" referrerpolicy="no-referrer">
+        <button id="logout-btn" title="登出">⏏</button>
+      </div>
+    </header>
+
+    <main>
+      <!-- 記帳 tab -->
+      <section id="tab-expenses" class="tab-content">
+        <div id="settlement-card" class="card">
+          <h3>💰 結算</h3>
+          <div id="settlement-content">尚無支出</div>
+        </div>
+        <h3 class="section-title">支出記錄</h3>
+        <div id="expense-list" class="list"></div>
+      </section>
+
+      <!-- 日記 tab -->
+      <section id="tab-diaries" class="tab-content hidden">
+        <h3 class="section-title">📸 出遊日記</h3>
+        <div id="diary-list" class="list"></div>
+      </section>
+    </main>
+
+    <!-- Bottom tab nav -->
+    <nav class="bottom-nav">
+      <button class="nav-btn active" data-tab="expenses">💰 記帳</button>
+      <button class="nav-btn" data-tab="diaries">📸 日記</button>
+    </nav>
+
+    <!-- 浮動新增按鈕 -->
+    <button id="fab" class="fab" title="新增">+</button>
+  </div>
+
+  <!-- Modal: 新增支出 -->
+  <div id="modal-expense" class="modal hidden">
+    <div class="modal-content">
+      <header class="modal-header">
+        <h2>新增支出</h2>
+        <button class="modal-close" type="button">✕</button>
+      </header>
+      <form id="expense-form">
+        <label>日期<input type="date" name="date" required></label>
+        <label>付款人
+          <select name="payer" required></select>
+        </label>
+        <label>金額
+          <input type="number" name="amount" step="0.01" min="0" required placeholder="0" inputmode="decimal">
+        </label>
+        <label>幣別
+          <select name="currency">
+            <option value="TWD" selected>TWD 台幣</option>
+            <option value="JPY">JPY 日圓</option>
+            <option value="USD">USD 美元</option>
+            <option value="KRW">KRW 韓元</option>
+            <option value="THB">THB 泰銖</option>
+            <option value="VND">VND 越南盾</option>
+            <option value="MYR">MYR 馬幣</option>
+            <option value="EUR">EUR 歐元</option>
+          </select>
+        </label>
+        <label>類別
+          <select name="category">
+            <option value="🍜 食">🍜 食</option>
+            <option value="🏨 住">🏨 住</option>
+            <option value="🚗 行">🚗 行</option>
+            <option value="🎢 樂">🎢 樂</option>
+            <option value="🛍 購">🛍 購</option>
+            <option value="💊 其他">💊 其他</option>
+          </select>
+        </label>
+        <label>品項/說明
+          <input type="text" name="description" placeholder="例：拉麵晚餐">
+        </label>
+        <fieldset class="split-section">
+          <legend>分帳人（誰要分這筆）</legend>
+          <div id="split-checkboxes"></div>
+          <details>
+            <summary>進階：設不同比例（預設均分）</summary>
+            <div id="split-ratios"></div>
+            <p class="hint">數字代表「份數」，例 1/1/2 = A 一份、B 一份、C 兩份（C 多付一倍）</p>
+          </details>
+        </fieldset>
+        <div class="modal-actions">
+          <button type="button" class="btn-cancel">取消</button>
+          <button type="submit" class="btn-primary">儲存</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal: 新增日記 -->
+  <div id="modal-diary" class="modal hidden">
+    <div class="modal-content">
+      <header class="modal-header">
+        <h2>新增日記</h2>
+        <button class="modal-close" type="button">✕</button>
+      </header>
+      <form id="diary-form">
+        <label>日期<input type="date" name="date" required></label>
+        <label>心情
+          <select name="mood">
+            <option value="😄">😄 開心</option>
+            <option value="🥳">🥳 興奮</option>
+            <option value="😌">😌 放鬆</option>
+            <option value="😴">😴 疲累</option>
+            <option value="🤤">🤤 美食</option>
+            <option value="😂">😂 爆笑</option>
+            <option value="🥲">🥲 感動</option>
+            <option value="🤔">🤔 思考</option>
+            <option value="🍻">🍻 乾杯</option>
+            <option value="🍺">🍺 啤酒</option>
+          </select>
+        </label>
+        <label>內容
+          <textarea name="content" rows="4" required placeholder="今天最爽的事是..."></textarea>
+        </label>
+        <label>地點（可選）
+          <input type="text" name="location" placeholder="例：渋谷">
+        </label>
+        <label>照片（可多選）
+          <input type="file" name="photos" accept="image/*" multiple>
+        </label>
+        <div class="modal-actions">
+          <button type="button" class="btn-cancel">取消</button>
+          <button type="submit" class="btn-primary">儲存</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal: Trip 切換 -->
+  <div id="modal-trips" class="modal hidden">
+    <div class="modal-content">
+      <header class="modal-header">
+        <h2>切換 Trip</h2>
+        <button class="modal-close" type="button">✕</button>
+      </header>
+      <div id="trip-list" class="list"></div>
+      <button id="new-trip-btn" class="btn-primary" type="button" style="width:100%;margin-top:12px;">+ 新增 Trip</button>
+    </div>
+  </div>
+
+  <!-- Modal: 新增 Trip -->
+  <div id="modal-new-trip" class="modal hidden">
+    <div class="modal-content">
+      <header class="modal-header">
+        <h2>新增 Trip</h2>
+        <button class="modal-close" type="button">✕</button>
+      </header>
+      <form id="new-trip-form">
+        <label>Trip ID（英文小寫，例 2026-tokyo）
+          <input type="text" name="trip_id" pattern="[a-z0-9-]+" required placeholder="2026-tokyo">
+        </label>
+        <label>名稱
+          <input type="text" name="name" required placeholder="例：東京之旅">
+        </label>
+        <label>開始日期<input type="date" name="start_date" required></label>
+        <label>結束日期<input type="date" name="end_date" required></label>
+        <label>成員 emails（逗號或換行分隔）
+          <textarea name="members" rows="3" required placeholder="a@gmail.com, b@gmail.com, ..."></textarea>
+        </label>
+        <div class="modal-actions">
+          <button type="button" class="btn-cancel">取消</button>
+          <button type="submit" class="btn-primary">建立</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Toast -->
+  <div id="toast" class="toast hidden"></div>
+
+  <!-- Google Identity Services -->
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
+
+  <!-- App 程式碼（順序很重要，後面的依賴前面的）-->
+  <script src="js/config.js?v=3"></script>
+  <script src="js/auth.js?v=3"></script>
+  <script src="js/api.js?v=3"></script>
+  <script src="js/trips.js?v=3"></script>
+  <script src="js/expenses.js?v=3"></script>
+  <script src="js/diaries.js?v=3"></script>
+  <script src="js/app.js?v=3"></script>
+
+  <!-- Service Worker -->
+  <script>
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => navigator.serviceWorker.register('sw.js'));
+    }
+  </script>
+</body>
+</html>

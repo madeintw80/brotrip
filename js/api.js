@@ -1,0 +1,135 @@
+// Google Sheets + Drive REST API 封裝
+// 沒用 gapi library，直接打 REST，比較少 dependency
+
+const API = {
+  // ===== Sheets =====
+
+  async sheetsRequest(path, options = {}) {
+    const token = await Auth.ensureToken();
+    const url = `https://sheets.googleapis.com/v4/spreadsheets/${CONFIG.SHEET_ID}${path}`;
+    const resp = await fetch(url, {
+      ...options,
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+        ...(options.headers || {}),
+      },
+    });
+    if (!resp.ok) {
+      const err = await resp.text();
+      throw new Error(`Sheets API ${resp.status}: ${err.slice(0, 200)}`);
+    }
+    return resp.json();
+  },
+
+  // 讀整個分頁（含 header）
+  async getSheet(sheetName) {
+    const data = await this.sheetsRequest(`/values/${encodeURIComponent(sheetName)}`);
+    return data.values || [];
+  },
+
+  // 追加一 row
+  async appendRow(sheetName, values) {
+    return await this.sheetsRequest(
+      `/values/${encodeURIComponent(sheetName)}:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`,
+      {
+        method: 'POST',
+        body: JSON.stringify({ values: [values] }),
+      }
+    );
+  },
+
+  // 把 [[header],[row1],[row2]...] 變成 [{col1:v, col2:v},...]
+  rowsToObjects(rows) {
+    if (!rows || rows.length === 0) return [];
+    const headers = rows[0];
+    return rows.slice(1).map(row => {
+      const obj = {};
+      headers.forEach((h, i) => { obj[h] = row[i] !== undefined ? row[i] : ''; });
+      return obj;
+    });
+  },
+
+  // ===== Drive =====
+
+  // 確保子資料夾存在（不存在就建），回傳 ID
+  async ensureFolder(name, parentId) {
+    const token = await Auth.ensureToken();
+    // 先查
+    const q = `name='${name.replace(/'/g, "\\'")}' and '${parentId}' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false`;
+    const searchUrl = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(q)}&fields=files(id,name)`;
+    const sResp = await fetch(searchUrl, { headers: { Authorization: `Bearer ${token}` } });
+    const sData = await sResp.json();
+    if (sData.files && sData.files.length > 0) {
+      return sData.files[0].id;
+    }
+    // 建立
+    const cResp = await fetch('https://www.googleapis.com/drive/v3/files?fields=id', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        name,
+        mimeType: 'application/vnd.google-apps.folder',
+        parents: [parentId],
+      }),
+    });
+    if (!cResp.ok) throw new Error(`Create folder failed: ${cResp.status}`);
+    const cData = await cResp.json();
+    return cData.id;
+  },
+
+  // 上傳檔案到指定資料夾
+  async uploadFile(file, folderId, customName) {
+    const token = await Auth.ensureToken();
+    const metadata = {
+      name: customName || file.name,
+      parents: [folderId],
+    };
+    const form = new FormData();
+    form.append('metadata', new Blob([JSON.stringify(metadata)], { type: 'application/json' }));
+    form.append('file', file);
+
+    const resp = await fetch(
+      'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,webViewLink',
+      {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+        body: form,
+      }
+    );
+    if (!resp.ok) {
+      const err = await resp.text();
+      throw new Error(`Upload failed: ${resp.status} ${err.slice(0, 200)}`);
+    }
+    return resp.json();
+  },
+
+  // 設定為「擁有連結的人皆可檢視」（讓縮圖能跨用戶顯示）
+  async makePublic(fileId) {
+    const token = await Auth.ensureToken();
+    const resp = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}/permissions`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ role: 'reader', type: 'anyone' }),
+    });
+    if (!resp.ok) {
+      console.warn('makePublic failed', resp.status, await resp.text());
+    }
+  },
+
+  // 拿 Drive 圖片縮圖 URL（給 <img src>）
+  driveImageUrl(fileId, width = 400) {
+    return `https://drive.google.com/thumbnail?id=${fileId}&sz=w${width}`;
+  },
+
+  // 產生簡單的 ID（時間戳 + 隨機）
+  newId() {
+    return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+  },
+};
