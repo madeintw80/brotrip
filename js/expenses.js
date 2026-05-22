@@ -1,16 +1,34 @@
 // 記帳模組：CRUD + 結算
+// v1.5.0：allList + list 雙層（cache 存全部、list 是當前 trip filtered）
+// 切 trip 不用 fetch sheet，直接從 allList filter 即時切換
 
 const Expenses = {
-  list: [],
+  list: [],      // 當前 trip filter 後
+  allList: [],   // 全部（cache 用）
 
-  async loadAll() {
-    const rows = await API.getSheet('Expenses');
-    const all = API.rowsToObjects(rows);
+  _filter() {
     if (Trips.current) {
-      this.list = all.filter(e => e.trip_id === Trips.current.trip_id);
+      this.list = this.allList.filter(e => e.trip_id === Trips.current.trip_id);
     } else {
       this.list = [];
     }
+  },
+
+  loadFromCache() {
+    const data = Cache.get('expenses');
+    if (data && Array.isArray(data)) {
+      this.allList = data;
+      this._filter();
+      return true;
+    }
+    return false;
+  },
+
+  async loadAll() {
+    const rows = await API.getSheet('Expenses');
+    this.allList = API.rowsToObjects(rows);
+    Cache.set('expenses', this.allList);
+    this._filter();
     return this.list;
   },
 
@@ -45,18 +63,15 @@ const Expenses = {
       photo_url: data.photo_url || '',
       created_at: new Date().toISOString(),
     };
-    this.list.push(newExpense);
+    this.allList.push(newExpense);
+    this._filter();
+    Cache.set('expenses', this.allList);
     return newExpense;
   },
 
-  // 結算邏輯：
-  //   每人應付 = 支出金額 × (自己 ratio / 總 ratio)
-  //   每人餘額 = 該人付掉的 - 該人應付的
-  //   餘額 > 0 → 別人欠他；餘額 < 0 → 他欠別人
-  // 用 greedy 配對：欠最多的 → 賺最多的，直到全清
-  // 各幣別分開算（不換匯）
+  // 結算：用 splits 中的 share 或舊版 ratio 都支援
   settle() {
-    const balances = {};  // { currency: { email: balance } }
+    const balances = {};
 
     this.list.forEach(e => {
       const amount = parseFloat(e.amount);
@@ -70,7 +85,6 @@ const Expenses = {
       if (!balances[currency]) balances[currency] = {};
       balances[currency][e.payer] = (balances[currency][e.payer] || 0) + amount;
 
-      // 兼容兩種格式：新版 `share`（具體金額），舊版 `ratio`（份數）
       const hasShare = splits.some(s => s.share !== undefined);
       if (hasShare) {
         splits.forEach(s => {
@@ -97,7 +111,6 @@ const Expenses = {
         if (v < -0.01) owers.push({ email, amount: -v });
         else if (v > 0.01) earners.push({ email, amount: v });
       }
-      // 大→小排序讓配對結果更少
       owers.sort((a, b) => b.amount - a.amount);
       earners.sort((a, b) => b.amount - a.amount);
 
@@ -122,7 +135,6 @@ const Expenses = {
     return result;
   },
 
-  // 編輯（只能改自己付的支出）
   async update(id, data) {
     const existing = this.list.find(e => e.id === id);
     if (!existing) throw new Error('找不到該支出');
@@ -151,10 +163,10 @@ const Expenses = {
       description: data.description || '',
       splits,
     });
+    Cache.set('expenses', this.allList);
     return existing;
   },
 
-  // 刪除（只能刪自己付的）
   async delete(id) {
     const existing = this.list.find(e => e.id === id);
     if (!existing) throw new Error('找不到該支出');
@@ -162,5 +174,8 @@ const Expenses = {
     await API.deleteRow('Expenses', id);
     const idx = this.list.indexOf(existing);
     if (idx >= 0) this.list.splice(idx, 1);
+    const allIdx = this.allList.indexOf(existing);
+    if (allIdx >= 0) this.allList.splice(allIdx, 1);
+    Cache.set('expenses', this.allList);
   },
 };

@@ -1,9 +1,17 @@
 // 暱稱模組：Meta Messenger 風格，誰最後改算數
-// Sheet: Nicknames (target_email | nickname | updated_by | updated_at)
-// 任何人都可以給任何人取暱稱，全部成員看到的暱稱一致
+// v1.5.0：加 localStorage cache
 
 const Nicknames = {
-  map: {},  // { target_email: { nickname, updated_by, updated_at } }
+  map: {},
+
+  loadFromCache() {
+    const data = Cache.get('nicknames');
+    if (data && typeof data === 'object') {
+      this.map = data;
+      return true;
+    }
+    return false;
+  },
 
   async loadAll() {
     try {
@@ -19,6 +27,7 @@ const Nicknames = {
           };
         }
       });
+      Cache.set('nicknames', this.map);
     } catch (err) {
       console.warn('Load nicknames failed:', err);
       this.map = {};
@@ -40,11 +49,9 @@ const Nicknames = {
     const cleanNick = (nickname || '').trim();
     const row = [targetEmail, cleanNick, Auth.user.email, now];
 
-    // 看 sheet 中是否已有該 target 的 row（rows[0] 是 header）
     const rows = await API.getSheet('Nicknames');
     const idx = rows.findIndex((r, i) => i > 0 && r[0] === targetEmail);
     if (idx > 0) {
-      // 更新既有 row（idx 是 0-based array index，對應 sheet 1-based row 是 idx+1）
       const range = `Nicknames!A${idx + 1}:D${idx + 1}`;
       await API.sheetsRequest(`/values/${encodeURIComponent(range)}?valueInputOption=RAW`, {
         method: 'PUT',
@@ -59,5 +66,6 @@ const Nicknames = {
       updated_by: Auth.user.email,
       updated_at: now,
     };
+    Cache.set('nicknames', this.map);
   },
 };

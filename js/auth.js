@@ -141,6 +141,8 @@ const Auth = {
     this.expiresAt = 0;
     localStorage.removeItem('brotrip_user');
     localStorage.removeItem('brotrip_token');
+    // 清資料 cache（換帳號就不該看到舊資料）
+    if (typeof Cache !== 'undefined') Cache.clear();
   },
 
   isLoggedIn() {

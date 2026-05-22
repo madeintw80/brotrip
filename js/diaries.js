@@ -1,19 +1,35 @@
 // 日記模組：上傳照片 + 文字心情，依 trip 篩選顯示
-// v1.3.0：每篇日記獨立 Drive 資料夾 (BroTrip/photos/<trip>/<date>-<id>/)，
-//         Sheet 加 url 欄位指向該資料夾（按「📁 相簿」直接跳）
+// v1.5.0：allList + list 雙層（cache 全部、list 當前 trip filtered）
+// 每篇日記獨立 Drive 資料夾 (BroTrip/photos/<trip>/<date>-<id>/)
 
 const Diaries = {
   list: [],
+  allList: [],
 
-  async loadAll() {
-    const rows = await API.getSheet('Diaries');
-    const all = API.rowsToObjects(rows);
+  _filter() {
     if (Trips.current) {
-      this.list = all.filter(d => d.trip_id === Trips.current.trip_id);
+      this.list = this.allList.filter(d => d.trip_id === Trips.current.trip_id);
     } else {
       this.list = [];
     }
     this.list.sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''));
+  },
+
+  loadFromCache() {
+    const data = Cache.get('diaries');
+    if (data && Array.isArray(data)) {
+      this.allList = data;
+      this._filter();
+      return true;
+    }
+    return false;
+  },
+
+  async loadAll() {
+    const rows = await API.getSheet('Diaries');
+    this.allList = API.rowsToObjects(rows);
+    Cache.set('diaries', this.allList);
+    this._filter();
     return this.list;
   },
 
@@ -21,7 +37,6 @@ const Diaries = {
     if (!Trips.current) throw new Error('沒有當前 trip');
     const id = API.newId();
 
-    // 每篇日記自己一個資料夾
     const photoIds = [];
     let driveFolderUrl = '';
     if (data.photos && data.photos.length > 0) {
@@ -63,8 +78,8 @@ const Diaries = {
       JSON.stringify(photoIds),
       locationStr,
       createdAt,
-      '',  // pinned
-      driveFolderUrl,  // url (K 欄)
+      '',
+      driveFolderUrl,
     ];
     await API.appendRow('Diaries', row);
     const newDiary = {
@@ -80,7 +95,9 @@ const Diaries = {
       pinned: '',
       url: driveFolderUrl,
     };
-    this.list.unshift(newDiary);
+    this.allList.push(newDiary);
+    this._filter();
+    Cache.set('diaries', this.allList);
     return newDiary;
   },
 
@@ -122,6 +139,7 @@ const Diaries = {
       mood: data.mood || '',
       location: locationStr,
     });
+    Cache.set('diaries', this.allList);
     return existing;
   },
 
@@ -132,6 +150,9 @@ const Diaries = {
     await API.deleteRow('Diaries', id);
     const idx = this.list.indexOf(existing);
     if (idx >= 0) this.list.splice(idx, 1);
+    const allIdx = this.allList.indexOf(existing);
+    if (allIdx >= 0) this.allList.splice(allIdx, 1);
+    Cache.set('diaries', this.allList);
   },
 
   async togglePinned(id) {
@@ -154,6 +175,7 @@ const Diaries = {
     ];
     await API.updateRow('Diaries', id, newRow);
     existing.pinned = newPinned;
+    Cache.set('diaries', this.allList);
     return !wasPinned;
   },
 };

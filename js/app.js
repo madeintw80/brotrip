@@ -242,6 +242,11 @@ const App = {
       if (selectArea) {
         Trips.setCurrent(selectArea.dataset.tripId);
         this.closeModal('modal-trips');
+        // 從 cache 即時 filter + render（瞬間切換）
+        Expenses._filter();
+        Diaries._filter();
+        this.renderAll();
+        // 背景同步最新 sheet 資料
         this.refreshAll();
       }
     });
@@ -406,6 +411,8 @@ const App = {
         await Promise.all(names.map(n => caches.delete(n)));
       } catch {}
     }
+    // 也清資料 cache（強迫拿最新 sheet）
+    if (typeof Cache !== 'undefined') Cache.clear();
     setTimeout(() => {
       window.location.href = window.location.pathname + '?t=' + Date.now();
     }, 800);
@@ -564,16 +571,27 @@ const App = {
       img.style.display = 'none';
     }
 
+    // ===== Phase 1: 從 localStorage cache 瞬間渲染（< 100ms）=====
+    const hasCache = Trips.loadFromCache();
+    if (hasCache && Trips.current) {
+      Nicknames.loadFromCache();
+      Expenses.loadFromCache();
+      Diaries.loadFromCache();
+      Comments.loadFromCache();
+      this.renderAll();
+    }
+
+    // ===== Phase 2: 背景同步最新 sheet 資料 =====
     await this.ensureMemberRegistered();
-    await Promise.all([Trips.loadAll(), Nicknames.loadAll()]);
+    await Trips.loadAll();
 
     if (Trips.list.length === 0) {
       this.toast('還沒有任何 trip，先建一個吧');
       this.openNewTripModal();
-    } else {
-      await this.refreshAll();
+      return;
     }
-    this.renderNicknamesUI();
+
+    await this.refreshAll();
   },
 
   async ensureMemberRegistered() {
@@ -595,9 +613,15 @@ const App = {
 
   async refreshAll() {
     if (!Trips.current) return;
+    await Promise.all([Expenses.loadAll(), Diaries.loadAll(), Nicknames.loadAll(), Comments.loadAll()]);
+    this.renderAll();
+  },
+
+  // 統一渲染入口（cache 渲染 / 背景同步後渲染都用這個）
+  renderAll() {
+    if (!Trips.current) return;
     document.getElementById('trip-switch').textContent = `📍 ${Trips.current.name}`;
     document.getElementById('trip-dates').textContent = `${Trips.current.start_date || ''} ~ ${Trips.current.end_date || ''}`;
-    await Promise.all([Expenses.loadAll(), Diaries.loadAll(), Nicknames.loadAll(), Comments.loadAll()]);
     this.renderSettlement();
     this.renderExpenses();
     this.renderDiaryFilters();

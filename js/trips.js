@@ -1,19 +1,27 @@
 // Trip 管理：每趟出遊獨立 trip_id，記錄日期區間 + 成員
+// v1.5.0：加 localStorage cache，loadFromCache 啟動時瞬間渲染
 
 const Trips = {
   list: [],
   current: null,
 
-  async loadAll() {
-    const rows = await API.getSheet('Trips');
-    this.list = API.rowsToObjects(rows);
-    // 還原上次選的 trip，沒有就用最後一個
+  loadFromCache() {
+    const data = Cache.get('trips');
+    if (data && Array.isArray(data)) {
+      this.list = data;
+      this._restoreCurrent();
+      return true;
+    }
+    return false;
+  },
+
+  _restoreCurrent() {
     const saved = localStorage.getItem('brotrip_current_trip');
     if (saved) {
       const found = this.list.find(t => t.trip_id === saved);
       if (found) {
         this.current = found;
-        return this.list;
+        return;
       }
     }
     if (this.list.length > 0) {
@@ -22,6 +30,13 @@ const Trips = {
     } else {
       this.current = null;
     }
+  },
+
+  async loadAll() {
+    const rows = await API.getSheet('Trips');
+    this.list = API.rowsToObjects(rows);
+    Cache.set('trips', this.list);
+    this._restoreCurrent();
     return this.list;
   },
 
@@ -46,6 +61,7 @@ const Trips = {
       created_at: new Date().toISOString(),
     };
     this.list.push(newTrip);
+    Cache.set('trips', this.list);
     this.setCurrent(tripId);
     return newTrip;
   },
@@ -68,7 +84,6 @@ const Trips = {
     }
   },
 
-  // 編輯 trip（trip_id 不能改，其他都可改）
   async update(tripId, data) {
     const existing = this.list.find(t => t.trip_id === tripId);
     if (!existing) throw new Error('找不到該 trip');
@@ -88,6 +103,7 @@ const Trips = {
       end_date: data.end_date,
       members: JSON.stringify(data.members),
     });
+    Cache.set('trips', this.list);
     return existing;
   },
 };
