@@ -219,18 +219,38 @@ const App = {
     const el = document.getElementById('settlement-content');
     const result = Expenses.settle();
     const currencies = Object.keys(result);
-    const hasAny = currencies.some(c => result[c].length > 0);
+    const hasUnsettled = currencies.some(c => result[c].length > 0);
 
-    if (!hasAny) {
-      el.innerHTML = '<div style="color:var(--text-light);text-align:center;padding:8px;">尚無支出，或人人都結清了 ✨</div>';
+    // 計算本次 trip 總花費（by currency）
+    const totals = {};
+    Expenses.list.forEach(e => {
+      const amount = parseFloat(e.amount);
+      if (!amount || isNaN(amount)) return;
+      const cur = e.currency || 'TWD';
+      totals[cur] = (totals[cur] || 0) + amount;
+    });
+    const hasExpense = Object.keys(totals).length > 0;
+
+    if (!hasExpense) {
+      el.innerHTML = '<div style="color:var(--text-light);text-align:center;padding:8px;">還沒有支出 💸</div>';
       return;
     }
-    let html = '';
-    for (const currency of currencies) {
-      if (result[currency].length === 0) continue;
-      result[currency].forEach(t => {
-        html += `<div class="settle-row"><span>${this.nameOf(t.from)} → ${this.nameOf(t.to)}</span><span>${currency} ${t.amount.toLocaleString()}</span></div>`;
-      });
+
+    // 總花費摘要
+    const totalLine = Object.entries(totals)
+      .map(([c, v]) => `${c} ${v.toLocaleString()}`)
+      .join(' + ');
+    let html = `<div style="font-size:13px;color:var(--text-light);margin-bottom:10px;padding-bottom:8px;border-bottom:1px dashed var(--border);">💵 總花費 ${totalLine}</div>`;
+
+    if (!hasUnsettled) {
+      html += '<div style="color:var(--text-light);text-align:center;padding:8px;">✨ 大家都結清了！</div>';
+    } else {
+      for (const currency of currencies) {
+        if (result[currency].length === 0) continue;
+        result[currency].forEach(t => {
+          html += `<div class="settle-row"><span>${this.nameOf(t.from)} → ${this.nameOf(t.to)}</span><span>${currency} ${t.amount.toLocaleString()}</span></div>`;
+        });
+      }
     }
     el.innerHTML = html;
   },
