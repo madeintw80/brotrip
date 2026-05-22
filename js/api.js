@@ -124,8 +124,20 @@ const API = {
   },
 
   // 拿 Drive 圖片縮圖 URL（給 <img src>）
+  // lh3 CDN 對 anyone-with-link 檔案最穩；drive.google.com/thumbnail 常 403
   driveImageUrl(fileId, width = 400) {
-    return `https://drive.google.com/thumbnail?id=${fileId}&sz=w${width}`;
+    return `https://lh3.googleusercontent.com/d/${fileId}=w${width}`;
+  },
+
+  // Fallback：lh3 載入失敗時用 Drive API + access token 拿原檔做 blob URL
+  async fetchDriveBlobUrl(fileId) {
+    const token = await Auth.ensureToken();
+    const resp = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`, {
+      headers: { Authorization: `Bearer ${token}` }
+    });
+    if (!resp.ok) throw new Error('fetch blob failed: ' + resp.status);
+    const blob = await resp.blob();
+    return URL.createObjectURL(blob);
   },
 
   // 產生簡單的 ID（時間戳 + 隨機）

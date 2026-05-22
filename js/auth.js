@@ -1,13 +1,14 @@
 // Google Identity Services (GIS) OAuth 封裝
 // 用 popup mode 拿 access token，不需要 redirect URI
+// localStorage 存 access_token + user，下次開 app 1 小時內不用重登
 
 const Auth = {
-  user: null,         // { email, name, picture }
+  user: null,
   accessToken: null,
   tokenClient: null,
   expiresAt: 0,
 
-  // 等 GIS library 載入完成
+  // 等 GIS library 載入完成，同時嘗試從 localStorage 恢復 session
   init() {
     return new Promise((resolve) => {
       const wait = () => {
@@ -17,6 +18,7 @@ const Auth = {
             scope: CONFIG.SCOPES,
             callback: () => {},  // 動態覆寫
           });
+          this.restoreSession();
           resolve();
         } else {
           setTimeout(wait, 100);
@@ -24,6 +26,41 @@ const Auth = {
       };
       wait();
     });
+  },
+
+  // 從 localStorage 還原 user + token（如果還沒過期）
+  restoreSession() {
+    try {
+      const savedUser = localStorage.getItem('brotrip_user');
+      if (savedUser) {
+        this.user = JSON.parse(savedUser);
+      }
+      const savedToken = localStorage.getItem('brotrip_token');
+      if (savedToken) {
+        const { accessToken, expiresAt } = JSON.parse(savedToken);
+        // 還有 60 秒以上才算有效（避免邊界 race）
+        if (accessToken && expiresAt > Date.now() + 60000) {
+          this.accessToken = accessToken;
+          this.expiresAt = expiresAt;
+          return true;
+        }
+      }
+    } catch (err) {
+      console.warn('restoreSession failed:', err);
+    }
+    return false;
+  },
+
+  // 把 token 存進 localStorage 給下次 reload 用
+  saveToken() {
+    if (this.accessToken && this.expiresAt) {
+      try {
+        localStorage.setItem('brotrip_token', JSON.stringify({
+          accessToken: this.accessToken,
+          expiresAt: this.expiresAt,
+        }));
+      } catch {}
+    }
   },
 
   // 主動登入（用戶按按鈕觸發）
@@ -35,8 +72,8 @@ const Auth = {
           return;
         }
         this.accessToken = resp.access_token;
-        // 早 30 秒視為過期（避免邊界 race）
         this.expiresAt = Date.now() + (resp.expires_in * 1000) - 30000;
+        this.saveToken();
         try {
           const userInfo = await this.fetchUserInfo();
           this.user = userInfo;
@@ -46,7 +83,6 @@ const Auth = {
           reject(err);
         }
       };
-      // prompt='consent' 第一次要、之後 silent 用空字串
       this.tokenClient.requestAccessToken({ prompt: 'consent' });
     });
   },
@@ -60,7 +96,7 @@ const Auth = {
     return await r.json();
   },
 
-  // 確保 token 還沒過期；過期就重新拿（silent）
+  // 確保 token 還沒過期；過期就 silent 重新拿（不需用戶互動，但可能 popup 一閃）
   async ensureToken() {
     if (this.accessToken && Date.now() < this.expiresAt) {
       return this.accessToken;
@@ -73,9 +109,9 @@ const Auth = {
         }
         this.accessToken = resp.access_token;
         this.expiresAt = Date.now() + (resp.expires_in * 1000) - 30000;
+        this.saveToken();
         resolve(this.accessToken);
       };
-      // 第二次以後用空 prompt（silent）
       this.tokenClient.requestAccessToken({ prompt: '' });
     });
   },
@@ -88,6 +124,7 @@ const Auth = {
     this.user = null;
     this.expiresAt = 0;
     localStorage.removeItem('brotrip_user');
+    localStorage.removeItem('brotrip_token');
   },
 
   isLoggedIn() {

@@ -51,6 +51,8 @@ const App = {
   _editingExpenseId: null,
   _editingDiaryId: null,
   _editingTripId: null,
+  _map: null,
+  _mapMarkers: null,
   _diaryFilter: { authors: [], dateFrom: '', dateTo: '' },
 
   async init() {
@@ -58,6 +60,29 @@ const App = {
     this.bindUI();
     this.initPullToRefresh();
     this.updateVersionInfo();
+
+    // 1. Token 還在 localStorage 且沒過期 → 直接進主畫面（最常見路徑）
+    if (Auth.isLoggedIn()) {
+      document.getElementById('loading').classList.add('hidden');
+      await this.showMainApp();
+      return;
+    }
+
+    // 2. 有上次的 user 但 token 過期 → silent re-auth（5 秒超時 fallback）
+    if (Auth.user) {
+      try {
+        const timeout = new Promise((_, rej) => setTimeout(() => rej(new Error('silent timeout')), 5000));
+        await Promise.race([Auth.ensureToken(), timeout]);
+        document.getElementById('loading').classList.add('hidden');
+        await this.showMainApp();
+        return;
+      } catch (err) {
+        console.warn('Silent re-auth failed:', err);
+        Auth.user = null;
+      }
+    }
+
+    // 3. 沒登入或 silent 失敗 → 顯示登入畫面
     document.getElementById('loading').classList.add('hidden');
     document.getElementById('login-screen').classList.remove('hidden');
   },
@@ -135,6 +160,17 @@ const App = {
     lightbox.addEventListener('click', e => {
       if (e.target === lightbox) lightbox.close();
     });
+    // Lightbox image fallback（lh3 失敗 → Drive API blob）
+    document.getElementById('lightbox-img').addEventListener('error', async (e) => {
+      const li = e.target;
+      if (li.dataset.fallbackTried === '1') return;
+      li.dataset.fallbackTried = '1';
+      const id = li.dataset.photoId;
+      if (!id) return;
+      try {
+        li.src = await API.fetchDriveBlobUrl(id);
+      } catch (err) { console.warn(err); }
+    });
 
     // Expense list edit/delete (event delegation)
     document.getElementById('expense-list').addEventListener('click', e => {
@@ -154,7 +190,10 @@ const App = {
       if (pinBtn) { e.stopPropagation(); this.togglePin(pinBtn.dataset.id); return; }
       const img = e.target.closest('.diary-photos img');
       if (img && img.dataset.photoId) {
-        document.getElementById('lightbox-img').src = API.driveImageUrl(img.dataset.photoId, 1600);
+        const li = document.getElementById('lightbox-img');
+        li.dataset.photoId = img.dataset.photoId;
+        delete li.dataset.fallbackTried;
+        li.src = API.driveImageUrl(img.dataset.photoId, 1600);
         lightbox.showModal();
       }
     });
@@ -269,7 +308,7 @@ const App = {
         indicator.classList.add('show');
         const triggered = dy >= threshold;
         indicator.classList.toggle('triggered', triggered);
-        indicator.textContent = triggered ? '🔄 放開更新' : '⬇︎ 下拉更新...';
+        indicator.textContent = triggered ? '🔄 放開重新整理' : '⬇︎ 下拉重新整理...';
       } else if (dy <= 0) {
         indicator.classList.remove('show');
       }
@@ -282,13 +321,8 @@ const App = {
       indicator.classList.remove('show', 'triggered');
       if (wasTriggered) {
         indicator.classList.add('show');
-        indicator.textContent = '更新中...';
-        if ('caches' in window) {
-          caches.keys().then(names => names.forEach(n => caches.delete(n)));
-        }
-        setTimeout(() => {
-          window.location.href = window.location.pathname + '?t=' + Date.now();
-        }, 500);
+        indicator.textContent = '重新整理中...';
+        this.softRefresh(indicator);
       }
     });
   },
@@ -306,7 +340,7 @@ const App = {
   },
 
   async checkUpdate() {
-    this.toast('檢查更新中...');
+    this.toast('檢查新版本中...');
     if ('serviceWorker' in navigator) {
       try {
         const regs = await navigator.serviceWorker.getRegistrations();
@@ -322,6 +356,27 @@ const App = {
     setTimeout(() => {
       window.location.href = window.location.pathname + '?t=' + Date.now();
     }, 800);
+  },
+
+  // 下拉軟更新：只重抓 Sheet 資料，不清快取、不重載、不會被登出
+  async softRefresh(indicator) {
+    try {
+      if (!Trips.current) {
+        await Trips.loadAll();
+      } else {
+        await this.refreshAll();
+      }
+      if (indicator) {
+        indicator.textContent = '✅ 已更新';
+        setTimeout(() => indicator.classList.remove('show'), 800);
+      }
+    } catch (err) {
+      console.error(err);
+      if (indicator) {
+        indicator.textContent = '❌ 更新失敗';
+        setTimeout(() => indicator.classList.remove('show'), 1500);
+      }
+    }
   },
 
   async showMainApp() {
@@ -383,9 +438,11 @@ const App = {
     });
     document.getElementById('tab-expenses').classList.toggle('hidden', tab !== 'expenses');
     document.getElementById('tab-diaries').classList.toggle('hidden', tab !== 'diaries');
+    document.getElementById('tab-map').classList.toggle('hidden', tab !== 'map');
     document.getElementById('tab-settings').classList.toggle('hidden', tab !== 'settings');
     // FAB 只在記帳/日記 tab 顯示
-    document.getElementById('fab').style.display = (tab === 'settings') ? 'none' : '';
+    document.getElementById('fab').style.display = (tab === 'expenses' || tab === 'diaries') ? '' : 'none';
+    if (tab === 'map') this.initOrRefreshMap();
   },
 
   // ===== Renders =====
@@ -526,7 +583,7 @@ const App = {
       try { photoIds = JSON.parse(d.photo_ids || '[]'); } catch {}
       const photosHtml = photoIds.length ? `
         <div class="diary-photos">
-          ${photoIds.map(id => `<img src="${API.driveImageUrl(id)}" alt="" loading="lazy" referrerpolicy="no-referrer" data-photo-id="${id}">`).join('')}
+          ${photoIds.map(id => `<img src="${API.driveImageUrl(id)}" alt="" loading="lazy" referrerpolicy="no-referrer" data-photo-id="${id}" onerror="App.handleImgError(this)">`).join('')}
         </div>` : '';
 
       // 解析 location（兼容純文字跟 JSON）
@@ -1080,6 +1137,100 @@ const App = {
     } catch (err) {
       console.error(err);
       this.toast('操作失敗：' + err.message);
+    }
+  },
+
+  // 照片 thumbnail 載入失敗時改用 Drive API blob URL
+  async handleImgError(img) {
+    if (img.dataset.fallbackTried === '1') return;
+    img.dataset.fallbackTried = '1';
+    const id = img.dataset.photoId;
+    if (!id) return;
+    try {
+      img.src = await API.fetchDriveBlobUrl(id);
+    } catch (err) {
+      console.warn('Image fallback failed:', err);
+    }
+  },
+
+  // Trip 地圖：當前 trip 所有有座標的日記點在 Google Map 上
+  async initOrRefreshMap() {
+    const mapEl = document.getElementById('trip-map');
+    const emptyEl = document.getElementById('trip-map-empty');
+
+    const diariesWithCoords = Diaries.list.map(d => {
+      if (d.location && d.location.startsWith('{')) {
+        try {
+          const info = JSON.parse(d.location);
+          if (info && info.lat && info.lng) {
+            return { ...info, diary: d };
+          }
+        } catch {}
+      }
+      return null;
+    }).filter(Boolean);
+
+    if (diariesWithCoords.length === 0) {
+      mapEl.style.display = 'none';
+      emptyEl.classList.remove('hidden');
+      return;
+    }
+
+    mapEl.style.display = '';
+    emptyEl.classList.add('hidden');
+
+    try {
+      await Maps.load();
+    } catch (err) {
+      mapEl.innerHTML = `<div class="list-empty">地圖載入失敗：${err.message}</div>`;
+      return;
+    }
+
+    if (!this._map) {
+      this._map = new google.maps.Map(mapEl, {
+        zoom: 12,
+        center: { lat: diariesWithCoords[0].lat, lng: diariesWithCoords[0].lng },
+        mapTypeControl: false,
+        streetViewControl: false,
+        fullscreenControl: false,
+      });
+    }
+
+    if (this._mapMarkers) {
+      this._mapMarkers.forEach(m => m.setMap(null));
+    }
+    this._mapMarkers = [];
+
+    let activeInfo = null;
+    const bounds = new google.maps.LatLngBounds();
+    diariesWithCoords.forEach(loc => {
+      const marker = new google.maps.Marker({
+        position: { lat: loc.lat, lng: loc.lng },
+        map: this._map,
+        title: loc.name,
+      });
+      const content = `
+        <div style="max-width:220px; font-family:inherit;">
+          <div style="font-weight:600; font-size:14px;">${this.escapeHtml(loc.diary.mood || '')} ${this.escapeHtml(this.nameOf(loc.diary.author))}</div>
+          <div style="font-size:12px; color:#6b7280;">${loc.diary.date} · ${this.escapeHtml(loc.name)}</div>
+          <div style="margin-top:6px; font-size:13px; white-space:pre-wrap;">${this.escapeHtml((loc.diary.content || '').slice(0, 200))}${(loc.diary.content || '').length > 200 ? '...' : ''}</div>
+        </div>
+      `;
+      const info = new google.maps.InfoWindow({ content });
+      marker.addListener('click', () => {
+        if (activeInfo) activeInfo.close();
+        info.open(this._map, marker);
+        activeInfo = info;
+      });
+      bounds.extend({ lat: loc.lat, lng: loc.lng });
+      this._mapMarkers.push(marker);
+    });
+
+    if (diariesWithCoords.length > 1) {
+      this._map.fitBounds(bounds);
+    } else {
+      this._map.setCenter({ lat: diariesWithCoords[0].lat, lng: diariesWithCoords[0].lng });
+      this._map.setZoom(14);
     }
   },
 

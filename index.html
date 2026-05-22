@@ -11,7 +11,7 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <meta name="mobile-web-app-capable" content="yes">
-  <link rel="stylesheet" href="styles.css?v=8">
+  <link rel="stylesheet" href="styles.css?v=10">
 </head>
 <body>
   <div id="pull-indicator" class="pull-indicator"></div>
@@ -76,13 +76,20 @@
         <div id="diary-list" class="list"></div>
       </section>
 
+      <!-- 地圖 tab -->
+      <section id="tab-map" class="tab-content hidden">
+        <h3 class="section-title">🗺 Trip 地圖（有座標的日記）</h3>
+        <div id="trip-map"></div>
+        <div id="trip-map-empty" class="list-empty hidden">這趟還沒有日記用 Google 地點選位置 — 新增日記時在「地點」欄位用自動推薦選地點，就會出現在地圖上。</div>
+      </section>
+
       <!-- 設定 tab -->
       <section id="tab-settings" class="tab-content hidden">
         <h3 class="section-title">⚙ 設定</h3>
         <div class="settings-list">
           <button id="check-update-btn" class="settings-btn" type="button">
-            <span>🔄 檢查更新</span>
-            <small>清快取並重新載入（也可下拉頁面更新）</small>
+            <span>🔄 檢查新版本</span>
+            <small>強制拿最新 app code（不會登出）</small>
           </button>
           <button id="open-sheet-btn" class="settings-btn" type="button">
             <span>📊 開啟 BroTrip-Data Sheet</span>
@@ -94,7 +101,7 @@
           </button>
         </div>
         <div class="version-info-wrap">
-          <span id="version-info">BroTrip v1.1.2</span>
+          <span id="version-info">BroTrip v1.2.0</span>
         </div>
       </section>
     </main>
@@ -103,6 +110,7 @@
     <nav class="bottom-nav">
       <button class="nav-btn active" data-tab="expenses">💰 記帳</button>
       <button class="nav-btn" data-tab="diaries">📸 日記</button>
+      <button class="nav-btn" data-tab="map">🗺 地圖</button>
       <button class="nav-btn" data-tab="settings">⚙ 設定</button>
     </nav>
 
@@ -256,13 +264,13 @@
   <script src="https://accounts.google.com/gsi/client" async defer></script>
 
   <!-- App 程式碼（順序很重要，後面的依賴前面的）-->
-  <script src="js/config.js?v=8"></script>
-  <script src="js/auth.js?v=8"></script>
-  <script src="js/api.js?v=8"></script>
-  <script src="js/trips.js?v=8"></script>
-  <script src="js/expenses.js?v=8"></script>
-  <script src="js/diaries.js?v=8"></script>
-  <script src="js/app.js?v=8"></script>
+  <script src="js/config.js?v=10"></script>
+  <script src="js/auth.js?v=10"></script>
+  <script src="js/api.js?v=10"></script>
+  <script src="js/trips.js?v=10"></script>
+  <script src="js/expenses.js?v=10"></script>
+  <script src="js/diaries.js?v=10"></script>
+  <script src="js/app.js?v=10"></script>
 
   <!-- Service Worker -->
   <script>
