@@ -67,4 +67,27 @@ const Trips = {
       return [];
     }
   },
+
+  // 編輯 trip（trip_id 不能改，其他都可改）
+  async update(tripId, data) {
+    const existing = this.list.find(t => t.trip_id === tripId);
+    if (!existing) throw new Error('找不到該 trip');
+    const newRow = [
+      existing.trip_id,
+      data.name,
+      data.start_date,
+      data.end_date,
+      JSON.stringify(data.members),
+      existing.created_by,
+      existing.created_at,
+    ];
+    await API.updateRow('Trips', tripId, newRow);
+    Object.assign(existing, {
+      name: data.name,
+      start_date: data.start_date,
+      end_date: data.end_date,
+      members: JSON.stringify(data.members),
+    });
+    return existing;
+  },
 };

@@ -50,6 +50,7 @@ const App = {
   _selectedPlace: null,
   _editingExpenseId: null,
   _editingDiaryId: null,
+  _editingTripId: null,
   _diaryFilter: { authors: [], dateFrom: '', dateTo: '' },
 
   async init() {
@@ -155,6 +156,23 @@ const App = {
       if (img && img.dataset.photoId) {
         document.getElementById('lightbox-img').src = API.driveImageUrl(img.dataset.photoId, 1600);
         lightbox.showModal();
+      }
+    });
+
+    // Trip list select / edit (event delegation)
+    document.getElementById('trip-list').addEventListener('click', e => {
+      const editBtn = e.target.closest('[data-action="edit-trip"]');
+      if (editBtn) {
+        e.stopPropagation();
+        this.closeModal('modal-trips');
+        this.openEditTripModal(editBtn.dataset.tripId);
+        return;
+      }
+      const selectArea = e.target.closest('[data-action="select-trip"]');
+      if (selectArea) {
+        Trips.setCurrent(selectArea.dataset.tripId);
+        this.closeModal('modal-trips');
+        this.refreshAll();
       }
     });
 
@@ -775,21 +793,14 @@ const App = {
       el.innerHTML = '<div class="list-empty">還沒有任何 trip</div>';
     } else {
       el.innerHTML = Trips.list.map(t => `
-        <div class="trip-item ${Trips.current && t.trip_id === Trips.current.trip_id ? 'current' : ''}" data-trip-id="${this.escapeAttr(t.trip_id)}">
-          <div>
+        <div class="trip-item ${Trips.current && t.trip_id === Trips.current.trip_id ? 'current' : ''}">
+          <div class="trip-select" data-action="select-trip" data-trip-id="${this.escapeAttr(t.trip_id)}">
             <div><strong>${this.escapeHtml(t.name)}</strong></div>
             <div class="dates">${t.start_date} ~ ${t.end_date}</div>
           </div>
-          <span>→</span>
+          <button data-action="edit-trip" data-trip-id="${this.escapeAttr(t.trip_id)}" type="button" title="編輯成員/日期" class="trip-edit-btn">✏️</button>
         </div>
       `).join('');
-      el.querySelectorAll('.trip-item').forEach(item => {
-        item.addEventListener('click', async () => {
-          Trips.setCurrent(item.dataset.tripId);
-          this.closeModal('modal-trips');
-          await this.refreshAll();
-        });
-      });
     }
     this.openModal('modal-trips');
   },
@@ -797,9 +808,36 @@ const App = {
   openNewTripModal() {
     const form = document.getElementById('new-trip-form');
     form.reset();
+    this._editingTripId = null;
+    form.elements['trip_id'].disabled = false;
     form.elements['start_date'].value = new Date().toISOString().slice(0, 10);
     form.elements['members'].value = Auth.user.email;
     delete form.elements['trip_id'].dataset.touched;
+    document.querySelector('#modal-new-trip .modal-header h2').textContent = '新增 Trip';
+    document.querySelector('#modal-new-trip [type="submit"]').textContent = '建立';
+    this.openModal('modal-new-trip');
+  },
+
+  // 編輯既有 trip（reuse new-trip modal）
+  openEditTripModal(tripId) {
+    const t = Trips.list.find(x => x.trip_id === tripId);
+    if (!t) { this.toast('找不到該 trip'); return; }
+    const form = document.getElementById('new-trip-form');
+    form.reset();
+    this._editingTripId = tripId;
+    form.elements['trip_id'].value = t.trip_id;
+    form.elements['trip_id'].disabled = true;  // ID 不能改
+    form.elements['name'].value = t.name;
+    form.elements['start_date'].value = t.start_date;
+    form.elements['end_date'].value = t.end_date;
+    try {
+      const members = JSON.parse(t.members || '[]');
+      form.elements['members'].value = Array.isArray(members) ? members.join('\n') : '';
+    } catch {
+      form.elements['members'].value = '';
+    }
+    document.querySelector('#modal-new-trip .modal-header h2').textContent = '編輯 Trip';
+    document.querySelector('#modal-new-trip [type="submit"]').textContent = '儲存';
     this.openModal('modal-new-trip');
   },
 
@@ -949,7 +987,8 @@ const App = {
     const form = e.target;
     const submitBtn = form.querySelector('[type="submit"]');
     submitBtn.disabled = true;
-    submitBtn.textContent = '建立中...';
+    const origText = submitBtn.textContent;
+    submitBtn.textContent = this._editingTripId ? '更新中...' : '建立中...';
 
     try {
       const members = form.elements['members'].value
@@ -958,31 +997,48 @@ const App = {
         this.toast('至少填一個成員 email');
         return;
       }
-      const tripId = form.elements['trip_id'].value.trim().toLowerCase();
-      if (!/^[a-z0-9-]+$/.test(tripId)) {
-        this.toast('Trip ID 只能用英文小寫、數字、減號');
-        return;
+
+      if (this._editingTripId) {
+        // 編輯模式
+        await Trips.update(this._editingTripId, {
+          name: form.elements['name'].value.trim(),
+          start_date: form.elements['start_date'].value,
+          end_date: form.elements['end_date'].value,
+          members,
+        });
+        this.closeModal('modal-new-trip');
+        this.toast('✅ Trip 已更新');
+        await this.refreshAll();
+      } else {
+        // 新增模式
+        const tripId = form.elements['trip_id'].value.trim().toLowerCase();
+        if (!/^[a-z0-9-]+$/.test(tripId)) {
+          this.toast('Trip ID 只能用英文小寫、數字、減號');
+          return;
+        }
+        if (Trips.list.find(t => t.trip_id === tripId)) {
+          this.toast('Trip ID 已存在，換一個');
+          return;
+        }
+        await Trips.create(
+          tripId,
+          form.elements['name'].value.trim(),
+          form.elements['start_date'].value,
+          form.elements['end_date'].value,
+          members,
+        );
+        this.closeModal('modal-new-trip');
+        this.toast('✅ Trip 已建立');
+        await this.refreshAll();
       }
-      if (Trips.list.find(t => t.trip_id === tripId)) {
-        this.toast('Trip ID 已存在，換一個');
-        return;
-      }
-      await Trips.create(
-        tripId,
-        form.elements['name'].value.trim(),
-        form.elements['start_date'].value,
-        form.elements['end_date'].value,
-        members,
-      );
-      this.closeModal('modal-new-trip');
-      this.toast('✅ Trip 已建立');
-      await this.refreshAll();
     } catch (err) {
       console.error(err);
-      this.toast('建立失敗：' + err.message);
+      this.toast((this._editingTripId ? '更新' : '建立') + '失敗：' + err.message);
     } finally {
       submitBtn.disabled = false;
-      submitBtn.textContent = '建立';
+      submitBtn.textContent = origText;
+      this._editingTripId = null;
+      form.elements['trip_id'].disabled = false;
     }
   },
 
