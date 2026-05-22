@@ -132,4 +132,46 @@ const API = {
   newId() {
     return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
   },
+
+  // 更新某 row（用第一欄 id 找到 row index，再用 PUT 覆寫整列）
+  async updateRow(sheetName, id, newRow) {
+    const rows = await this.getSheet(sheetName);
+    const idx = rows.findIndex(r => r[0] === id);
+    if (idx < 0) throw new Error('找不到該筆資料');
+    const rowNum = idx + 1; // 1-based
+    // 算 range: 最多支援到 Z 欄（26 cols 夠用）
+    const endCol = String.fromCharCode(65 + newRow.length - 1);
+    const range = `${sheetName}!A${rowNum}:${endCol}${rowNum}`;
+    return await this.sheetsRequest(
+      `/values/${encodeURIComponent(range)}?valueInputOption=RAW`,
+      {
+        method: 'PUT',
+        body: JSON.stringify({ values: [newRow] }),
+      }
+    );
+  },
+
+  // 刪除某 row（batchUpdate deleteDimension，整列刪除避免留空格）
+  async deleteRow(sheetName, id) {
+    const sheetId = CONFIG.SHEET_TAB_IDS[sheetName];
+    if (sheetId === undefined) throw new Error('未知的 sheet: ' + sheetName);
+    const rows = await this.getSheet(sheetName);
+    const idx = rows.findIndex(r => r[0] === id);
+    if (idx < 0) throw new Error('找不到該筆資料');
+    return await this.sheetsRequest(':batchUpdate', {
+      method: 'POST',
+      body: JSON.stringify({
+        requests: [{
+          deleteDimension: {
+            range: {
+              sheetId,
+              dimension: 'ROWS',
+              startIndex: idx,
+              endIndex: idx + 1,
+            },
+          },
+        }],
+      }),
+    });
+  },
 };

@@ -50,6 +50,7 @@ const Diaries = {
       locationStr = data.location;
     }
 
+    const createdAt = new Date().toISOString();
     const row = [
       id,
       Trips.current.trip_id,
@@ -59,7 +60,8 @@ const Diaries = {
       data.mood || '',
       JSON.stringify(photoIds),
       locationStr,
-      new Date().toISOString(),
+      createdAt,
+      '',  // pinned (預設空字串 = 未置頂)
     ];
     await API.appendRow('Diaries', row);
     const newDiary = {
@@ -71,9 +73,84 @@ const Diaries = {
       mood: data.mood || '',
       photo_ids: JSON.stringify(photoIds),
       location: locationStr,
-      created_at: new Date().toISOString(),
+      created_at: createdAt,
+      pinned: '',
     };
     this.list.unshift(newDiary);
     return newDiary;
+  },
+
+  // 編輯（只能改自己的）
+  async update(id, data) {
+    const existing = this.list.find(d => d.id === id);
+    if (!existing) throw new Error('找不到該日記');
+    if (existing.author !== Auth.user.email) throw new Error('只能改自己的日記');
+
+    let locationStr = '';
+    if (data.place) {
+      locationStr = JSON.stringify({
+        name: data.place.name,
+        address: data.place.address,
+        place_id: data.place.place_id,
+        lat: data.place.lat,
+        lng: data.place.lng,
+      });
+    } else if (data.location) {
+      locationStr = data.location;
+    }
+
+    const newRow = [
+      existing.id,
+      existing.trip_id,
+      data.date,
+      existing.author,
+      data.content,
+      data.mood || '',
+      existing.photo_ids,  // 編輯不改照片
+      locationStr,
+      existing.created_at,
+      existing.pinned || '',
+    ];
+    await API.updateRow('Diaries', id, newRow);
+    Object.assign(existing, {
+      date: data.date,
+      content: data.content,
+      mood: data.mood || '',
+      location: locationStr,
+    });
+    return existing;
+  },
+
+  // 刪除（只能刪自己的）
+  async delete(id) {
+    const existing = this.list.find(d => d.id === id);
+    if (!existing) throw new Error('找不到該日記');
+    if (existing.author !== Auth.user.email) throw new Error('只能刪自己的日記');
+    await API.deleteRow('Diaries', id);
+    const idx = this.list.indexOf(existing);
+    if (idx >= 0) this.list.splice(idx, 1);
+  },
+
+  // 切換置頂（任何人都可以）
+  async togglePinned(id) {
+    const existing = this.list.find(d => d.id === id);
+    if (!existing) throw new Error('找不到該日記');
+    const wasPinned = String(existing.pinned).toUpperCase() === 'TRUE';
+    const newPinned = wasPinned ? 'FALSE' : 'TRUE';
+    const newRow = [
+      existing.id,
+      existing.trip_id,
+      existing.date,
+      existing.author,
+      existing.content,
+      existing.mood,
+      existing.photo_ids,
+      existing.location,
+      existing.created_at,
+      newPinned,
+    ];
+    await API.updateRow('Diaries', id, newRow);
+    existing.pinned = newPinned;
+    return !wasPinned;
   },
 };

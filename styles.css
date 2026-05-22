@@ -547,3 +547,189 @@ summary {
 .diary-photos img:active {
   transform: scale(0.97);
 }
+
+/* === Pull to refresh indicator === */
+.pull-indicator {
+  display: none;
+  text-align: center;
+  padding: 10px;
+  font-size: 14px;
+  font-weight: 600;
+  color: white;
+  background: var(--primary);
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 1000;
+}
+.pull-indicator.show { display: block; }
+.pull-indicator.triggered { background: #10b981; }
+
+/* === Filter bar === */
+.filter-bar {
+  background: white;
+  padding: 12px 14px;
+  border-radius: 12px;
+  box-shadow: var(--shadow);
+  margin-bottom: 12px;
+}
+.filter-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.filter-row:last-child { margin-bottom: 0; }
+.filter-label {
+  font-size: 13px;
+  color: var(--text-light);
+  font-weight: 600;
+  min-width: 44px;
+}
+.filter-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  flex: 1;
+}
+.filter-chip {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  padding: 4px 12px;
+  border-radius: 16px;
+  font-size: 13px;
+  cursor: pointer;
+  color: var(--text);
+  font-family: inherit;
+}
+.filter-chip.active {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: white;
+}
+.filter-date {
+  padding: 4px 8px;
+  font-size: 14px;
+  width: 130px;
+}
+.filter-footer {
+  justify-content: space-between;
+  font-size: 12px;
+  color: var(--text-light);
+  padding-top: 4px;
+  border-top: 1px dashed var(--border);
+}
+.btn-link {
+  background: transparent;
+  border: none;
+  color: var(--primary);
+  font-size: 13px;
+  cursor: pointer;
+  padding: 4px 8px;
+  font-weight: 600;
+}
+
+/* === Item actions (edit/delete/pin) === */
+.item-actions {
+  display: flex;
+  gap: 2px;
+  margin-left: auto;
+  align-items: center;
+}
+.item-actions button {
+  background: transparent;
+  border: none;
+  font-size: 16px;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 4px;
+  color: var(--text-light);
+  line-height: 1;
+}
+.item-actions button:hover { background: var(--bg); }
+.item-actions button:active { transform: scale(0.92); }
+
+/* Pinned diary */
+.diary-item.pinned {
+  border-left: 4px solid #f59e0b;
+  background: #fffbeb;
+}
+
+/* === Split row (new UX) === */
+.split-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+.split-row input[type="checkbox"] {
+  width: 20px;
+  height: 20px;
+  margin: 0;
+  flex-shrink: 0;
+}
+.split-row label {
+  flex: 1;
+  margin: 0;
+  font-weight: 500;
+  cursor: pointer;
+  font-size: 15px;
+}
+.split-row input[type="number"] {
+  width: 120px;
+  padding: 6px 10px;
+  font-size: 15px;
+}
+.split-summary {
+  margin-top: 12px;
+  padding: 10px 12px;
+  background: var(--bg);
+  border-radius: 8px;
+  font-size: 13px;
+  color: var(--text);
+  text-align: center;
+  min-height: 18px;
+}
+.split-summary.error {
+  background: #fee2e2;
+  color: #991b1b;
+  font-weight: 600;
+}
+
+/* === Settings tab === */
+.settings-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 24px;
+}
+.settings-btn {
+  background: white;
+  border: 1px solid var(--border);
+  padding: 14px 16px;
+  border-radius: 8px;
+  cursor: pointer;
+  text-align: left;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  font-size: 15px;
+  color: var(--text);
+  font-family: inherit;
+}
+.settings-btn:hover { background: var(--bg); }
+.settings-btn:active { transform: scale(0.99); }
+.settings-btn small {
+  color: var(--text-light);
+  font-size: 12px;
+  font-weight: 400;
+}
+.version-info-wrap {
+  text-align: center;
+  padding: 16px;
+  font-size: 12px;
+  color: var(--text-light);
+}

@@ -67,15 +67,24 @@ const Expenses = {
       try { splits = JSON.parse(e.splits); } catch { return; }
       if (!Array.isArray(splits) || splits.length === 0) return;
 
-      const totalRatio = splits.reduce((s, x) => s + (parseFloat(x.ratio) || 0), 0);
-      if (totalRatio === 0) return;
-
       if (!balances[currency]) balances[currency] = {};
       balances[currency][e.payer] = (balances[currency][e.payer] || 0) + amount;
-      splits.forEach(s => {
-        const share = amount * (parseFloat(s.ratio) || 0) / totalRatio;
-        balances[currency][s.email] = (balances[currency][s.email] || 0) - share;
-      });
+
+      // 兼容兩種格式：新版 `share`（具體金額），舊版 `ratio`（份數）
+      const hasShare = splits.some(s => s.share !== undefined);
+      if (hasShare) {
+        splits.forEach(s => {
+          const share = parseFloat(s.share) || 0;
+          balances[currency][s.email] = (balances[currency][s.email] || 0) - share;
+        });
+      } else {
+        const totalRatio = splits.reduce((sum, x) => sum + (parseFloat(x.ratio) || 0), 0);
+        if (totalRatio === 0) return;
+        splits.forEach(s => {
+          const share = amount * (parseFloat(s.ratio) || 0) / totalRatio;
+          balances[currency][s.email] = (balances[currency][s.email] || 0) - share;
+        });
+      }
     });
 
     const result = {};
@@ -111,5 +120,47 @@ const Expenses = {
       result[currency] = transfers;
     }
     return result;
+  },
+
+  // 編輯（只能改自己付的支出）
+  async update(id, data) {
+    const existing = this.list.find(e => e.id === id);
+    if (!existing) throw new Error('找不到該支出');
+    if (existing.payer !== Auth.user.email) throw new Error('只能改自己付的支出');
+    const splits = JSON.stringify(data.splits);
+    const newRow = [
+      existing.id,
+      existing.trip_id,
+      data.date,
+      data.payer,
+      data.amount,
+      data.currency || 'TWD',
+      data.category || '',
+      data.description || '',
+      splits,
+      existing.photo_url || '',
+      existing.created_at,
+    ];
+    await API.updateRow('Expenses', id, newRow);
+    Object.assign(existing, {
+      date: data.date,
+      payer: data.payer,
+      amount: String(data.amount),
+      currency: data.currency || 'TWD',
+      category: data.category || '',
+      description: data.description || '',
+      splits,
+    });
+    return existing;
+  },
+
+  // 刪除（只能刪自己付的）
+  async delete(id) {
+    const existing = this.list.find(e => e.id === id);
+    if (!existing) throw new Error('找不到該支出');
+    if (existing.payer !== Auth.user.email) throw new Error('只能刪自己付的支出');
+    await API.deleteRow('Expenses', id);
+    const idx = this.list.indexOf(existing);
+    if (idx >= 0) this.list.splice(idx, 1);
   },
 };

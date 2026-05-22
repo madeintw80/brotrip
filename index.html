@@ -11,9 +11,11 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <meta name="mobile-web-app-capable" content="yes">
-  <link rel="stylesheet" href="styles.css?v=5">
+  <link rel="stylesheet" href="styles.css?v=6">
 </head>
 <body>
+  <div id="pull-indicator" class="pull-indicator"></div>
+
   <!-- 載入中 -->
   <div id="loading" class="screen">
     <div class="logo">BroTrip</div>
@@ -54,8 +56,46 @@
 
       <!-- 日記 tab -->
       <section id="tab-diaries" class="tab-content hidden">
+        <div id="diary-filter" class="filter-bar">
+          <div class="filter-row">
+            <span class="filter-label">作者：</span>
+            <div id="filter-authors" class="filter-chips"></div>
+          </div>
+          <div class="filter-row">
+            <span class="filter-label">日期：</span>
+            <input type="date" id="filter-date-from" class="filter-date">
+            <span style="color:var(--text-light);">~</span>
+            <input type="date" id="filter-date-to" class="filter-date">
+          </div>
+          <div class="filter-row filter-footer">
+            <span id="filter-summary"></span>
+            <button id="filter-clear" type="button" class="btn-link">清除篩選</button>
+          </div>
+        </div>
         <h3 class="section-title">📸 出遊日記</h3>
         <div id="diary-list" class="list"></div>
+      </section>
+
+      <!-- 設定 tab -->
+      <section id="tab-settings" class="tab-content hidden">
+        <h3 class="section-title">⚙ 設定</h3>
+        <div class="settings-list">
+          <button id="check-update-btn" class="settings-btn" type="button">
+            <span>🔄 檢查更新</span>
+            <small>清快取並重新載入（也可下拉頁面更新）</small>
+          </button>
+          <button id="open-sheet-btn" class="settings-btn" type="button">
+            <span>📊 開啟 BroTrip-Data Sheet</span>
+            <small>看原始資料 / 手動修</small>
+          </button>
+          <button id="open-drive-btn" class="settings-btn" type="button">
+            <span>📂 開啟 Drive 資料夾</span>
+            <small>看照片 / 分享給朋友</small>
+          </button>
+        </div>
+        <div class="version-info-wrap">
+          <span id="version-info">BroTrip v1.1.0</span>
+        </div>
       </section>
     </main>
 
@@ -63,6 +103,7 @@
     <nav class="bottom-nav">
       <button class="nav-btn active" data-tab="expenses">💰 記帳</button>
       <button class="nav-btn" data-tab="diaries">📸 日記</button>
+      <button class="nav-btn" data-tab="settings">⚙ 設定</button>
     </nav>
 
     <!-- 浮動新增按鈕 -->
@@ -110,13 +151,10 @@
           <input type="text" name="description" placeholder="例：拉麵晚餐">
         </label>
         <fieldset class="split-section">
-          <legend>分帳人（誰要分這筆）</legend>
-          <div id="split-checkboxes"></div>
-          <details>
-            <summary>進階：設不同比例（預設均分）</summary>
-            <div id="split-ratios"></div>
-            <p class="hint">數字代表「份數」，例 1/1/2 = A 一份、B 一份、C 兩份（C 多付一倍）</p>
-          </details>
+          <legend>分帳（每人應付金額）</legend>
+          <p class="hint">空白欄位 = 自動均分剩餘。<br>例：a 欄填 500、其他空 → a 固定 500、其他人均分剩下。代墊 b 出 500 → 只勾 b、b 填 500、付款人選 a。</p>
+          <div id="split-rows"></div>
+          <div id="split-summary" class="split-summary"></div>
         </fieldset>
         <div class="modal-actions">
           <button type="button" class="btn-cancel">取消</button>
@@ -218,13 +256,13 @@
   <script src="https://accounts.google.com/gsi/client" async defer></script>
 
   <!-- App 程式碼（順序很重要，後面的依賴前面的）-->
-  <script src="js/config.js?v=5"></script>
-  <script src="js/auth.js?v=5"></script>
-  <script src="js/api.js?v=5"></script>
-  <script src="js/trips.js?v=5"></script>
-  <script src="js/expenses.js?v=5"></script>
-  <script src="js/diaries.js?v=5"></script>
-  <script src="js/app.js?v=5"></script>
+  <script src="js/config.js?v=6"></script>
+  <script src="js/auth.js?v=6"></script>
+  <script src="js/api.js?v=6"></script>
+  <script src="js/trips.js?v=6"></script>
+  <script src="js/expenses.js?v=6"></script>
+  <script src="js/diaries.js?v=6"></script>
+  <script src="js/app.js?v=6"></script>
 
   <!-- Service Worker -->
   <script>
