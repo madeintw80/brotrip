@@ -393,12 +393,52 @@ const App = {
     document.getElementById('notif-list').addEventListener('click', (e) => {
       const item = e.target.closest('.notif-item');
       if (!item) return;
-      const diaryId = item.dataset.diaryId;
-      if (diaryId) {
-        Notifications.markAllRead();
-        this.updateNotifBadge();
-        this.closeModal('modal-notifications');
-        this.openDiaryFromMap(diaryId);
+      const type = item.dataset.type;
+      const refId = item.dataset.refId;
+      if (!refId) return;
+
+      Notifications.markAllRead();
+      this.updateNotifBadge();
+      this.closeModal('modal-notifications');
+
+      // Route 依 type
+      if (type === 'mention' || type === 'comment' || type === 'comment-mention') {
+        this.openDiaryFromMap(refId);
+      } else if (type === 'trip-add') {
+        // refId = trip_id
+        const trip = Trips.list.find(t => t.trip_id === refId);
+        if (trip) {
+          Trips.setCurrent(refId);
+          Expenses._filter();
+          Diaries._filter();
+          this.renderAll();
+        }
+      } else if (type === 'expense-split') {
+        // refId = expense_id
+        const expense = Expenses.allList.find(e => e.id === refId);
+        if (expense) {
+          // 切到該 trip
+          if (!Trips.current || Trips.current.trip_id !== expense.trip_id) {
+            Trips.setCurrent(expense.trip_id);
+            Expenses._filter();
+            Diaries._filter();
+            this.renderAll();
+          }
+          this.switchTab('expenses');
+          setTimeout(() => this.openExpenseModal(refId), 200);
+        } else {
+          this.switchTab('expenses');
+        }
+      } else if (type === 'expense-settle') {
+        // refId = trip_id（markAllSettled 用 trip_id）
+        const trip = Trips.list.find(t => t.trip_id === refId);
+        if (trip) {
+          Trips.setCurrent(refId);
+          Expenses._filter();
+          Diaries._filter();
+          this.renderAll();
+          this.switchTab('expenses');
+        }
       }
     });
   },
@@ -1765,9 +1805,16 @@ const App = {
       if (n.type === 'mention') { typeIcon = '🏷'; text = `<strong>${this.nameOf(n.from_email)}</strong> 在日記 tag 了你`; }
       else if (n.type === 'comment') { typeIcon = '💬'; text = `<strong>${this.nameOf(n.from_email)}</strong> 在你的日記留言`; }
       else if (n.type === 'comment-mention') { typeIcon = '🏷'; text = `<strong>${this.nameOf(n.from_email)}</strong> 在留言中 tag 了你`; }
+      else if (n.type === 'trip-add') {
+        const trip = Trips.list.find(t => t.trip_id === n.diary_id);
+        typeIcon = '✈️';
+        text = `<strong>${this.nameOf(n.from_email)}</strong> 把你加進 trip「${trip ? this.escapeHtml(trip.name) : this.escapeHtml(n.diary_id)}」`;
+      }
+      else if (n.type === 'expense-split') { typeIcon = '💰'; text = `<strong>${this.nameOf(n.from_email)}</strong> 新增/編輯了支出，你也要分`; }
+      else if (n.type === 'expense-settle') { typeIcon = '🏁'; text = `<strong>${this.nameOf(n.from_email)}</strong> 結清了和你有關的支出`; }
       else text = '通知';
       return `
-        <div class="notif-item ${isUnread ? 'unread' : ''}" data-diary-id="${this.escapeAttr(n.diary_id)}">
+        <div class="notif-item ${isUnread ? 'unread' : ''}" data-type="${this.escapeAttr(n.type)}" data-ref-id="${this.escapeAttr(n.diary_id)}">
           <span class="notif-icon">${typeIcon}</span>
           <div class="notif-content">
             <div class="notif-text">${text}</div>

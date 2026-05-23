@@ -82,6 +82,19 @@ const Expenses = {
     this.allList.push(newExpense);
     this._filter();
     Cache.set('expenses', this.allList);
+
+    // 通知 splits 中除自己外的人（expense-split）
+    if (typeof Notifications !== 'undefined') {
+      try {
+        const uniq = [...new Set((data.splits || []).map(s => s.email))]
+          .filter(email => email !== Auth.user.email);
+        if (uniq.length > 0) {
+          await Notifications.createBatch(uniq.map(email => ({
+            target_email: email, type: 'expense-split', diary_id: id,
+          })));
+        }
+      } catch (err) { console.warn('expense-split notif failed:', err); }
+    }
     return newExpense;
   },
 
@@ -167,6 +180,13 @@ const Expenses = {
     const existing = this.list.find(e => e.id === id);
     if (!existing) throw new Error('找不到該支出');
     // v1.7.0：拿掉 payer 限制，任何 trip 成員都可改（共享記帳）
+
+    // Diff: 找新加入分帳的人（要通知）
+    let oldSplitEmails = new Set();
+    try { JSON.parse(existing.splits || '[]').forEach(s => oldSplitEmails.add(s.email)); } catch {}
+    const newlyAddedSplits = [...new Set((data.splits || []).map(s => s.email))]
+      .filter(email => !oldSplitEmails.has(email) && email !== Auth.user.email);
+
     const splits = JSON.stringify(data.splits);
 
     let payers;
@@ -210,6 +230,15 @@ const Expenses = {
       settled: newSettled,
     });
     Cache.set('expenses', this.allList);
+
+    // 通知新加入分帳的人
+    if (newlyAddedSplits.length > 0 && typeof Notifications !== 'undefined') {
+      try {
+        await Notifications.createBatch(newlyAddedSplits.map(email => ({
+          target_email: email, type: 'expense-split', diary_id: existing.id,
+        })));
+      } catch (err) { console.warn('expense-split notif failed:', err); }
+    }
     return existing;
   },
 
@@ -261,6 +290,25 @@ const Expenses = {
       e.settled = 'TRUE';
     }
     Cache.set('expenses', this.allList);
+
+    // 通知所有相關 split 成員（除自己）— 每人收 ONE summary 通知
+    if (typeof Notifications !== 'undefined') {
+      const affected = new Set();
+      targets.forEach(e => {
+        try {
+          JSON.parse(e.splits || '[]').forEach(s => {
+            if (s.email && s.email !== Auth.user.email) affected.add(s.email);
+          });
+        } catch {}
+      });
+      if (affected.size > 0) {
+        try {
+          await Notifications.createBatch([...affected].map(email => ({
+            target_email: email, type: 'expense-settle', diary_id: tripId,
+          })));
+        } catch (err) { console.warn('expense-settle notif failed:', err); }
+      }
+    }
     return targets.length;
   },
 };

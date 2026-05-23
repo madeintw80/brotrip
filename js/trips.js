@@ -68,6 +68,18 @@ const Trips = {
     this.list.push(newTrip);
     Cache.set('trips', this.list);
     this.setCurrent(tripId);
+
+    // 通知被加入的人（trip-add）
+    if (typeof Notifications !== 'undefined') {
+      const others = members.filter(e => e !== Auth.user.email);
+      if (others.length > 0) {
+        try {
+          await Notifications.createBatch(others.map(email => ({
+            target_email: email, type: 'trip-add', diary_id: tripId,
+          })));
+        } catch (err) { console.warn('trip-add notif failed:', err); }
+      }
+    }
     return newTrip;
   },
 
@@ -92,6 +104,13 @@ const Trips = {
   async update(tripId, data) {
     const existing = this.list.find(t => t.trip_id === tripId);
     if (!existing) throw new Error('找不到該 trip');
+
+    // Diff: 找出新加入的成員（要通知他們）
+    let oldMembers = [];
+    try { oldMembers = JSON.parse(existing.members || '[]'); } catch {}
+    const oldSet = new Set(oldMembers);
+    const newlyAdded = (data.members || []).filter(e => !oldSet.has(e) && e !== Auth.user.email);
+
     const newRow = [
       existing.trip_id,
       data.name,
@@ -109,6 +128,15 @@ const Trips = {
       members: JSON.stringify(data.members),
     });
     Cache.set('trips', this.list);
+
+    // 通知 newly added 的成員
+    if (newlyAdded.length > 0 && typeof Notifications !== 'undefined') {
+      try {
+        await Notifications.createBatch(newlyAdded.map(email => ({
+          target_email: email, type: 'trip-add', diary_id: existing.trip_id,
+        })));
+      } catch (err) { console.warn('trip-add notif failed:', err); }
+    }
     return existing;
   },
 };
