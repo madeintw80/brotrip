@@ -1041,6 +1041,39 @@ summary {
   font-size: 16px;
 }
 
+/* === Reauth banner (v2.0.2 — session 過期輕量提示，取代全螢幕登入畫面) === */
+.reauth-banner {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 1001;
+  background: #3b82f6;
+  color: white;
+  padding: 12px 16px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 14px;
+  font-weight: 500;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+  padding-top: max(12px, env(safe-area-inset-top, 12px));
+}
+.reauth-banner > div { flex: 1; }
+.reauth-banner strong { font-weight: 700; }
+.reauth-banner button {
+  background: white;
+  color: #1e40af;
+  border: none;
+  padding: 6px 16px;
+  border-radius: 16px;
+  font-weight: 700;
+  cursor: pointer;
+  font-size: 13px;
+  flex-shrink: 0;
+}
+.reauth-banner button:disabled { opacity: 0.6; cursor: wait; }
+
 /* === Update banner（綠色友善版，提示有新版可重整） === */
 .update-banner {
   position: fixed;

@@ -117,6 +117,22 @@ const Auth = {
     if (this.accessToken && Date.now() < this.expiresAt) {
       return this.accessToken;
     }
+    // ⭐ v2.0.2 silent refresh 加 retry（iOS PWA 對 GIS popup 不穩，第一次常 fail）
+    let lastErr = null;
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      try {
+        return await this._silentRefresh();
+      } catch (err) {
+        lastErr = err;
+        if (attempt < 2) {
+          await new Promise(r => setTimeout(r, 1200));
+        }
+      }
+    }
+    throw lastErr || new Error('silent refresh failed');
+  },
+
+  _silentRefresh() {
     return new Promise((resolve, reject) => {
       this.tokenClient.callback = (resp) => {
         if (resp.error) {

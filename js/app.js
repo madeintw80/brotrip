@@ -79,14 +79,20 @@ const App = {
 
     if (Auth.user) {
       try {
-        const timeout = new Promise((_, rej) => setTimeout(() => rej(new Error('silent timeout')), 5000));
+        // ⭐ v2.0.2 timeout 5s → 10s（iOS GIS 載入慢，給多一點時間）
+        const timeout = new Promise((_, rej) => setTimeout(() => rej(new Error('silent timeout')), 10000));
         await Promise.race([Auth.ensureToken(), timeout]);
         document.getElementById('loading').classList.add('hidden');
         await this.showMainApp();
         return;
       } catch (err) {
         console.warn('Silent re-auth failed:', err);
-        Auth.user = null;
+        // ⭐ v2.0.2 silent fail 不清 user，改進主畫面 with cache + 顯示續登 banner
+        // 比起跳全螢幕登入畫面更輕量，用戶按 banner 一秒續登（Google 通常還記得授權）
+        document.getElementById('loading').classList.add('hidden');
+        this.showReauthBanner();
+        await this._showMainAppCacheOnly();
+        return;
       }
     }
 
@@ -1149,6 +1155,27 @@ const App = {
     } else counter.style.display = 'none';
   },
 
+  // ⭐ v2.0.2 token 失效時的降級版：只顯示 cache，不打 API（避免 401 一直噴）
+  async _showMainAppCacheOnly() {
+    document.getElementById('login-screen').classList.add('hidden');
+    document.getElementById('app').classList.remove('hidden');
+    const img = document.getElementById('user-avatar');
+    if (Auth.user && Auth.user.picture) { img.src = Auth.user.picture; img.style.display = ''; }
+    else img.style.display = 'none';
+    const hasCache = Trips.loadFromCache();
+    if (hasCache && Trips.current) {
+      Nicknames.loadFromCache();
+      Expenses.loadFromCache();
+      Diaries.loadFromCache();
+      Comments.loadFromCache();
+      Notifications.loadFromCache();
+      if (typeof Itineraries !== 'undefined') Itineraries.loadFromCache();
+      if (typeof Settlements !== 'undefined') Settlements.loadFromCache();
+      this.renderAll();
+      this.updateNotifBadge();
+    }
+  },
+
   async showMainApp() {
     document.getElementById('login-screen').classList.add('hidden');
     document.getElementById('app').classList.remove('hidden');
@@ -1190,7 +1217,8 @@ const App = {
       } else if (msg.includes('404')) {
         this.showErrorBanner('⚠️ 找不到 BroTrip-Data Sheet。請聯絡管理員');
       } else if (msg.includes('401') || msg.includes('Unauthorized')) {
-        this.showErrorBanner(`⚠️ 登入 token 失效。試試 ⚙ 設定 → 🚨 完全重置`);
+        // ⭐ v2.0.2 不再叫用戶重置，改用輕量續登 banner
+        this.showReauthBanner();
       } else {
         this.showErrorBanner('⚠️ 載入失敗：' + msg.slice(0, 150));
       }
@@ -1212,6 +1240,43 @@ const App = {
     if (closeBtn) {
       closeBtn.addEventListener('click', () => banner.classList.add('hidden'));
     }
+  },
+
+  // ⭐ v2.0.2 session 過期橫幅（取代全螢幕登入畫面 — 用戶看到 cache + 按一下續登）
+  showReauthBanner() {
+    if (document.getElementById('reauth-banner')) return;
+    const banner = document.createElement('div');
+    banner.id = 'reauth-banner';
+    banner.className = 'reauth-banner';
+    const name = Auth.user ? (Auth.user.name || Auth.user.email.split('@')[0]) : '你';
+    banner.innerHTML = `
+      <div>👋 歡迎回來 <strong>${this.escapeHtml(name)}</strong>，session 過期了，續登才能存取最新資料</div>
+      <button type="button" id="reauth-btn">續登</button>
+    `;
+    document.body.insertBefore(banner, document.body.firstChild);
+    document.getElementById('reauth-btn').addEventListener('click', async () => {
+      const btn = document.getElementById('reauth-btn');
+      btn.disabled = true;
+      btn.textContent = '...';
+      try {
+        await Auth.login();
+        banner.remove();
+        this.toast('✅ 已續登，正在同步資料...');
+        // 重新跑 Phase 2 抓最新資料
+        try {
+          await this.ensureMemberRegistered();
+          await Trips.loadAll();
+          if (Trips.current) await this.refreshAll();
+        } catch (err) {
+          console.warn('post-reauth sync failed:', err);
+        }
+      } catch (err) {
+        console.error('reauth failed:', err);
+        btn.disabled = false;
+        btn.textContent = '續登';
+        this.toast('續登失敗：' + (err.message || err));
+      }
+    });
   },
 
   // 新版 SW 已啟用 → 提示用戶 reload（不強制 reload 避免打斷編輯）
