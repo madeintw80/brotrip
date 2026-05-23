@@ -408,7 +408,7 @@ const App = {
       this.updateNotifBadge();
       this.closeModal('modal-notifications');
 
-      // Route 依 type
+      // Route 依 type（用 cache 立刻顯示）
       if (type === 'mention' || type === 'comment' || type === 'comment-mention') {
         this.openDiaryFromMap(refId);
       } else if (type === 'trip-add') {
@@ -447,6 +447,10 @@ const App = {
           this.switchTab('expenses');
         }
       }
+
+      // 背景拉最新資料（cache 可能過時），拿到後自動 re-render
+      // 不 await：navigate 立刻完成，refreshAll 完成後畫面會自動更新
+      this.refreshAll().catch(err => console.warn('post-notif refresh failed:', err));
     });
   },
 
