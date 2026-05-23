@@ -894,6 +894,46 @@ summary {
   font-size: 16px;
 }
 
+/* === Update banner（綠色友善版，提示有新版可重整） === */
+.update-banner {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 1000;
+  background: #10b981;
+  color: white;
+  padding: 12px 16px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 14px;
+  font-weight: 500;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+  /* 避開 iPhone 動態島 */
+  padding-top: max(12px, env(safe-area-inset-top, 12px));
+}
+.update-banner > div { flex: 1; }
+.update-banner button {
+  background: rgba(255,255,255,0.95);
+  color: #065f46;
+  border: none;
+  padding: 6px 14px;
+  border-radius: 16px;
+  font-weight: 600;
+  cursor: pointer;
+  font-size: 13px;
+}
+.update-banner button:last-child {
+  background: rgba(255,255,255,0.2);
+  color: white;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  padding: 0;
+  font-size: 16px;
+}
+
 /* === Trip map === */
 #trip-map {
   height: calc(100vh - 280px);

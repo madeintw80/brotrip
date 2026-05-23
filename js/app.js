@@ -212,12 +212,14 @@ const App = {
       const editBtn = e.target.closest('[data-action="edit-diary"]');
       const delBtn = e.target.closest('[data-action="delete-diary"]');
       const pinBtn = e.target.closest('[data-action="pin-diary"]');
+      const folderBtn = e.target.closest('[data-action="open-trip-folder"]');
       const delCommentBtn = e.target.closest('[data-action="delete-comment"]');
       const sendBtn = e.target.closest('.comment-send');
       // Note: mention-chip click handler 已移除（v1.7.5 改用 @autocomplete dropdown）
       if (editBtn) { e.stopPropagation(); this.openDiaryModal(editBtn.dataset.id); return; }
       if (delBtn) { e.stopPropagation(); this.deleteDiary(delBtn.dataset.id); return; }
       if (pinBtn) { e.stopPropagation(); this.togglePin(pinBtn.dataset.id); return; }
+      if (folderBtn) { e.stopPropagation(); this.openTripPhotosFolder(folderBtn.dataset.id); return; }
       if (delCommentBtn) { e.stopPropagation(); this.deleteComment(delCommentBtn.dataset.id); return; }
       if (sendBtn) {
         e.stopPropagation();
@@ -722,6 +724,24 @@ const App = {
     this._setViewportZoom(true);
   },
 
+  // 舊日記（v1.3.0 之前）沒記 folder URL → 點 📁 時 fallback 連到該 trip 整個照片資料夾
+  async openTripPhotosFolder(diaryId) {
+    const d = Diaries.allList.find(x => x.id === diaryId);
+    if (!d) { this.toast('找不到該日記'); return; }
+    // 同步開 placeholder tab 避免 popup blocker（await 後再 window.open 會被擋）
+    const w = window.open('about:blank', '_blank');
+    try {
+      const tripFolderId = await API.ensureFolder(d.trip_id, CONFIG.PHOTOS_FOLDER_ID);
+      const url = `https://drive.google.com/drive/folders/${tripFolderId}`;
+      if (w) w.location = url;
+      else window.location.href = url; // 用戶擋彈出視窗 → 直接跳當前頁
+    } catch (err) {
+      if (w) w.close();
+      console.error(err);
+      this.toast('開啟資料夾失敗：' + err.message);
+    }
+  },
+
   // 動態切換 viewport：lightbox 開啟允許放大、平常維持禁止避免 input focus auto-zoom
   _setViewportZoom(allow) {
     const meta = document.querySelector('meta[name="viewport"]');
@@ -810,6 +830,27 @@ const App = {
     if (closeBtn) {
       closeBtn.addEventListener('click', () => banner.classList.add('hidden'));
     }
+  },
+
+  // 新版 SW 已啟用 → 提示用戶 reload（不強制 reload 避免打斷編輯）
+  showUpdateBanner() {
+    // 避免重複顯示（SW 一次更新有可能 fire 兩次）
+    if (document.getElementById('update-banner')) return;
+    const banner = document.createElement('div');
+    banner.id = 'update-banner';
+    banner.className = 'update-banner';
+    banner.innerHTML = `
+      <div>🆕 BroTrip 有新版！點此立刻使用最新功能</div>
+      <button type="button" id="update-reload-btn">重新整理</button>
+      <button type="button" id="update-dismiss-btn" aria-label="稍後">✕</button>
+    `;
+    document.body.insertBefore(banner, document.body.firstChild);
+    document.getElementById('update-reload-btn').addEventListener('click', () => {
+      window.location.reload();
+    });
+    document.getElementById('update-dismiss-btn').addEventListener('click', () => {
+      banner.remove();
+    });
   },
 
   async ensureMemberRegistered() {
@@ -1039,7 +1080,13 @@ const App = {
             : ` · 📍 ${this.escapeHtml(name)}`;
         } else locHtml = ` · 📍 ${this.escapeHtml(d.location)}`;
       }
-      const driveLink = d.url ? `<a href="${this.escapeAttr(d.url)}" target="_blank" rel="noopener" class="diary-drive-link" title="開啟 Drive 相簿資料夾">📁</a>` : '';
+      // 📁 連結：有 d.url 直接連；舊日記沒 url 但有 photos 也顯示，點下去 fallback 到 trip 資料夾
+      let driveLink = '';
+      if (d.url) {
+        driveLink = `<a href="${this.escapeAttr(d.url)}" target="_blank" rel="noopener" class="diary-drive-link" title="開啟 Drive 相簿資料夾">📁</a>`;
+      } else if (photoIds.length > 0) {
+        driveLink = `<button data-action="open-trip-folder" data-id="${this.escapeAttr(d.id)}" type="button" class="diary-drive-link" title="開啟 trip 照片資料夾（早期日記沒記 folder URL）">📁</button>`;
+      }
       const isMine = Auth.user && d.author === Auth.user.email;
       const isPinned = String(d.pinned).toUpperCase() === 'TRUE';
       const actions = `

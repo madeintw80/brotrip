@@ -18,7 +18,7 @@
       if (t) document.documentElement.dataset.theme = t;
     } catch (e) {}
   </script>
-  <link rel="stylesheet" href="styles.css?v=34">
+  <link rel="stylesheet" href="styles.css?v=35">
 </head>
 <body>
   <div id="pull-indicator" class="pull-indicator"></div>
@@ -133,7 +133,7 @@
           <div id="debug-info"></div>
         </div>
         <div class="version-info-wrap">
-          <span id="version-info">BroTrip v1.8.9</span>
+          <span id="version-info">BroTrip v1.8.10</span>
         </div>
       </section>
     </main>
@@ -320,22 +320,48 @@
   <script src="https://accounts.google.com/gsi/client" async defer></script>
 
   <!-- App 程式碼（順序很重要，後面的依賴前面的）-->
-  <script src="js/config.js?v=34"></script>
-  <script src="js/auth.js?v=34"></script>
-  <script src="js/api.js?v=34"></script>
-  <script src="js/cache.js?v=34"></script>
-  <script src="js/trips.js?v=34"></script>
-  <script src="js/expenses.js?v=34"></script>
-  <script src="js/diaries.js?v=34"></script>
-  <script src="js/nicknames.js?v=34"></script>
-  <script src="js/comments.js?v=34"></script>
-  <script src="js/notifications.js?v=34"></script>
-  <script src="js/app.js?v=34"></script>
+  <script src="js/config.js?v=35"></script>
+  <script src="js/auth.js?v=35"></script>
+  <script src="js/api.js?v=35"></script>
+  <script src="js/cache.js?v=35"></script>
+  <script src="js/trips.js?v=35"></script>
+  <script src="js/expenses.js?v=35"></script>
+  <script src="js/diaries.js?v=35"></script>
+  <script src="js/nicknames.js?v=35"></script>
+  <script src="js/comments.js?v=35"></script>
+  <script src="js/notifications.js?v=35"></script>
+  <script src="js/app.js?v=35"></script>
 
-  <!-- Service Worker -->
+  <!-- Service Worker + auto-update（偵測新版 SW 後通知用戶 reload） -->
   <script>
     if ('serviceWorker' in navigator) {
-      window.addEventListener('load', () => navigator.serviceWorker.register('sw.js'));
+      window.addEventListener('load', async () => {
+        try {
+          const reg = await navigator.serviceWorker.register('sw.js');
+
+          // 每次頁面 load 主動 check 一次新版
+          reg.update().catch(() => {});
+
+          // 每 15 分鐘背景 check（用戶長時間開著 app 也能拿到新版）
+          setInterval(() => reg.update().catch(() => {}), 15 * 60 * 1000);
+
+          // 偵測到新版 SW 安裝中 → 等它 activated → 通知用戶 reload
+          reg.addEventListener('updatefound', () => {
+            const newWorker = reg.installing;
+            if (!newWorker) return;
+            newWorker.addEventListener('statechange', () => {
+              // 'activated' 表示新版已就緒（舊頁面還在用舊 cache，reload 才會吃新版）
+              if (newWorker.state === 'activated' && navigator.serviceWorker.controller) {
+                if (window.App && typeof App.showUpdateBanner === 'function') {
+                  App.showUpdateBanner();
+                }
+              }
+            });
+          });
+        } catch (err) {
+          console.warn('SW register failed:', err);
+        }
+      });
     }
   </script>
 </body>
