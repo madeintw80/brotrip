@@ -473,7 +473,10 @@ const App = {
         await Promise.all(names.map(n => caches.delete(n)));
       } catch {}
     }
-    if (typeof Cache !== 'undefined') Cache.clear();
+    // 不清資料 cache（Sheets API eventual consistency 風險）：
+    // 剛改的暱稱可能還沒 propagate 到 Sheet read。若這時清 cache + reload，
+    // Phase 2 fetch 回的是舊資料 → 本地剛改的東西就消失。
+    // 保留 cache + 靠 Nicknames.loadAll 的 merge by updated_at 自然保住本地最新狀態。
     setTimeout(() => { window.location.href = window.location.pathname + '?t=' + Date.now(); }, 800);
   },
 
@@ -965,19 +968,25 @@ const App = {
   },
 
   // 顯示 content + highlight @mentions
+  // 顯示時優先用暱稱（即使原文打的是本名「@魏德睿」，有暱稱「禿」就顯示「@禿」）
   renderContentWithMentions(content) {
     if (!content) return '';
     const escaped = this.escapeHtml(content);
     return escaped.replace(/@([^\s@,。，！？!?]+)/g, (m, name) => {
-      let found = false;
+      // 先找出對應 email
+      let email = null;
       const member = CONFIG.ALLOWED_MEMBERS.find(x => x.name === name);
-      if (member) found = true;
-      if (!found && typeof Nicknames !== 'undefined') {
-        for (const email in Nicknames.map) {
-          if (Nicknames.map[email].nickname === name) { found = true; break; }
+      if (member) email = member.email;
+      if (!email && typeof Nicknames !== 'undefined') {
+        for (const e in Nicknames.map) {
+          if (Nicknames.map[e].nickname === name) { email = e; break; }
         }
       }
-      if (found) return `<span class="mention">@${this.escapeHtml(name)}</span>`;
+      if (email) {
+        // 顯示用 nameOf：暱稱 > ALLOWED_MEMBERS 名字
+        const display = this.nameOf(email);
+        return `<span class="mention">@${this.escapeHtml(display)}</span>`;
+      }
       return m;
     });
   },
