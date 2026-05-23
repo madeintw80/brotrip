@@ -1,4 +1,5 @@
 // 留言模組：每篇日記可以留言，自己的留言可刪
+// v1.6.0：加 mentions 欄位 + 觸發通知（留言給日記作者 + tag 的人）
 // v1.5.0：加 localStorage cache
 
 const Comments = {
@@ -31,10 +32,12 @@ const Comments = {
       .sort((a, b) => (a.created_at || '').localeCompare(b.created_at || ''));
   },
 
-  async create(diaryId, content) {
+  async create(diaryId, content, mentions = []) {
     const id = API.newId();
     const createdAt = new Date().toISOString();
-    const row = [id, diaryId, Auth.user.email, content, createdAt];
+    const mentionsArr = Array.isArray(mentions) ? mentions : [];
+    const mentionsJson = JSON.stringify(mentionsArr);
+    const row = [id, diaryId, Auth.user.email, content, createdAt, mentionsJson];
     await API.appendRow('Comments', row);
     const newComment = {
       id,
@@ -42,9 +45,45 @@ const Comments = {
       author: Auth.user.email,
       content,
       created_at: createdAt,
+      mentions: mentionsJson,
     };
     this.list.push(newComment);
     Cache.set('comments', this.list);
+
+    // 觸發通知：
+    // 1. 日記作者（不是自己時）→ 'comment'
+    // 2. mentioned 的人 → 'comment-mention'
+    if (typeof Notifications !== 'undefined') {
+      try {
+        const items = [];
+        const diary = (typeof Diaries !== 'undefined')
+          ? Diaries.allList.find(d => d.id === diaryId)
+          : null;
+        const diaryAuthor = diary ? diary.author : null;
+        if (diaryAuthor && diaryAuthor !== Auth.user.email) {
+          items.push({
+            target_email: diaryAuthor,
+            type: 'comment',
+            diary_id: diaryId,
+            comment_id: id,
+          });
+        }
+        mentionsArr.forEach(email => {
+          if (email !== diaryAuthor && email !== Auth.user.email) {
+            items.push({
+              target_email: email,
+              type: 'comment-mention',
+              diary_id: diaryId,
+              comment_id: id,
+            });
+          }
+        });
+        if (items.length > 0) await Notifications.createBatch(items);
+      } catch (err) {
+        console.warn('Create notifications failed:', err);
+      }
+    }
+
     return newComment;
   },
 

@@ -39,6 +39,18 @@ const API = {
     );
   },
 
+  // 批次追加多 rows（一次 API call 寫多筆）
+  async appendRows(sheetName, rows) {
+    if (!rows || rows.length === 0) return;
+    return await this.sheetsRequest(
+      `/values/${encodeURIComponent(sheetName)}:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`,
+      {
+        method: 'POST',
+        body: JSON.stringify({ values: rows }),
+      }
+    );
+  },
+
   // 把 [[header],[row1],[row2]...] 變成 [{col1:v, col2:v},...]
   rowsToObjects(rows) {
     if (!rows || rows.length === 0) return [];

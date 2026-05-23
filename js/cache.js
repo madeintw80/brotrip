@@ -4,7 +4,7 @@
 // 啟動時清舊版本 cache（CACHE.VERSION 改變時自動清除）
 
 const Cache = {
-  VERSION: '1',  // 每次 sheet schema 改變要 bump（清除舊 cache）
+  VERSION: '2',  // 每次 sheet schema 改變要 bump（清除舊 cache）
 
   get PREFIX() { return `brotrip_cache_v${this.VERSION}_`; },
 

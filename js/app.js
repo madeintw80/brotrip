@@ -1,6 +1,7 @@
 // BroTrip 主應用：UI router + 事件處理
+// v1.6.0：tag 人 + 通知 + 多付款人
 
-// Google Maps 動態載入（給 Places Autocomplete + 地圖 view 用）
+// Google Maps 動態載入
 const Maps = {
   loaded: false,
   loadPromise: null,
@@ -11,10 +12,7 @@ const Maps = {
     if (!CONFIG.MAPS_API_KEY) return Promise.reject(new Error('沒有 MAPS_API_KEY'));
 
     this.loadPromise = new Promise((resolve, reject) => {
-      window.__onGoogleMapsLoaded = () => {
-        this.loaded = true;
-        resolve();
-      };
+      window.__onGoogleMapsLoaded = () => { this.loaded = true; resolve(); };
       const script = document.createElement('script');
       script.src = `https://maps.googleapis.com/maps/api/js?key=${CONFIG.MAPS_API_KEY}&libraries=places&v=weekly&callback=__onGoogleMapsLoaded&loading=async`;
       script.async = true;
@@ -99,10 +97,7 @@ const App = {
     });
 
     document.getElementById('logout-btn').addEventListener('click', () => {
-      if (confirm('登出？')) {
-        Auth.logout();
-        location.reload();
-      }
+      if (confirm('登出？')) { Auth.logout(); location.reload(); }
     });
 
     document.querySelectorAll('.nav-btn').forEach(btn => {
@@ -110,18 +105,12 @@ const App = {
     });
 
     document.getElementById('fab').addEventListener('click', () => {
-      if (!Trips.current) {
-        this.openModal('modal-trips');
-        return;
-      }
+      if (!Trips.current) { this.openModal('modal-trips'); return; }
       if (this.currentTab === 'expenses') this.openExpenseModal();
       else if (this.currentTab === 'diaries') this.openDiaryModal();
     });
 
-    document.getElementById('trip-switch').addEventListener('click', () => {
-      this.openTripsModal();
-    });
-
+    document.getElementById('trip-switch').addEventListener('click', () => this.openTripsModal());
     document.getElementById('new-trip-btn').addEventListener('click', () => {
       this.closeModal('modal-trips');
       this.openNewTripModal();
@@ -133,7 +122,6 @@ const App = {
         if (modal) modal.classList.add('hidden');
       });
     });
-
     document.querySelectorAll('.modal').forEach(modal => {
       modal.addEventListener('click', e => {
         if (e.target === modal) modal.classList.add('hidden');
@@ -147,9 +135,7 @@ const App = {
     // Photo lightbox
     const lightbox = document.getElementById('photo-lightbox');
     document.getElementById('lightbox-close').addEventListener('click', () => lightbox.close());
-    lightbox.addEventListener('click', e => {
-      if (e.target === lightbox) lightbox.close();
-    });
+    lightbox.addEventListener('click', e => { if (e.target === lightbox) lightbox.close(); });
     document.getElementById('lightbox-img').addEventListener('error', async (e) => {
       const li = e.target;
       if (li.dataset.fallbackTried === '1') return;
@@ -159,28 +145,16 @@ const App = {
       try { li.src = await API.fetchDriveBlobUrl(id); } catch (err) { console.warn(err); }
     });
     document.getElementById('lightbox-prev').addEventListener('click', () => {
-      if (this._lightboxIndex > 0) {
-        this._lightboxIndex--;
-        this.showLightboxPhoto();
-      }
+      if (this._lightboxIndex > 0) { this._lightboxIndex--; this.showLightboxPhoto(); }
     });
     document.getElementById('lightbox-next').addEventListener('click', () => {
-      if (this._lightboxIndex < this._lightboxPhotos.length - 1) {
-        this._lightboxIndex++;
-        this.showLightboxPhoto();
-      }
+      if (this._lightboxIndex < this._lightboxPhotos.length - 1) { this._lightboxIndex++; this.showLightboxPhoto(); }
     });
     document.addEventListener('keydown', (e) => {
       if (!lightbox.open) return;
-      if (e.key === 'ArrowLeft' && this._lightboxIndex > 0) {
-        this._lightboxIndex--;
-        this.showLightboxPhoto();
-      } else if (e.key === 'ArrowRight' && this._lightboxIndex < this._lightboxPhotos.length - 1) {
-        this._lightboxIndex++;
-        this.showLightboxPhoto();
-      } else if (e.key === 'Escape') {
-        lightbox.close();
-      }
+      if (e.key === 'ArrowLeft' && this._lightboxIndex > 0) { this._lightboxIndex--; this.showLightboxPhoto(); }
+      else if (e.key === 'ArrowRight' && this._lightboxIndex < this._lightboxPhotos.length - 1) { this._lightboxIndex++; this.showLightboxPhoto(); }
+      else if (e.key === 'Escape') lightbox.close();
     });
 
     // Expense list edit/delete
@@ -191,17 +165,27 @@ const App = {
       else if (delBtn) this.deleteExpense(delBtn.dataset.id);
     });
 
-    // Diary list edit/delete/pin + comment + photo lightbox
+    // Diary list edit/delete/pin + comment + photo lightbox + mention chips
     document.getElementById('diary-list').addEventListener('click', e => {
       const editBtn = e.target.closest('[data-action="edit-diary"]');
       const delBtn = e.target.closest('[data-action="delete-diary"]');
       const pinBtn = e.target.closest('[data-action="pin-diary"]');
       const delCommentBtn = e.target.closest('[data-action="delete-comment"]');
       const sendBtn = e.target.closest('.comment-send');
+      const mentionChip = e.target.closest('.mention-chip');
       if (editBtn) { e.stopPropagation(); this.openDiaryModal(editBtn.dataset.id); return; }
       if (delBtn) { e.stopPropagation(); this.deleteDiary(delBtn.dataset.id); return; }
       if (pinBtn) { e.stopPropagation(); this.togglePin(pinBtn.dataset.id); return; }
       if (delCommentBtn) { e.stopPropagation(); this.deleteComment(delCommentBtn.dataset.id); return; }
+      if (mentionChip) {
+        e.stopPropagation();
+        const wrap = mentionChip.closest('.comments-section');
+        if (wrap) {
+          const input = wrap.querySelector('.comment-input');
+          if (input) this.insertAtCursor(input, `@${mentionChip.dataset.name} `);
+        }
+        return;
+      }
       if (sendBtn) {
         e.stopPropagation();
         const wrap = sendBtn.closest('.comment-input-wrap');
@@ -211,7 +195,6 @@ const App = {
       }
       const img = e.target.closest('.diary-photos img');
       if (img && img.dataset.photoId) {
-        // 開相簿 — 帶整篇日記的所有照片進去，可左右切換
         const card = img.closest('.diary-item');
         const allImgs = Array.from(card.querySelectorAll('.diary-photos img'));
         const ids = allImgs.map(im => im.dataset.photoId);
@@ -220,7 +203,6 @@ const App = {
       }
     });
 
-    // 留言 input Enter 鍵送出
     document.getElementById('diary-list').addEventListener('keypress', e => {
       if (e.key === 'Enter' && e.target.classList.contains('comment-input')) {
         e.preventDefault();
@@ -242,11 +224,9 @@ const App = {
       if (selectArea) {
         Trips.setCurrent(selectArea.dataset.tripId);
         this.closeModal('modal-trips');
-        // 從 cache 即時 filter + render（瞬間切換）
         Expenses._filter();
         Diaries._filter();
         this.renderAll();
-        // 背景同步最新 sheet 資料
         this.refreshAll();
       }
     });
@@ -290,7 +270,7 @@ const App = {
       const current = Nicknames.get(email);
       const member = CONFIG.ALLOWED_MEMBERS.find(m => m.email === email);
       const targetName = member ? member.name : email;
-      const newNick = prompt(`給 ${targetName} 取暱稱（清空 = 移除暱稱）：`, current);
+      const newNick = prompt(`給 ${targetName} 取暱稱（清空 = 移除）：`, current);
       if (newNick === null) return;
       try {
         await Nicknames.set(email, newNick);
@@ -306,7 +286,7 @@ const App = {
       }
     });
 
-    // Settings buttons
+    // Settings
     document.getElementById('check-update-btn').addEventListener('click', () => this.checkUpdate());
     document.getElementById('open-sheet-btn').addEventListener('click', () => {
       window.open(`https://docs.google.com/spreadsheets/d/${CONFIG.SHEET_ID}/`, '_blank');
@@ -330,16 +310,51 @@ const App = {
     });
     tripIdInput.addEventListener('focus', () => { tripIdInput.dataset.touched = '1'; });
 
-    // Expense split realtime
+    // Expense form: split + payer realtime
     const expenseForm = document.getElementById('expense-form');
     expenseForm.addEventListener('input', e => {
-      if (e.target.matches('[name="amount"], #split-rows input')) {
-        this.updateSplitPreview();
-      }
+      if (e.target.matches('[name="amount"], #split-rows input')) this.updateSplitPreview();
+      if (e.target.matches('[name="amount"], #payer-rows input')) this.updatePayerPreview();
     });
     expenseForm.addEventListener('change', e => {
-      if (e.target.matches('#split-rows input[type="checkbox"]')) {
-        this.updateSplitPreview();
+      if (e.target.matches('#split-rows input[type="checkbox"]')) this.updateSplitPreview();
+    });
+
+    // 加 payer 按鈕
+    document.getElementById('add-payer-btn').addEventListener('click', () => this.addPayerRow());
+    // 刪 payer (event delegation)
+    document.getElementById('payer-rows').addEventListener('click', e => {
+      const btn = e.target.closest('.remove-payer');
+      if (btn) {
+        btn.closest('.payer-row').remove();
+        this.updatePayerPreview();
+      }
+    });
+
+    // Mention chips in diary modal
+    document.getElementById('diary-mention-chips').addEventListener('click', e => {
+      const chip = e.target.closest('.mention-chip');
+      if (!chip) return;
+      const textarea = document.querySelector('#diary-form [name="content"]');
+      if (textarea) this.insertAtCursor(textarea, `@${chip.dataset.name} `);
+    });
+
+    // 通知 bell + modal
+    document.getElementById('notif-bell').addEventListener('click', () => this.openNotifModal());
+    document.getElementById('mark-all-read-btn').addEventListener('click', () => {
+      Notifications.markAllRead();
+      this.updateNotifBadge();
+      this.renderNotifList();
+    });
+    document.getElementById('notif-list').addEventListener('click', (e) => {
+      const item = e.target.closest('.notif-item');
+      if (!item) return;
+      const diaryId = item.dataset.diaryId;
+      if (diaryId) {
+        Notifications.markAllRead();
+        this.updateNotifBadge();
+        this.closeModal('modal-notifications');
+        this.openDiaryFromMap(diaryId);
       }
     });
   },
@@ -350,15 +365,10 @@ const App = {
     let startY = 0;
     let pulling = false;
     const threshold = 60;
-
     document.addEventListener('touchstart', (e) => {
       if (document.querySelector('.modal:not(.hidden), dialog[open]')) return;
-      if (window.scrollY === 0) {
-        startY = e.touches[0].clientY;
-        pulling = true;
-      }
+      if (window.scrollY === 0) { startY = e.touches[0].clientY; pulling = true; }
     }, { passive: true });
-
     document.addEventListener('touchmove', (e) => {
       if (!pulling) return;
       const dy = e.touches[0].clientY - startY;
@@ -367,11 +377,8 @@ const App = {
         const triggered = dy >= threshold;
         indicator.classList.toggle('triggered', triggered);
         indicator.textContent = triggered ? '🔄 放開重新整理' : '⬇︎ 下拉重新整理...';
-      } else if (dy <= 0) {
-        indicator.classList.remove('show');
-      }
+      } else if (dy <= 0) indicator.classList.remove('show');
     }, { passive: true });
-
     document.addEventListener('touchend', () => {
       if (!pulling) return;
       const wasTriggered = indicator.classList.contains('triggered');
@@ -411,20 +418,14 @@ const App = {
         await Promise.all(names.map(n => caches.delete(n)));
       } catch {}
     }
-    // 也清資料 cache（強迫拿最新 sheet）
     if (typeof Cache !== 'undefined') Cache.clear();
-    setTimeout(() => {
-      window.location.href = window.location.pathname + '?t=' + Date.now();
-    }, 800);
+    setTimeout(() => { window.location.href = window.location.pathname + '?t=' + Date.now(); }, 800);
   },
 
   async softRefresh(indicator) {
     try {
-      if (!Trips.current) {
-        await Trips.loadAll();
-      } else {
-        await this.refreshAll();
-      }
+      if (!Trips.current) await Trips.loadAll();
+      else await this.refreshAll();
       if (indicator) {
         indicator.textContent = '✅ 已更新';
         setTimeout(() => indicator.classList.remove('show'), 800);
@@ -441,14 +442,11 @@ const App = {
   async initOrRefreshMap() {
     const mapEl = document.getElementById('trip-map');
     const emptyEl = document.getElementById('trip-map-empty');
-
     const diariesWithCoords = Diaries.list.map(d => {
       if (d.location && d.location.startsWith('{')) {
         try {
           const info = JSON.parse(d.location);
-          if (info && info.lat && info.lng) {
-            return { ...info, diary: d };
-          }
+          if (info && info.lat && info.lng) return { ...info, diary: d };
         } catch {}
       }
       return null;
@@ -459,13 +457,11 @@ const App = {
       emptyEl.classList.remove('hidden');
       return;
     }
-
     mapEl.style.display = '';
     emptyEl.classList.add('hidden');
 
-    try {
-      await Maps.load();
-    } catch (err) {
+    try { await Maps.load(); }
+    catch (err) {
       mapEl.innerHTML = `<div class="list-empty">地圖載入失敗：${err.message}</div>`;
       return;
     }
@@ -474,15 +470,10 @@ const App = {
       this._map = new google.maps.Map(mapEl, {
         zoom: 12,
         center: { lat: diariesWithCoords[0].lat, lng: diariesWithCoords[0].lng },
-        mapTypeControl: false,
-        streetViewControl: false,
-        fullscreenControl: false,
+        mapTypeControl: false, streetViewControl: false, fullscreenControl: false,
       });
     }
-
-    if (this._mapMarkers) {
-      this._mapMarkers.forEach(m => m.setMap(null));
-    }
+    if (this._mapMarkers) this._mapMarkers.forEach(m => m.setMap(null));
     this._mapMarkers = [];
 
     let activeInfo = null;
@@ -493,7 +484,6 @@ const App = {
         map: this._map,
         title: loc.name,
       });
-      // InfoWindow 含「點此查看完整日記 →」連結，點了切到日記 tab + 高亮
       const content = `
         <div style="max-width:220px; font-family:inherit; cursor:pointer;" onclick="App.openDiaryFromMap('${loc.diary.id}')">
           <div style="font-weight:600; font-size:14px;">${this.escapeHtml(loc.diary.mood || '')} ${this.escapeHtml(this.nameOf(loc.diary.author))}</div>
@@ -512,15 +502,13 @@ const App = {
       this._mapMarkers.push(marker);
     });
 
-    if (diariesWithCoords.length > 1) {
-      this._map.fitBounds(bounds);
-    } else {
+    if (diariesWithCoords.length > 1) this._map.fitBounds(bounds);
+    else {
       this._map.setCenter({ lat: diariesWithCoords[0].lat, lng: diariesWithCoords[0].lng });
       this._map.setZoom(14);
     }
   },
 
-  // 從地圖 marker 跳到某篇日記 — 切 tab + 捲動到 + 高亮閃爍
   openDiaryFromMap(id) {
     this.switchTab('diaries');
     setTimeout(() => {
@@ -533,7 +521,6 @@ const App = {
     }, 150);
   },
 
-  // 相簿：給定照片 IDs + 起始 index，開 lightbox
   openLightbox(photoIds, startIdx) {
     this._lightboxPhotos = photoIds;
     this._lightboxIndex = startIdx;
@@ -554,9 +541,7 @@ const App = {
     if (this._lightboxPhotos.length > 1) {
       counter.textContent = `${this._lightboxIndex + 1} / ${this._lightboxPhotos.length}`;
       counter.style.display = '';
-    } else {
-      counter.style.display = 'none';
-    }
+    } else counter.style.display = 'none';
   },
 
   async showMainApp() {
@@ -564,33 +549,29 @@ const App = {
     document.getElementById('app').classList.remove('hidden');
 
     const img = document.getElementById('user-avatar');
-    if (Auth.user && Auth.user.picture) {
-      img.src = Auth.user.picture;
-      img.style.display = '';
-    } else {
-      img.style.display = 'none';
-    }
+    if (Auth.user && Auth.user.picture) { img.src = Auth.user.picture; img.style.display = ''; }
+    else img.style.display = 'none';
 
-    // ===== Phase 1: 從 localStorage cache 瞬間渲染（< 100ms）=====
+    // Phase 1: cache 瞬間渲染
     const hasCache = Trips.loadFromCache();
     if (hasCache && Trips.current) {
       Nicknames.loadFromCache();
       Expenses.loadFromCache();
       Diaries.loadFromCache();
       Comments.loadFromCache();
+      Notifications.loadFromCache();
       this.renderAll();
+      this.updateNotifBadge();
     }
 
-    // ===== Phase 2: 背景同步最新 sheet 資料 =====
+    // Phase 2: 背景同步
     await this.ensureMemberRegistered();
     await Trips.loadAll();
-
     if (Trips.list.length === 0) {
       this.toast('還沒有任何 trip，先建一個吧');
       this.openNewTripModal();
       return;
     }
-
     await this.refreshAll();
   },
 
@@ -606,18 +587,20 @@ const App = {
           new Date().toISOString(),
         ]);
       }
-    } catch (err) {
-      console.warn('Member register failed:', err);
-    }
+    } catch (err) { console.warn('Member register failed:', err); }
   },
 
   async refreshAll() {
     if (!Trips.current) return;
-    await Promise.all([Expenses.loadAll(), Diaries.loadAll(), Nicknames.loadAll(), Comments.loadAll()]);
+    await Promise.all([
+      Expenses.loadAll(), Diaries.loadAll(),
+      Nicknames.loadAll(), Comments.loadAll(),
+      Notifications.loadAll(),
+    ]);
     this.renderAll();
+    this.updateNotifBadge();
   },
 
-  // 統一渲染入口（cache 渲染 / 背景同步後渲染都用這個）
   renderAll() {
     if (!Trips.current) return;
     document.getElementById('trip-switch').textContent = `📍 ${Trips.current.name}`;
@@ -631,9 +614,7 @@ const App = {
 
   switchTab(tab) {
     this.currentTab = tab;
-    document.querySelectorAll('.nav-btn').forEach(btn => {
-      btn.classList.toggle('active', btn.dataset.tab === tab);
-    });
+    document.querySelectorAll('.nav-btn').forEach(btn => btn.classList.toggle('active', btn.dataset.tab === tab));
     document.getElementById('tab-expenses').classList.toggle('hidden', tab !== 'expenses');
     document.getElementById('tab-diaries').classList.toggle('hidden', tab !== 'diaries');
     document.getElementById('tab-map').classList.toggle('hidden', tab !== 'map');
@@ -649,7 +630,6 @@ const App = {
     const result = Expenses.settle();
     const currencies = Object.keys(result);
     const hasUnsettled = currencies.some(c => result[c].length > 0);
-
     const totals = {};
     Expenses.list.forEach(e => {
       const amount = parseFloat(e.amount);
@@ -658,20 +638,14 @@ const App = {
       totals[cur] = (totals[cur] || 0) + amount;
     });
     const hasExpense = Object.keys(totals).length > 0;
-
     if (!hasExpense) {
       el.innerHTML = '<div style="color:var(--text-light);text-align:center;padding:8px;">還沒有支出 💸</div>';
       return;
     }
-
-    const totalLine = Object.entries(totals)
-      .map(([c, v]) => `${c} ${v.toLocaleString()}`)
-      .join(' + ');
+    const totalLine = Object.entries(totals).map(([c, v]) => `${c} ${v.toLocaleString()}`).join(' + ');
     let html = `<div style="font-size:13px;color:var(--text-light);margin-bottom:10px;padding-bottom:8px;border-bottom:1px dashed var(--border);">💵 總花費 ${totalLine}</div>`;
-
-    if (!hasUnsettled) {
-      html += '<div style="color:var(--text-light);text-align:center;padding:8px;">✨ 大家都結清了！</div>';
-    } else {
+    if (!hasUnsettled) html += '<div style="color:var(--text-light);text-align:center;padding:8px;">✨ 大家都結清了！</div>';
+    else {
       for (const currency of currencies) {
         if (result[currency].length === 0) continue;
         result[currency].forEach(t => {
@@ -682,7 +656,6 @@ const App = {
     el.innerHTML = html;
   },
 
-  // 顯示順序：暱稱 > ALLOWED_MEMBERS 名 > 「我」（自己 fallback）> email 部分
   nameOf(email) {
     if (!email) return '?';
     if (typeof Nicknames !== 'undefined') {
@@ -709,6 +682,15 @@ const App = {
     });
     el.innerHTML = sorted.map(e => {
       const amt = parseFloat(e.amount) || 0;
+      // 多付款人顯示
+      let payersStr = this.nameOf(e.payer);
+      try {
+        const payers = JSON.parse(e.payers || '[]');
+        if (Array.isArray(payers) && payers.length > 1) {
+          payersStr = payers.map(p => `${this.nameOf(p.email)}(${(parseFloat(p.amount) || 0).toLocaleString()})`).join(' + ');
+        }
+      } catch {}
+
       const isMine = Auth.user && e.payer === Auth.user.email;
       const actions = isMine ? `
         <div class="item-actions">
@@ -722,7 +704,7 @@ const App = {
             <span class="expense-amount">${e.currency || 'TWD'} ${amt.toLocaleString()}</span>
           </div>
           <div class="row">
-            <div class="meta">${e.date} · 由 ${this.nameOf(e.payer)} 付</div>
+            <div class="meta">${e.date} · 由 ${payersStr} 付</div>
             ${actions}
           </div>
         </div>
@@ -746,10 +728,7 @@ const App = {
     if (!el) return;
     const f = this._diaryFilter;
     const active = (f.authors.length > 0 ? 1 : 0) + (f.dateFrom ? 1 : 0) + (f.dateTo ? 1 : 0);
-    if (active === 0) {
-      el.textContent = '';
-      return;
-    }
+    if (active === 0) { el.textContent = ''; return; }
     const filtered = this.applyDiaryFilter(Diaries.list);
     el.textContent = `${active} 個篩選 · 顯示 ${filtered.length}/${Diaries.list.length}`;
   },
@@ -767,20 +746,17 @@ const App = {
   renderDiaries() {
     const el = document.getElementById('diary-list');
     let list = this.applyDiaryFilter(Diaries.list);
-
     list = [...list].sort((a, b) => {
       const pa = String(a.pinned).toUpperCase() === 'TRUE';
       const pb = String(b.pinned).toUpperCase() === 'TRUE';
       if (pa !== pb) return pa ? -1 : 1;
       return (b.created_at || '').localeCompare(a.created_at || '');
     });
-
     if (list.length === 0) {
       const isFiltered = (this._diaryFilter.authors.length > 0 || this._diaryFilter.dateFrom || this._diaryFilter.dateTo);
       el.innerHTML = `<div class="list-empty">${isFiltered ? '篩選後沒有日記' : '還沒有日記，點右下角 + 新增'}</div>`;
       return;
     }
-
     el.innerHTML = list.map(d => {
       let photoIds = [];
       try { photoIds = JSON.parse(d.photo_ids || '[]'); } catch {}
@@ -788,7 +764,6 @@ const App = {
         <div class="diary-photos">
           ${photoIds.map(id => `<img src="${API.driveImageUrl(id)}" alt="" loading="lazy" referrerpolicy="no-referrer" data-photo-id="${id}" onerror="App.handleImgError(this)">`).join('')}
         </div>` : '';
-
       let locHtml = '';
       if (d.location) {
         let info = null;
@@ -798,23 +773,14 @@ const App = {
         if (info) {
           const name = info.name || info.address || '';
           let link = '';
-          if (info.place_id) {
-            link = `https://www.google.com/maps/place/?q=place_id:${encodeURIComponent(info.place_id)}`;
-          } else if (info.lat && info.lng) {
-            link = `https://www.google.com/maps/?q=${info.lat},${info.lng}`;
-          }
-          if (name) {
-            locHtml = link
-              ? ` · <a href="${link}" target="_blank" rel="noopener">📍 ${this.escapeHtml(name)}</a>`
-              : ` · 📍 ${this.escapeHtml(name)}`;
-          }
-        } else {
-          locHtml = ` · 📍 ${this.escapeHtml(d.location)}`;
-        }
+          if (info.place_id) link = `https://www.google.com/maps/place/?q=place_id:${encodeURIComponent(info.place_id)}`;
+          else if (info.lat && info.lng) link = `https://www.google.com/maps/?q=${info.lat},${info.lng}`;
+          if (name) locHtml = link
+            ? ` · <a href="${link}" target="_blank" rel="noopener">📍 ${this.escapeHtml(name)}</a>`
+            : ` · 📍 ${this.escapeHtml(name)}`;
+        } else locHtml = ` · 📍 ${this.escapeHtml(d.location)}`;
       }
-
       const driveLink = d.url ? `<a href="${this.escapeAttr(d.url)}" target="_blank" rel="noopener" class="diary-drive-link" title="開啟 Drive 相簿資料夾">📁</a>` : '';
-
       const isMine = Auth.user && d.author === Auth.user.email;
       const isPinned = String(d.pinned).toUpperCase() === 'TRUE';
       const actions = `
@@ -825,7 +791,6 @@ const App = {
             <button data-action="edit-diary" data-id="${this.escapeAttr(d.id)}" type="button" title="編輯">✏️</button>
             <button data-action="delete-diary" data-id="${this.escapeAttr(d.id)}" type="button" title="刪除">🗑</button>` : ''}
         </div>`;
-
       return `
         <div class="diary-item ${isPinned ? 'pinned' : ''}" data-diary-id="${this.escapeAttr(d.id)}">
           <div class="diary-header">
@@ -835,7 +800,7 @@ const App = {
             </div>
             <div class="diary-meta">${d.date}${locHtml}</div>
           </div>
-          <div class="diary-content">${this.escapeHtml(d.content || '')}</div>
+          <div class="diary-content">${this.renderContentWithMentions(d.content || '')}</div>
           ${photosHtml}
           ${actions}
           ${this.renderCommentsSection(d.id)}
@@ -844,10 +809,13 @@ const App = {
     }).join('');
   },
 
-  // 渲染一篇日記的留言區塊（留言列表 + 輸入框）
   renderCommentsSection(diaryId) {
     if (typeof Comments === 'undefined') return '';
     const comments = Comments.getForDiary(diaryId);
+    const chipsHtml = `<div class="comment-mention-chips">${CONFIG.ALLOWED_MEMBERS.map(m => {
+      const display = this.nameOf(m.email);
+      return `<button class="mention-chip mini" type="button" data-name="${this.escapeAttr(display)}">@${this.escapeHtml(display)}</button>`;
+    }).join(' ')}</div>`;
     return `
       <div class="comments-section">
         ${comments.length > 0 ? `
@@ -861,21 +829,21 @@ const App = {
                     <small class="comment-time">${this.formatRelativeTime(c.created_at)}</small>
                     ${isMine ? `<button class="comment-delete" data-action="delete-comment" data-id="${this.escapeAttr(c.id)}" type="button" aria-label="刪除">×</button>` : ''}
                   </div>
-                  <div class="comment-content">${this.escapeHtml(c.content)}</div>
+                  <div class="comment-content">${this.renderContentWithMentions(c.content)}</div>
                 </div>
               `;
             }).join('')}
           </div>
         ` : ''}
+        ${chipsHtml}
         <div class="comment-input-wrap" data-diary-id="${this.escapeAttr(diaryId)}">
-          <input type="text" class="comment-input" placeholder="💬 留言..." maxlength="500">
+          <input type="text" class="comment-input" placeholder="💬 留言（打「@」可 tag 人）..." maxlength="500">
           <button type="button" class="comment-send">送出</button>
         </div>
       </div>
     `;
   },
 
-  // 相對時間：剛剛 / N 分鐘前 / N 小時前 / N 天前 / YYYY-MM-DD
   formatRelativeTime(iso) {
     if (!iso) return '';
     const date = new Date(iso);
@@ -912,41 +880,151 @@ const App = {
     }).join('');
   },
 
+  // ===== Mentions =====
+
+  // 解析 content 中的 @名字 → emails
+  parseMentions(content) {
+    if (!content) return [];
+    const emails = new Set();
+    const tokens = content.match(/@([^\s@,。，！？!?]+)/g) || [];
+    tokens.forEach(token => {
+      const name = token.slice(1);
+      const m = CONFIG.ALLOWED_MEMBERS.find(x => x.name === name);
+      if (m) { emails.add(m.email); return; }
+      if (typeof Nicknames !== 'undefined') {
+        for (const email in Nicknames.map) {
+          if (Nicknames.map[email].nickname === name) { emails.add(email); return; }
+        }
+      }
+    });
+    return Array.from(emails);
+  },
+
+  // 顯示 content + highlight @mentions
+  renderContentWithMentions(content) {
+    if (!content) return '';
+    const escaped = this.escapeHtml(content);
+    return escaped.replace(/@([^\s@,。，！？!?]+)/g, (m, name) => {
+      let found = false;
+      const member = CONFIG.ALLOWED_MEMBERS.find(x => x.name === name);
+      if (member) found = true;
+      if (!found && typeof Nicknames !== 'undefined') {
+        for (const email in Nicknames.map) {
+          if (Nicknames.map[email].nickname === name) { found = true; break; }
+        }
+      }
+      if (found) return `<span class="mention">@${this.escapeHtml(name)}</span>`;
+      return m;
+    });
+  },
+
+  insertAtCursor(el, text) {
+    const start = el.selectionStart || 0;
+    const end = el.selectionEnd || 0;
+    el.value = el.value.slice(0, start) + text + el.value.slice(end);
+    el.selectionStart = el.selectionEnd = start + text.length;
+    el.focus();
+  },
+
+  renderDiaryMentionChips() {
+    const wrap = document.getElementById('diary-mention-chips');
+    if (!wrap) return;
+    wrap.innerHTML = '<span class="chip-label">💡 點 chip 提到人：</span>' + CONFIG.ALLOWED_MEMBERS.map(m => {
+      const display = this.nameOf(m.email);
+      return `<button class="mention-chip" type="button" data-name="${this.escapeAttr(display)}">@${this.escapeHtml(display)}</button>`;
+    }).join(' ');
+  },
+
   escapeHtml(s) {
     const div = document.createElement('div');
     div.textContent = s == null ? '' : String(s);
     return div.innerHTML;
   },
 
-  escapeAttr(s) {
-    return String(s).replace(/"/g, '&quot;');
-  },
+  escapeAttr(s) { return String(s).replace(/"/g, '&quot;'); },
 
   // ===== Modals =====
 
   openModal(id) { document.getElementById(id).classList.remove('hidden'); },
   closeModal(id) { document.getElementById(id).classList.add('hidden'); },
 
+  // ===== Payer (多付款人) =====
+
+  renderPayerRows(payers) {
+    const el = document.getElementById('payer-rows');
+    if (!el) return;
+    el.innerHTML = payers.map((p, i) => this._payerRowHTML(p, i)).join('');
+  },
+
+  _payerRowHTML(payer, idx) {
+    const members = Trips.getMembers();
+    const memberOptions = members.map(m =>
+      `<option value="${this.escapeAttr(m)}" ${m === payer.email ? 'selected' : ''}>${this.nameOf(m)}</option>`
+    ).join('');
+    const amountVal = (payer.amount !== '' && payer.amount !== null && payer.amount !== undefined) ? payer.amount : '';
+    return `
+      <div class="payer-row">
+        <select class="payer-email">${memberOptions}</select>
+        <input type="number" class="payer-amount" placeholder="${idx === 0 ? '= 總額' : '金額'}" value="${amountVal}" step="0.01" min="0" inputmode="decimal">
+        ${idx > 0 ? '<button type="button" class="remove-payer" aria-label="刪除">×</button>' : ''}
+      </div>
+    `;
+  },
+
+  addPayerRow() {
+    const el = document.getElementById('payer-rows');
+    const idx = el.querySelectorAll('.payer-row').length;
+    const div = document.createElement('div');
+    div.innerHTML = this._payerRowHTML({ email: Auth.user.email, amount: '' }, idx);
+    el.appendChild(div.firstElementChild);
+    this.updatePayerPreview();
+  },
+
+  updatePayerPreview() {
+    const form = document.getElementById('expense-form');
+    if (!form) return;
+    const totalAmount = parseFloat(form.elements['amount'].value) || 0;
+    const rows = Array.from(document.querySelectorAll('#payer-rows .payer-row'));
+    let sumExplicit = 0;
+    let emptyRowFirst = null;
+    rows.forEach(r => {
+      const inp = r.querySelector('.payer-amount');
+      const v = parseFloat(inp.value);
+      if (!isNaN(v) && inp.value !== '') sumExplicit += v;
+      else if (!emptyRowFirst) emptyRowFirst = r;
+    });
+    if (emptyRowFirst) {
+      const remainder = Math.round((totalAmount - sumExplicit) * 100) / 100;
+      const inp = emptyRowFirst.querySelector('.payer-amount');
+      inp.placeholder = remainder > 0 ? `= ${remainder.toLocaleString()}` : '0';
+    }
+    const summary = document.getElementById('payer-summary');
+    if (summary) {
+      if (totalAmount === 0) { summary.textContent = ''; summary.classList.remove('error'); }
+      else if (!emptyRowFirst && Math.abs(sumExplicit - totalAmount) > 0.01) {
+        summary.textContent = `⚠️ 付款人合計 ${sumExplicit} ≠ 總額 ${totalAmount}`;
+        summary.classList.add('error');
+      } else {
+        summary.textContent = `付款人合計 ${(sumExplicit + (emptyRowFirst ? totalAmount - sumExplicit : 0)).toLocaleString()} / ${totalAmount.toLocaleString()} ✓`;
+        summary.classList.remove('error');
+      }
+    }
+  },
+
   openExpenseModal(id = null) {
     const form = document.getElementById('expense-form');
     form.reset();
     this._editingExpenseId = id;
-
     const headerTitle = document.querySelector('#modal-expense .modal-header h2');
     headerTitle.textContent = id ? '編輯支出' : '新增支出';
-
     const members = Trips.getMembers();
-    if (members.length === 0) {
-      this.toast('當前 trip 沒有成員，請先編輯 trip');
-      return;
-    }
-
+    if (members.length === 0) { this.toast('當前 trip 沒有成員，請先編輯 trip'); return; }
     form.elements['date'].value = new Date().toISOString().slice(0, 10);
 
-    form.elements['payer'].innerHTML = members.map(m =>
-      `<option value="${this.escapeAttr(m)}" ${m === Auth.user.email ? 'selected' : ''}>${this.nameOf(m)}</option>`
-    ).join('');
+    // 預設付款人（自己，空白會自動 = 總額）
+    let initialPayers = [{ email: Auth.user.email, amount: '' }];
 
+    // splits rows
     const rowsEl = document.getElementById('split-rows');
     rowsEl.innerHTML = members.map((m, idx) => `
       <div class="split-row">
@@ -960,7 +1038,6 @@ const App = {
       const e = Expenses.list.find(x => x.id === id);
       if (!e) { this.toast('找不到該支出'); return; }
       form.elements['date'].value = e.date;
-      form.elements['payer'].value = e.payer;
       form.elements['amount'].value = e.amount;
       form.elements['currency'].value = e.currency;
       const catSelect = form.elements['category'];
@@ -968,6 +1045,16 @@ const App = {
       if (catOption) catSelect.value = e.category;
       form.elements['description'].value = e.description;
 
+      // Parse payers
+      let parsedPayers;
+      try { parsedPayers = JSON.parse(e.payers || '[]'); } catch {}
+      if (Array.isArray(parsedPayers) && parsedPayers.length > 0) {
+        initialPayers = parsedPayers.map(p => ({ email: p.email, amount: p.amount }));
+      } else {
+        initialPayers = [{ email: e.payer, amount: parseFloat(e.amount) }];
+      }
+
+      // Parse splits
       try {
         const splits = JSON.parse(e.splits);
         const splitMap = {};
@@ -977,25 +1064,22 @@ const App = {
           const amtInput = rowsEl.querySelector(`[data-share-email="${this.escapeAttr(m)}"]`);
           if (splitMap[m]) {
             cb.checked = true;
-            if (splitMap[m].share !== undefined) {
-              amtInput.value = splitMap[m].share;
-            } else if (splitMap[m].ratio !== undefined) {
+            if (splitMap[m].share !== undefined) amtInput.value = splitMap[m].share;
+            else if (splitMap[m].ratio !== undefined) {
               const totalRatio = splits.reduce((s, x) => s + (parseFloat(x.ratio) || 0), 0);
               if (totalRatio > 0) {
                 const share = parseFloat(e.amount) * (parseFloat(splitMap[m].ratio) || 0) / totalRatio;
                 amtInput.value = Math.round(share * 100) / 100;
               }
             }
-          } else {
-            cb.checked = false;
-          }
+          } else cb.checked = false;
         });
-      } catch (err) {
-        console.warn('Failed to parse splits', err);
-      }
+      } catch (err) { console.warn('Failed to parse splits', err); }
     }
 
+    this.renderPayerRows(initialPayers);
     this.updateSplitPreview();
+    this.updatePayerPreview();
     this.openModal('modal-expense');
   },
 
@@ -1004,60 +1088,38 @@ const App = {
     const totalAmount = parseFloat(form.elements['amount'].value) || 0;
     const rowsEl = document.getElementById('split-rows');
     if (!rowsEl) return;
-
     const rows = Array.from(rowsEl.querySelectorAll('.split-row'));
     const checkedRows = rows.filter(r => r.querySelector('input[type="checkbox"]').checked);
-
     let filledTotal = 0;
     let emptyCount = 0;
     checkedRows.forEach(r => {
       const amtInput = r.querySelector('input[type="number"]');
       const val = parseFloat(amtInput.value);
-      if (!isNaN(val) && amtInput.value !== '') {
-        filledTotal += val;
-      } else {
-        emptyCount++;
-      }
+      if (!isNaN(val) && amtInput.value !== '') filledTotal += val;
+      else emptyCount++;
     });
-
     const remaining = totalAmount - filledTotal;
     const perEmpty = emptyCount > 0 ? remaining / emptyCount : 0;
-
     checkedRows.forEach(r => {
       const amtInput = r.querySelector('input[type="number"]');
       if (amtInput.value === '' || isNaN(parseFloat(amtInput.value))) {
-        amtInput.placeholder = totalAmount > 0
-          ? `均分 ${(Math.round(perEmpty * 100) / 100).toLocaleString()}`
-          : '自動均分';
+        amtInput.placeholder = totalAmount > 0 ? `均分 ${(Math.round(perEmpty * 100) / 100).toLocaleString()}` : '自動均分';
       }
     });
-
     rows.filter(r => !r.querySelector('input[type="checkbox"]').checked).forEach(r => {
       const inp = r.querySelector('input[type="number"]');
       inp.value = '';
       inp.placeholder = '不分';
     });
-
     const summary = document.getElementById('split-summary');
     if (summary) {
       const computedTotal = filledTotal + (emptyCount * perEmpty);
       const diff = Math.abs(computedTotal - totalAmount);
-      if (totalAmount === 0) {
-        summary.textContent = '';
-        summary.classList.remove('error');
-      } else if (checkedRows.length === 0) {
-        summary.textContent = '⚠️ 請至少勾一個分帳人';
-        summary.classList.add('error');
-      } else if (emptyCount === 0 && diff > 0.01) {
-        summary.textContent = `⚠️ 已填 ${filledTotal.toLocaleString()}，總額 ${totalAmount.toLocaleString()}（差 ${(totalAmount - filledTotal).toLocaleString()}）`;
-        summary.classList.add('error');
-      } else if (remaining < -0.01) {
-        summary.textContent = `⚠️ 已填超過總額`;
-        summary.classList.add('error');
-      } else {
-        summary.textContent = `合計 ${computedTotal.toLocaleString()} / ${totalAmount.toLocaleString()} ✓`;
-        summary.classList.remove('error');
-      }
+      if (totalAmount === 0) { summary.textContent = ''; summary.classList.remove('error'); }
+      else if (checkedRows.length === 0) { summary.textContent = '⚠️ 請至少勾一個分帳人'; summary.classList.add('error'); }
+      else if (emptyCount === 0 && diff > 0.01) { summary.textContent = `⚠️ 已填 ${filledTotal.toLocaleString()}，總額 ${totalAmount.toLocaleString()}（差 ${(totalAmount - filledTotal).toLocaleString()}）`; summary.classList.add('error'); }
+      else if (remaining < -0.01) { summary.textContent = `⚠️ 已填超過總額`; summary.classList.add('error'); }
+      else { summary.textContent = `合計 ${computedTotal.toLocaleString()} / ${totalAmount.toLocaleString()} ✓`; summary.classList.remove('error'); }
     }
   },
 
@@ -1066,27 +1128,20 @@ const App = {
     form.reset();
     this._editingDiaryId = id;
     this._selectedPlace = null;
-
-    const headerTitle = document.querySelector('#modal-diary .modal-header h2');
-    headerTitle.textContent = id ? '編輯日記' : '新增日記';
-
+    document.querySelector('#modal-diary .modal-header h2').textContent = id ? '編輯日記' : '新增日記';
     form.elements['date'].value = new Date().toISOString().slice(0, 10);
-
     const photosLabel = form.querySelector('input[name="photos"]').closest('label');
     photosLabel.style.display = id ? 'none' : '';
-
     const locInput = form.elements['location'];
     try {
       await Maps.load();
       if (!locInput.dataset.acAttached) {
-        Maps.attachAutocomplete(locInput, (place) => {
-          this._selectedPlace = place;
-        });
+        Maps.attachAutocomplete(locInput, (place) => { this._selectedPlace = place; });
         locInput.dataset.acAttached = '1';
       }
-    } catch (err) {
-      console.warn('Places autocomplete 未啟用：', err.message);
-    }
+    } catch (err) { console.warn('Places autocomplete 未啟用：', err.message); }
+
+    this.renderDiaryMentionChips();
 
     if (id) {
       const d = Diaries.list.find(x => x.id === id);
@@ -1096,22 +1151,17 @@ const App = {
       form.elements['content'].value = d.content;
       let locDisplay = d.location || '';
       if (locDisplay.startsWith('{')) {
-        try {
-          const info = JSON.parse(locDisplay);
-          locDisplay = info.name || info.address || '';
-        } catch {}
+        try { const info = JSON.parse(locDisplay); locDisplay = info.name || info.address || ''; } catch {}
       }
       form.elements['location'].value = locDisplay;
     }
-
     this.openModal('modal-diary');
   },
 
   openTripsModal() {
     const el = document.getElementById('trip-list');
-    if (Trips.list.length === 0) {
-      el.innerHTML = '<div class="list-empty">還沒有任何 trip</div>';
-    } else {
+    if (Trips.list.length === 0) el.innerHTML = '<div class="list-empty">還沒有任何 trip</div>';
+    else {
       el.innerHTML = Trips.list.map(t => `
         <div class="trip-item ${Trips.current && t.trip_id === Trips.current.trip_id ? 'current' : ''}">
           <div class="trip-select" data-action="select-trip" data-trip-id="${this.escapeAttr(t.trip_id)}">
@@ -1146,7 +1196,7 @@ const App = {
     form.elements['trip_id'].disabled = false;
     form.elements['start_date'].value = new Date().toISOString().slice(0, 10);
     delete form.elements['trip_id'].dataset.touched;
-    this.renderTripMemberCheckboxes([]);  // 空 = 預設全勾 5 人
+    this.renderTripMemberCheckboxes([]);
     document.querySelector('#modal-new-trip .modal-header h2').textContent = '新增 Trip';
     document.querySelector('#modal-new-trip [type="submit"]').textContent = '建立';
     this.openModal('modal-new-trip');
@@ -1166,9 +1216,7 @@ const App = {
     try {
       const members = JSON.parse(t.members || '[]');
       this.renderTripMemberCheckboxes(Array.isArray(members) ? members : []);
-    } catch {
-      this.renderTripMemberCheckboxes([]);
-    }
+    } catch { this.renderTripMemberCheckboxes([]); }
     document.querySelector('#modal-new-trip .modal-header h2').textContent = '編輯 Trip';
     document.querySelector('#modal-new-trip [type="submit"]').textContent = '儲存';
     this.openModal('modal-new-trip');
@@ -1183,22 +1231,43 @@ const App = {
     submitBtn.disabled = true;
     const origText = submitBtn.textContent;
     submitBtn.textContent = '儲存中...';
-
     try {
       const totalAmount = parseFloat(form.elements['amount'].value) || 0;
-      if (totalAmount <= 0) {
-        this.toast('金額要 > 0');
+      if (totalAmount <= 0) { this.toast('總額要 > 0'); return; }
+
+      // === 收集 payers ===
+      const payerRows = Array.from(document.querySelectorAll('#payer-rows .payer-row'));
+      if (payerRows.length === 0) { this.toast('需要至少一位付款人'); return; }
+      let sumExplicit = 0;
+      const payersTmp = [];
+      let emptyIdx = -1;
+      payerRows.forEach((r, i) => {
+        const sel = r.querySelector('.payer-email');
+        const inp = r.querySelector('.payer-amount');
+        const email = sel.value;
+        const v = parseFloat(inp.value);
+        if (inp.value !== '' && !isNaN(v) && v > 0) {
+          sumExplicit += v;
+          payersTmp.push({ email, amount: v });
+        } else {
+          payersTmp.push({ email, amount: null });
+          if (emptyIdx === -1) emptyIdx = i;
+        }
+      });
+      if (emptyIdx >= 0) payersTmp[emptyIdx].amount = Math.round((totalAmount - sumExplicit) * 100) / 100;
+      const payers = payersTmp.filter(p => p.amount && p.amount > 0);
+      if (payers.length === 0) { this.toast('需要至少一位有效付款人'); return; }
+      const payersSum = payers.reduce((s, p) => s + p.amount, 0);
+      if (Math.abs(payersSum - totalAmount) > 0.01) {
+        this.toast(`付款人合計 ${payersSum} ≠ 總額 ${totalAmount}`);
         return;
       }
 
+      // === 收集 splits ===
       const rowsEl = document.getElementById('split-rows');
       const rows = Array.from(rowsEl.querySelectorAll('.split-row'));
       const checkedRows = rows.filter(r => r.querySelector('input[type="checkbox"]').checked);
-      if (checkedRows.length === 0) {
-        this.toast('至少勾一個分帳人');
-        return;
-      }
-
+      if (checkedRows.length === 0) { this.toast('至少勾一個分帳人'); return; }
       let filledTotal = 0;
       const emptyEmails = [];
       const splits = [];
@@ -1210,21 +1279,11 @@ const App = {
         if (!isNaN(val) && amtInp.value !== '' && val > 0) {
           filledTotal += val;
           splits.push({ email, share: Math.round(val * 100) / 100 });
-        } else {
-          emptyEmails.push(email);
-        }
+        } else emptyEmails.push(email);
       });
-
       const remaining = totalAmount - filledTotal;
-      if (remaining < -0.01) {
-        this.toast(`已填超過總額`);
-        return;
-      }
-      if (emptyEmails.length === 0 && Math.abs(remaining) > 0.01) {
-        this.toast(`已填合計 ${filledTotal} ≠ 總額 ${totalAmount}`);
-        return;
-      }
-
+      if (remaining < -0.01) { this.toast(`分帳已填超過總額`); return; }
+      if (emptyEmails.length === 0 && Math.abs(remaining) > 0.01) { this.toast(`分帳合計 ${filledTotal} ≠ 總額 ${totalAmount}`); return; }
       if (emptyEmails.length > 0) {
         const perEmpty = remaining / emptyEmails.length;
         emptyEmails.forEach((email, i) => {
@@ -1232,16 +1291,15 @@ const App = {
           if (i === emptyEmails.length - 1) {
             const used = splits.reduce((s, x) => s + x.share, 0) + (perEmpty * (emptyEmails.length - 1));
             share = Math.round((totalAmount - used) * 100) / 100;
-          } else {
-            share = Math.round(perEmpty * 100) / 100;
-          }
+          } else share = Math.round(perEmpty * 100) / 100;
           splits.push({ email, share });
         });
       }
 
       const data = {
         date: form.elements['date'].value,
-        payer: form.elements['payer'].value,
+        payer: payers[0].email,
+        payers,
         amount: totalAmount,
         currency: form.elements['currency'].value,
         category: form.elements['category'].value,
@@ -1275,34 +1333,30 @@ const App = {
     const submitBtn = form.querySelector('[type="submit"]');
     submitBtn.disabled = true;
     submitBtn.textContent = '處理中...';
-
     try {
       const files = Array.from(form.elements['photos'].files);
+      const content = form.elements['content'].value.trim();
       const data = {
         date: form.elements['date'].value,
         mood: form.elements['mood'].value,
-        content: form.elements['content'].value.trim(),
+        content,
         location: form.elements['location'].value.trim(),
         place: this._selectedPlace,
         photos: files,
+        mentions: this.parseMentions(content),
       };
-      if (!data.content) {
-        this.toast('內容不能空白');
-        return;
-      }
-
+      if (!data.content) { this.toast('內容不能空白'); return; }
       if (this._editingDiaryId) {
         await Diaries.update(this._editingDiaryId, data);
         this.toast('✅ 已更新日記');
       } else {
-        await Diaries.create(data, (cur, total) => {
-          submitBtn.textContent = `上傳照片 ${cur}/${total}...`;
-        });
+        await Diaries.create(data, (cur, total) => { submitBtn.textContent = `上傳照片 ${cur}/${total}...`; });
         this.toast('✅ 已記錄日記' + (files.length ? `（${files.length} 張照片）` : ''));
       }
       this.closeModal('modal-diary');
       this.renderDiaryFilters();
       this.renderDiaries();
+      this.updateNotifBadge();
     } catch (err) {
       console.error(err);
       this.toast('儲存失敗：' + err.message);
@@ -1320,16 +1374,9 @@ const App = {
     submitBtn.disabled = true;
     const origText = submitBtn.textContent;
     submitBtn.textContent = this._editingTripId ? '更新中...' : '建立中...';
-
     try {
-      // 從 checkbox 收集成員
-      const members = Array.from(document.querySelectorAll('#new-trip-members input[type="checkbox"]:checked'))
-        .map(cb => cb.value);
-      if (members.length === 0) {
-        this.toast('至少選一個成員');
-        return;
-      }
-
+      const members = Array.from(document.querySelectorAll('#new-trip-members input[type="checkbox"]:checked')).map(cb => cb.value);
+      if (members.length === 0) { this.toast('至少選一個成員'); return; }
       if (this._editingTripId) {
         await Trips.update(this._editingTripId, {
           name: form.elements['name'].value.trim(),
@@ -1342,21 +1389,9 @@ const App = {
         await this.refreshAll();
       } else {
         const tripId = form.elements['trip_id'].value.trim().toLowerCase();
-        if (!/^[a-z0-9-]+$/.test(tripId)) {
-          this.toast('Trip ID 只能用英文小寫、數字、減號');
-          return;
-        }
-        if (Trips.list.find(t => t.trip_id === tripId)) {
-          this.toast('Trip ID 已存在，換一個');
-          return;
-        }
-        await Trips.create(
-          tripId,
-          form.elements['name'].value.trim(),
-          form.elements['start_date'].value,
-          form.elements['end_date'].value,
-          members,
-        );
+        if (!/^[a-z0-9-]+$/.test(tripId)) { this.toast('Trip ID 只能用英文小寫、數字、減號'); return; }
+        if (Trips.list.find(t => t.trip_id === tripId)) { this.toast('Trip ID 已存在，換一個'); return; }
+        await Trips.create(tripId, form.elements['name'].value.trim(), form.elements['start_date'].value, form.elements['end_date'].value, members);
         this.closeModal('modal-new-trip');
         this.toast('✅ Trip 已建立');
         await this.refreshAll();
@@ -1372,45 +1407,23 @@ const App = {
     }
   },
 
-  // ===== Edit / Delete / Pin actions =====
+  // ===== Actions =====
 
   async deleteExpense(id) {
     if (!confirm('確定刪除這筆支出？')) return;
-    try {
-      this.toast('刪除中...');
-      await Expenses.delete(id);
-      this.toast('✅ 已刪除');
-      this.renderExpenses();
-      this.renderSettlement();
-    } catch (err) {
-      console.error(err);
-      this.toast('刪除失敗：' + err.message);
-    }
+    try { this.toast('刪除中...'); await Expenses.delete(id); this.toast('✅ 已刪除'); this.renderExpenses(); this.renderSettlement(); }
+    catch (err) { console.error(err); this.toast('刪除失敗：' + err.message); }
   },
 
   async deleteDiary(id) {
     if (!confirm('確定刪除這篇日記？（照片不會刪）')) return;
-    try {
-      this.toast('刪除中...');
-      await Diaries.delete(id);
-      this.toast('✅ 已刪除');
-      this.renderDiaryFilters();
-      this.renderDiaries();
-    } catch (err) {
-      console.error(err);
-      this.toast('刪除失敗：' + err.message);
-    }
+    try { this.toast('刪除中...'); await Diaries.delete(id); this.toast('✅ 已刪除'); this.renderDiaryFilters(); this.renderDiaries(); }
+    catch (err) { console.error(err); this.toast('刪除失敗：' + err.message); }
   },
 
   async togglePin(id) {
-    try {
-      const wasPinned = await Diaries.togglePinned(id);
-      this.toast(wasPinned ? '⭐ 已置頂' : '☆ 取消置頂');
-      this.renderDiaries();
-    } catch (err) {
-      console.error(err);
-      this.toast('操作失敗：' + err.message);
-    }
+    try { const wasPinned = await Diaries.togglePinned(id); this.toast(wasPinned ? '⭐ 已置頂' : '☆ 取消置頂'); this.renderDiaries(); }
+    catch (err) { console.error(err); this.toast('操作失敗：' + err.message); }
   },
 
   async handleImgError(img) {
@@ -1418,25 +1431,21 @@ const App = {
     img.dataset.fallbackTried = '1';
     const id = img.dataset.photoId;
     if (!id) return;
-    try {
-      img.src = await API.fetchDriveBlobUrl(id);
-    } catch (err) {
-      console.warn('Image fallback failed:', err);
-    }
+    try { img.src = await API.fetchDriveBlobUrl(id); } catch (err) { console.warn('Image fallback failed:', err); }
   },
 
-  // ===== 留言 =====
+  // ===== Comments =====
+
   async submitComment(diaryId, content, inputEl) {
     content = (content || '').trim();
     if (!content) return;
     try {
-      await Comments.create(diaryId, content);
+      const mentions = this.parseMentions(content);
+      await Comments.create(diaryId, content, mentions);
       if (inputEl) inputEl.value = '';
       this.refreshDiaryComments(diaryId);
-    } catch (err) {
-      console.error(err);
-      this.toast('留言失敗：' + err.message);
-    }
+      this.updateNotifBadge();
+    } catch (err) { console.error(err); this.toast('留言失敗：' + err.message); }
   },
 
   async deleteComment(id) {
@@ -1444,17 +1453,10 @@ const App = {
     const c = Comments.list.find(x => x.id === id);
     if (!c) return;
     const diaryId = c.diary_id;
-    try {
-      await Comments.delete(id);
-      this.toast('✅ 已刪除留言');
-      this.refreshDiaryComments(diaryId);
-    } catch (err) {
-      console.error(err);
-      this.toast('刪除失敗：' + err.message);
-    }
+    try { await Comments.delete(id); this.toast('✅ 已刪除留言'); this.refreshDiaryComments(diaryId); }
+    catch (err) { console.error(err); this.toast('刪除失敗：' + err.message); }
   },
 
-  // 只更新該日記的 comments 區塊（避免 full re-render 中斷其他人打字）
   refreshDiaryComments(diaryId) {
     const diaryEl = document.querySelector(`.diary-item[data-diary-id="${diaryId}"]`);
     if (!diaryEl) return;
@@ -1463,6 +1465,49 @@ const App = {
     const wrapper = document.createElement('div');
     wrapper.innerHTML = this.renderCommentsSection(diaryId);
     section.replaceWith(wrapper.firstElementChild);
+  },
+
+  // ===== Notifications =====
+
+  async openNotifModal() {
+    await Notifications.loadAll();
+    this.renderNotifList();
+    this.openModal('modal-notifications');
+  },
+
+  renderNotifList() {
+    const el = document.getElementById('notif-list');
+    const list = Notifications.getForMe();
+    if (list.length === 0) { el.innerHTML = '<div class="list-empty">沒有通知</div>'; return; }
+    el.innerHTML = list.slice(0, 50).map(n => {
+      const isUnread = Notifications.isUnread(n);
+      let typeIcon = '💬';
+      let text = '';
+      if (n.type === 'mention') { typeIcon = '🏷'; text = `<strong>${this.nameOf(n.from_email)}</strong> 在日記 tag 了你`; }
+      else if (n.type === 'comment') { typeIcon = '💬'; text = `<strong>${this.nameOf(n.from_email)}</strong> 在你的日記留言`; }
+      else if (n.type === 'comment-mention') { typeIcon = '🏷'; text = `<strong>${this.nameOf(n.from_email)}</strong> 在留言中 tag 了你`; }
+      else text = '通知';
+      return `
+        <div class="notif-item ${isUnread ? 'unread' : ''}" data-diary-id="${this.escapeAttr(n.diary_id)}">
+          <span class="notif-icon">${typeIcon}</span>
+          <div class="notif-content">
+            <div class="notif-text">${text}</div>
+            <small class="notif-time">${this.formatRelativeTime(n.created_at)}</small>
+          </div>
+        </div>
+      `;
+    }).join('');
+  },
+
+  updateNotifBadge() {
+    if (typeof Notifications === 'undefined') return;
+    const count = Notifications.unreadCount();
+    const badge = document.getElementById('notif-badge');
+    if (!badge) return;
+    if (count > 0) {
+      badge.textContent = count > 99 ? '99+' : String(count);
+      badge.classList.remove('hidden');
+    } else badge.classList.add('hidden');
   },
 
   toast(msg, ms = 3000) {

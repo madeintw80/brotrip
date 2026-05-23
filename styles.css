@@ -1000,3 +1000,127 @@ summary {
 }
 .comment-send:hover { opacity: 0.9; }
 .comment-send:active { transform: scale(0.96); }
+
+/* === Notification bell + badge === */
+.notif-bell {
+  background: transparent;
+  border: none;
+  font-size: 20px;
+  cursor: pointer;
+  padding: 4px 8px;
+  position: relative;
+  line-height: 1;
+}
+.notif-bell:active { transform: scale(0.92); }
+.notif-badge {
+  position: absolute;
+  top: 0;
+  right: 0;
+  background: #ef4444;
+  color: white;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 5px;
+  border-radius: 8px;
+  min-width: 16px;
+  text-align: center;
+  line-height: 1.2;
+}
+
+/* === Notification list === */
+.notif-item {
+  display: flex;
+  gap: 10px;
+  padding: 12px;
+  background: var(--bg);
+  border-radius: 8px;
+  margin-bottom: 6px;
+  cursor: pointer;
+  align-items: flex-start;
+}
+.notif-item:hover { background: var(--border); }
+.notif-item.unread { background: #dbeafe; border-left: 3px solid var(--primary); }
+.notif-icon { font-size: 20px; flex-shrink: 0; }
+.notif-content { flex: 1; min-width: 0; }
+.notif-text { font-size: 14px; line-height: 1.4; }
+.notif-time { color: var(--text-light); font-size: 11px; }
+
+/* === Mention chips (in diary modal + comments) === */
+.mention-chips-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 14px;
+  align-items: center;
+  font-size: 13px;
+}
+.chip-label {
+  color: var(--text-light);
+  font-size: 12px;
+  margin-right: 4px;
+}
+.mention-chip {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  padding: 4px 10px;
+  border-radius: 14px;
+  font-size: 13px;
+  cursor: pointer;
+  color: var(--text);
+  font-family: inherit;
+}
+.mention-chip:hover { background: var(--primary); color: white; border-color: var(--primary); }
+.mention-chip.mini {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 12px;
+}
+.comment-mention-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: 6px;
+  padding: 4px 0;
+}
+
+/* === Mention span (highlighted @name in content) === */
+.mention {
+  background: #dbeafe;
+  color: #1e40af;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-weight: 600;
+  font-size: 0.95em;
+}
+
+/* === Payer rows (多付款人) === */
+.payer-section { padding: 12px; }
+.payer-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 6px;
+}
+.payer-row select {
+  flex: 1;
+  padding: 6px 8px;
+  font-size: 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: white;
+}
+.payer-row .payer-amount {
+  width: 110px;
+  padding: 6px 10px;
+  font-size: 14px;
+}
+.remove-payer {
+  background: transparent;
+  border: none;
+  color: var(--text-light);
+  font-size: 20px;
+  cursor: pointer;
+  padding: 2px 8px;
+  line-height: 1;
+}
+.remove-payer:hover { color: #ef4444; }

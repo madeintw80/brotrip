@@ -1,10 +1,10 @@
 // 記帳模組：CRUD + 結算
-// v1.5.0：allList + list 雙層（cache 存全部、list 是當前 trip filtered）
-// 切 trip 不用 fetch sheet，直接從 allList filter 即時切換
+// v1.6.0：支援多付款人（payers JSON in column L）
+// v1.5.0：allList + list 雙層 cache
 
 const Expenses = {
-  list: [],      // 當前 trip filter 後
-  allList: [],   // 全部（cache 用）
+  list: [],
+  allList: [],
 
   _filter() {
     if (Trips.current) {
@@ -36,32 +36,46 @@ const Expenses = {
     if (!Trips.current) throw new Error('沒有當前 trip');
     const id = API.newId();
     const splits = JSON.stringify(data.splits);
+
+    // 多付款人支援：data.payers = [{email, amount}, ...]
+    let payers;
+    if (Array.isArray(data.payers) && data.payers.length > 0) {
+      payers = data.payers;
+    } else {
+      payers = [{ email: data.payer, amount: parseFloat(data.amount) || 0 }];
+    }
+    const payersJson = JSON.stringify(payers);
+    const firstPayer = payers[0].email;
+    const totalAmount = payers.reduce((s, p) => s + (parseFloat(p.amount) || 0), 0);
+
     const row = [
       id,
       Trips.current.trip_id,
       data.date,
-      data.payer,
-      data.amount,
+      firstPayer,
+      totalAmount,
       data.currency || 'TWD',
       data.category || '',
       data.description || '',
       splits,
       data.photo_url || '',
       new Date().toISOString(),
+      payersJson,  // L: payers JSON
     ];
     await API.appendRow('Expenses', row);
     const newExpense = {
       id,
       trip_id: Trips.current.trip_id,
       date: data.date,
-      payer: data.payer,
-      amount: String(data.amount),
+      payer: firstPayer,
+      amount: String(totalAmount),
       currency: data.currency || 'TWD',
       category: data.category || '',
       description: data.description || '',
       splits,
       photo_url: data.photo_url || '',
       created_at: new Date().toISOString(),
+      payers: payersJson,
     };
     this.allList.push(newExpense);
     this._filter();
@@ -69,22 +83,32 @@ const Expenses = {
     return newExpense;
   },
 
-  // 結算：用 splits 中的 share 或舊版 ratio 都支援
+  // 結算：credit payers，debit splits；幣別分開算
   settle() {
     const balances = {};
 
     this.list.forEach(e => {
-      const amount = parseFloat(e.amount);
-      if (!amount || isNaN(amount)) return;
       const currency = e.currency || 'TWD';
+      if (!balances[currency]) balances[currency] = {};
 
+      // === Credit: payers ===
+      let payers;
+      try { payers = JSON.parse(e.payers || '[]'); } catch {}
+      if (!Array.isArray(payers) || payers.length === 0) {
+        // Fallback to single payer
+        payers = [{ email: e.payer, amount: parseFloat(e.amount) || 0 }];
+      }
+      payers.forEach(p => {
+        const amt = parseFloat(p.amount) || 0;
+        balances[currency][p.email] = (balances[currency][p.email] || 0) + amt;
+      });
+
+      // === Debit: splits ===
       let splits;
-      try { splits = JSON.parse(e.splits); } catch { return; }
+      try { splits = JSON.parse(e.splits || '[]'); } catch {}
       if (!Array.isArray(splits) || splits.length === 0) return;
 
-      if (!balances[currency]) balances[currency] = {};
-      balances[currency][e.payer] = (balances[currency][e.payer] || 0) + amount;
-
+      const totalAmount = parseFloat(e.amount) || 0;
       const hasShare = splits.some(s => s.share !== undefined);
       if (hasShare) {
         splits.forEach(s => {
@@ -95,7 +119,7 @@ const Expenses = {
         const totalRatio = splits.reduce((sum, x) => sum + (parseFloat(x.ratio) || 0), 0);
         if (totalRatio === 0) return;
         splits.forEach(s => {
-          const share = amount * (parseFloat(s.ratio) || 0) / totalRatio;
+          const share = totalAmount * (parseFloat(s.ratio) || 0) / totalRatio;
           balances[currency][s.email] = (balances[currency][s.email] || 0) - share;
         });
       }
@@ -140,28 +164,41 @@ const Expenses = {
     if (!existing) throw new Error('找不到該支出');
     if (existing.payer !== Auth.user.email) throw new Error('只能改自己付的支出');
     const splits = JSON.stringify(data.splits);
+
+    let payers;
+    if (Array.isArray(data.payers) && data.payers.length > 0) {
+      payers = data.payers;
+    } else {
+      payers = [{ email: data.payer, amount: parseFloat(data.amount) || 0 }];
+    }
+    const payersJson = JSON.stringify(payers);
+    const firstPayer = payers[0].email;
+    const totalAmount = payers.reduce((s, p) => s + (parseFloat(p.amount) || 0), 0);
+
     const newRow = [
       existing.id,
       existing.trip_id,
       data.date,
-      data.payer,
-      data.amount,
+      firstPayer,
+      totalAmount,
       data.currency || 'TWD',
       data.category || '',
       data.description || '',
       splits,
       existing.photo_url || '',
       existing.created_at,
+      payersJson,
     ];
     await API.updateRow('Expenses', id, newRow);
     Object.assign(existing, {
       date: data.date,
-      payer: data.payer,
-      amount: String(data.amount),
+      payer: firstPayer,
+      amount: String(totalAmount),
       currency: data.currency || 'TWD',
       category: data.category || '',
       description: data.description || '',
       splits,
+      payers: payersJson,
     });
     Cache.set('expenses', this.allList);
     return existing;

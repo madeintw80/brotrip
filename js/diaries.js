@@ -1,6 +1,7 @@
 // 日記模組：上傳照片 + 文字心情，依 trip 篩選顯示
-// v1.5.0：allList + list 雙層（cache 全部、list 當前 trip filtered）
-// 每篇日記獨立 Drive 資料夾 (BroTrip/photos/<trip>/<date>-<id>/)
+// v1.6.0：加 mentions 欄位（被 tag 的 email JSON），create 後觸發 Notifications
+// v1.5.0：allList + list 雙層 cache
+// 每篇日記獨立 Drive 資料夾
 
 const Diaries = {
   list: [],
@@ -68,6 +69,8 @@ const Diaries = {
     }
 
     const createdAt = new Date().toISOString();
+    const mentions = Array.isArray(data.mentions) ? data.mentions : [];
+    const mentionsJson = JSON.stringify(mentions);
     const row = [
       id,
       Trips.current.trip_id,
@@ -80,6 +83,7 @@ const Diaries = {
       createdAt,
       '',
       driveFolderUrl,
+      mentionsJson,  // L: mentions JSON
     ];
     await API.appendRow('Diaries', row);
     const newDiary = {
@@ -94,10 +98,25 @@ const Diaries = {
       created_at: createdAt,
       pinned: '',
       url: driveFolderUrl,
+      mentions: mentionsJson,
     };
     this.allList.push(newDiary);
     this._filter();
     Cache.set('diaries', this.allList);
+
+    // 觸發通知（被 tag 的人）
+    if (mentions.length > 0 && typeof Notifications !== 'undefined') {
+      try {
+        await Notifications.createBatch(mentions.map(email => ({
+          target_email: email,
+          type: 'mention',
+          diary_id: id,
+        })));
+      } catch (err) {
+        console.warn('Create notifications failed:', err);
+      }
+    }
+
     return newDiary;
   },
 
@@ -119,6 +138,9 @@ const Diaries = {
       locationStr = data.location;
     }
 
+    const mentions = Array.isArray(data.mentions) ? data.mentions : [];
+    const mentionsJson = JSON.stringify(mentions);
+
     const newRow = [
       existing.id,
       existing.trip_id,
@@ -131,6 +153,7 @@ const Diaries = {
       existing.created_at,
       existing.pinned || '',
       existing.url || '',
+      mentionsJson,
     ];
     await API.updateRow('Diaries', id, newRow);
     Object.assign(existing, {
@@ -138,6 +161,7 @@ const Diaries = {
       content: data.content,
       mood: data.mood || '',
       location: locationStr,
+      mentions: mentionsJson,
     });
     Cache.set('diaries', this.allList);
     return existing;
@@ -172,6 +196,7 @@ const Diaries = {
       existing.created_at,
       newPinned,
       existing.url || '',
+      existing.mentions || '',
     ];
     await API.updateRow('Diaries', id, newRow);
     existing.pinned = newPinned;
