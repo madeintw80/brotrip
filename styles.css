@@ -683,6 +683,14 @@ summary {
   font-size: 16px; /* iOS auto-zoom 保險 */
   width: 130px;
 }
+.filter-keyword {
+  flex: 1;
+  padding: 6px 10px;
+  font-size: 16px; /* iOS auto-zoom 保險 */
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  min-width: 0; /* 讓 flex 收縮 */
+}
 .filter-footer {
   justify-content: space-between;
   font-size: 12px;

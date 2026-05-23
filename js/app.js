@@ -51,7 +51,7 @@ const App = {
   _editingTripId: null,
   _map: null,
   _mapMarkers: null,
-  _diaryFilter: { authors: [], dateFrom: '', dateTo: '' },
+  _diaryFilter: { authors: [], dateFrom: '', dateTo: '', keyword: '' },
   _lightboxPhotos: [],
   _lightboxIndex: 0,
   _mentionState: null,  // { inputEl, atIdx } 當 @ 正在輸入中
@@ -143,6 +143,8 @@ const App = {
     const lightbox = document.getElementById('photo-lightbox');
     document.getElementById('lightbox-close').addEventListener('click', () => lightbox.close());
     lightbox.addEventListener('click', e => { if (e.target === lightbox) lightbox.close(); });
+    // 任何關閉路徑（button / 背景 / Escape）統一觸發 close event → 還原 viewport
+    lightbox.addEventListener('close', () => this._setViewportZoom(false));
     document.getElementById('lightbox-img').addEventListener('error', async (e) => {
       const li = e.target;
       if (li.dataset.fallbackTried === '1') return;
@@ -290,11 +292,26 @@ const App = {
       this.renderDiaries();
       this.updateFilterSummary();
     });
+    // 關鍵字搜尋（debounce 200ms 避免每打一字就 re-render 全部）
+    const kwInput = document.getElementById('filter-keyword');
+    if (kwInput) {
+      kwInput.addEventListener('input', e => {
+        clearTimeout(this._kwTimer);
+        const val = e.target.value;
+        this._kwTimer = setTimeout(() => {
+          this._diaryFilter.keyword = val;
+          this.renderDiaries();
+          this.updateFilterSummary();
+        }, 200);
+      });
+    }
     document.getElementById('filter-clear').addEventListener('click', () => {
-      this._diaryFilter = { authors: [], dateFrom: '', dateTo: '' };
+      this._diaryFilter = { authors: [], dateFrom: '', dateTo: '', keyword: '' };
       document.querySelectorAll('#filter-authors .filter-chip').forEach(c => c.classList.remove('active'));
       document.getElementById('filter-date-from').value = '';
       document.getElementById('filter-date-to').value = '';
+      const kw = document.getElementById('filter-keyword');
+      if (kw) kw.value = '';
       this.renderDiaries();
       this.updateFilterSummary();
     });
@@ -701,6 +718,19 @@ const App = {
     this._lightboxIndex = startIdx;
     this.showLightboxPhoto();
     document.getElementById('photo-lightbox').showModal();
+    // lightbox 期間允許 pinch zoom 看照片細節
+    this._setViewportZoom(true);
+  },
+
+  // 動態切換 viewport：lightbox 開啟允許放大、平常維持禁止避免 input focus auto-zoom
+  _setViewportZoom(allow) {
+    const meta = document.querySelector('meta[name="viewport"]');
+    if (!meta) return;
+    if (allow) {
+      meta.setAttribute('content', 'width=device-width, initial-scale=1.0, viewport-fit=cover');
+    } else {
+      meta.setAttribute('content', 'width=device-width, initial-scale=1.0, maximum-scale=1.0, viewport-fit=cover');
+    }
   },
 
   showLightboxPhoto() {
@@ -944,7 +974,7 @@ const App = {
     const el = document.getElementById('filter-summary');
     if (!el) return;
     const f = this._diaryFilter;
-    const active = (f.authors.length > 0 ? 1 : 0) + (f.dateFrom ? 1 : 0) + (f.dateTo ? 1 : 0);
+    const active = (f.authors.length > 0 ? 1 : 0) + (f.dateFrom ? 1 : 0) + (f.dateTo ? 1 : 0) + (f.keyword ? 1 : 0);
     if (active === 0) { el.textContent = ''; return; }
     const filtered = this.applyDiaryFilter(Diaries.list);
     el.textContent = `${active} 個篩選 · 顯示 ${filtered.length}/${Diaries.list.length}`;
@@ -952,10 +982,22 @@ const App = {
 
   applyDiaryFilter(list) {
     const f = this._diaryFilter;
+    // 關鍵字小寫化一次，提升 filter 效率
+    const kw = (f.keyword || '').trim().toLowerCase();
     return list.filter(d => {
       if (f.authors.length > 0 && !f.authors.includes(d.author)) return false;
       if (f.dateFrom && d.date < f.dateFrom) return false;
       if (f.dateTo && d.date > f.dateTo) return false;
+      if (kw) {
+        // 搜尋範圍：content / mood / location_name / author 暱稱或本名
+        const hay = [
+          d.content || '',
+          d.mood || '',
+          d.location_name || '',
+          this.nameOf(d.author) || '',
+        ].join('\n').toLowerCase();
+        if (!hay.includes(kw)) return false;
+      }
       return true;
     });
   },
@@ -970,7 +1012,7 @@ const App = {
       return (b.created_at || '').localeCompare(a.created_at || '');
     });
     if (list.length === 0) {
-      const isFiltered = (this._diaryFilter.authors.length > 0 || this._diaryFilter.dateFrom || this._diaryFilter.dateTo);
+      const isFiltered = (this._diaryFilter.authors.length > 0 || this._diaryFilter.dateFrom || this._diaryFilter.dateTo || this._diaryFilter.keyword);
       el.innerHTML = `<div class="list-empty">${isFiltered ? '篩選後沒有日記' : '還沒有日記，點右下角 + 新增'}</div>`;
       return;
     }

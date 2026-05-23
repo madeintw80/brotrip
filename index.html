@@ -18,7 +18,7 @@
       if (t) document.documentElement.dataset.theme = t;
     } catch (e) {}
   </script>
-  <link rel="stylesheet" href="styles.css?v=32">
+  <link rel="stylesheet" href="styles.css?v=33">
 </head>
 <body>
   <div id="pull-indicator" class="pull-indicator"></div>
@@ -67,6 +67,10 @@
       <!-- 日記 tab -->
       <section id="tab-diaries" class="tab-content hidden">
         <div id="diary-filter" class="filter-bar">
+          <div class="filter-row">
+            <span class="filter-label">搜尋：</span>
+            <input type="search" id="filter-keyword" class="filter-keyword" placeholder="關鍵字（內容/心情/地點/人名）" autocomplete="off">
+          </div>
           <div class="filter-row">
             <span class="filter-label">作者：</span>
             <div id="filter-authors" class="filter-chips"></div>
@@ -129,7 +133,7 @@
           <div id="debug-info"></div>
         </div>
         <div class="version-info-wrap">
-          <span id="version-info">BroTrip v1.8.7</span>
+          <span id="version-info">BroTrip v1.8.8</span>
         </div>
       </section>
     </main>
@@ -316,17 +320,17 @@
   <script src="https://accounts.google.com/gsi/client" async defer></script>
 
   <!-- App 程式碼（順序很重要，後面的依賴前面的）-->
-  <script src="js/config.js?v=32"></script>
-  <script src="js/auth.js?v=32"></script>
-  <script src="js/api.js?v=32"></script>
-  <script src="js/cache.js?v=32"></script>
-  <script src="js/trips.js?v=32"></script>
-  <script src="js/expenses.js?v=32"></script>
-  <script src="js/diaries.js?v=32"></script>
-  <script src="js/nicknames.js?v=32"></script>
-  <script src="js/comments.js?v=32"></script>
-  <script src="js/notifications.js?v=32"></script>
-  <script src="js/app.js?v=32"></script>
+  <script src="js/config.js?v=33"></script>
+  <script src="js/auth.js?v=33"></script>
+  <script src="js/api.js?v=33"></script>
+  <script src="js/cache.js?v=33"></script>
+  <script src="js/trips.js?v=33"></script>
+  <script src="js/expenses.js?v=33"></script>
+  <script src="js/diaries.js?v=33"></script>
+  <script src="js/nicknames.js?v=33"></script>
+  <script src="js/comments.js?v=33"></script>
+  <script src="js/notifications.js?v=33"></script>
+  <script src="js/app.js?v=33"></script>
 
   <!-- Service Worker -->
   <script>
