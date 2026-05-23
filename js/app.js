@@ -1118,12 +1118,15 @@ const App = {
           const amtInput = rowsEl.querySelector(`[data-share-email="${this.escapeAttr(m)}"]`);
           if (splitMap[m]) {
             cb.checked = true;
-            if (splitMap[m].share !== undefined) amtInput.value = splitMap[m].share;
-            else if (splitMap[m].ratio !== undefined) {
+            if (splitMap[m].share !== undefined) {
+              const share = parseFloat(splitMap[m].share);
+              // 負值或 0 視為空白（修舊 bug 的爛資料；submit 時會自動均分重算）
+              if (share > 0) amtInput.value = share;
+            } else if (splitMap[m].ratio !== undefined) {
               const totalRatio = splits.reduce((s, x) => s + (parseFloat(x.ratio) || 0), 0);
               if (totalRatio > 0) {
                 const share = parseFloat(e.amount) * (parseFloat(splitMap[m].ratio) || 0) / totalRatio;
-                amtInput.value = Math.round(share * 100) / 100;
+                if (share > 0) amtInput.value = Math.round(share * 100) / 100;
               }
             }
           } else cb.checked = false;
@@ -1343,9 +1346,13 @@ const App = {
         emptyEmails.forEach((email, i) => {
           let share;
           if (i === emptyEmails.length - 1) {
-            const used = splits.reduce((s, x) => s + x.share, 0) + (perEmpty * (emptyEmails.length - 1));
+            // 最後一人吸收 rounding diff = 總額 - 其他已 push 的全部
+            // (splits 此刻已含 filled rows + 前面 i 個 empty rows)
+            const used = splits.reduce((s, x) => s + x.share, 0);
             share = Math.round((totalAmount - used) * 100) / 100;
-          } else share = Math.round(perEmpty * 100) / 100;
+          } else {
+            share = Math.round(perEmpty * 100) / 100;
+          }
           splits.push({ email, share });
         });
       }
