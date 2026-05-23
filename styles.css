@@ -511,11 +511,14 @@ summary {
   bottom: calc(100px + env(safe-area-inset-bottom));
   left: 50%;
   transform: translateX(-50%);
-  background: var(--text);
-  color: white;
+  /* 固定深底白字（不跟主題：dark mode 下 var(--text) 是白色會看不到） */
+  background: rgba(17, 24, 39, 0.95);
+  color: #ffffff;
   padding: 12px 24px;
   border-radius: 24px;
   font-size: 14px;
+  font-weight: 500;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
   z-index: 200;
   animation: fadeIn 0.2s;
   max-width: 90%;
@@ -740,7 +743,7 @@ summary {
 .item-actions button:hover { background: var(--bg); }
 .item-actions button:active { transform: scale(0.92); }
 
-/* Pinned diary */
+/* Pinned diary（light: 淺米黃；dark mode 由頂部 [data-theme="dark"] .diary-item.pinned 處理）*/
 .diary-item.pinned {
   border-left: 4px solid #f59e0b;
   background: #fffbeb;
@@ -1207,6 +1210,21 @@ summary {
 @keyframes highlight-flash-pinned {
   0%, 100% { background: #fffbeb; }
   50% { background: #fde68a; }
+}
+/* dark mode flash 用深底+琥珀色閃光（保持對比，跟 pinned/lock-banner 的 #422006 系列一致） */
+@keyframes highlight-flash-dark {
+  0%, 100% { background: #1e293b; }
+  50% { background: #4a3a1a; }
+}
+@keyframes highlight-flash-pinned-dark {
+  0%, 100% { background: #422006; }
+  50% { background: #6b3a08; }
+}
+[data-theme="dark"] .diary-item.highlight-flash {
+  animation: highlight-flash-dark 0.8s 3;
+}
+[data-theme="dark"] .diary-item.pinned.highlight-flash {
+  animation: highlight-flash-pinned-dark 0.8s 3;
 }
 
 /* === Drive 相簿 link === */
