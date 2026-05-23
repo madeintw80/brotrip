@@ -1594,6 +1594,42 @@ const App = {
     this.openModal('modal-new-trip');
   },
 
+  // 刪除整個 trip（要兩次確認）
+  async confirmDeleteTrip(tripId) {
+    const trip = Trips.list.find(t => t.trip_id === tripId);
+    if (!trip) { this.toast('找不到該 trip'); return; }
+    // 統計連帶影響
+    const tripExpenses = (typeof Expenses !== 'undefined')
+      ? Expenses.allList.filter(e => e.trip_id === tripId) : [];
+    const tripDiaries = (typeof Diaries !== 'undefined')
+      ? Diaries.allList.filter(d => d.trip_id === tripId) : [];
+    const stats = `📊 ${trip.name} (${trip.start_date} ~ ${trip.end_date})\n` +
+      `  • ${tripExpenses.length} 筆記帳\n` +
+      `  • ${tripDiaries.length} 篇日記\n` +
+      `  • 留言/通知會連帶清掉\n` +
+      `  • 照片仍保留在 Drive`;
+    // 第 1 次確認
+    if (!confirm(`⚠️ 刪除 trip？\n\n${stats}\n\n(第 1 次確認)`)) return;
+    // 第 2 次確認
+    if (!confirm(`🚨 最後確認\n\n真的要刪「${trip.name}」嗎？\n\n此操作不可復原。`)) return;
+    this.closeModal('modal-trips');
+    this.toast('刪除中...請稍候');
+    try {
+      const counts = await Trips.delete(tripId);
+      const total = counts.expenses + counts.diaries + counts.comments + counts.notifications;
+      this.toast(`✅ Trip「${trip.name}」已刪除（連 ${total} 筆相關資料）`, 5000);
+      if (Trips.list.length === 0) {
+        this.toast('沒有 trip 了，建一個新的吧');
+        this.openNewTripModal();
+      } else {
+        await this.refreshAll();
+      }
+    } catch (err) {
+      console.error('delete trip failed:', err);
+      this.toast('刪除失敗：' + (err.message || err), 6000);
+    }
+  },
+
   // ===== Form handlers =====
 
   async handleExpenseSubmit(e) {
