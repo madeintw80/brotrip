@@ -245,10 +245,16 @@ const App = {
     // Trip list
     document.getElementById('trip-list').addEventListener('click', e => {
       const editBtn = e.target.closest('[data-action="edit-trip"]');
+      const deleteBtn = e.target.closest('[data-action="delete-trip"]');
       if (editBtn) {
         e.stopPropagation();
         this.closeModal('modal-trips');
         this.openEditTripModal(editBtn.dataset.tripId);
+        return;
+      }
+      if (deleteBtn) {
+        e.stopPropagation();
+        this.confirmDeleteTrip(deleteBtn.dataset.tripId);
         return;
       }
       const selectArea = e.target.closest('[data-action="select-trip"]');
@@ -1534,6 +1540,7 @@ const App = {
             <div class="dates">${t.start_date} ~ ${t.end_date}</div>
           </div>
           <button data-action="edit-trip" data-trip-id="${this.escapeAttr(t.trip_id)}" type="button" title="編輯成員/日期" class="trip-edit-btn">✏️</button>
+          <button data-action="delete-trip" data-trip-id="${this.escapeAttr(t.trip_id)}" type="button" title="刪除整個 trip" class="trip-delete-btn">🗑</button>
         </div>
       `).join('');
     }

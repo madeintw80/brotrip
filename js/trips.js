@@ -101,6 +101,77 @@ const Trips = {
     }
   },
 
+  // 刪除整個 trip + 所有關聯資料（expenses/diaries/comments/notifications）
+  // 用 batchDeleteRows 一次刪同 sheet 多 rows，避免 rate limit
+  async delete(tripId) {
+    const existing = this.list.find(t => t.trip_id === tripId);
+    if (!existing) throw new Error('找不到該 trip');
+
+    // 收集要刪的 IDs
+    const expenseIds = (typeof Expenses !== 'undefined')
+      ? Expenses.allList.filter(e => e.trip_id === tripId).map(e => e.id)
+      : [];
+    const diaryIds = (typeof Diaries !== 'undefined')
+      ? Diaries.allList.filter(d => d.trip_id === tripId).map(d => d.id)
+      : [];
+    const diaryIdSet = new Set(diaryIds);
+    const expenseIdSet = new Set(expenseIds);
+    const commentIds = (typeof Comments !== 'undefined')
+      ? Comments.list.filter(c => diaryIdSet.has(c.diary_id)).map(c => c.id)
+      : [];
+    const notifIds = (typeof Notifications !== 'undefined')
+      ? Notifications.list.filter(n =>
+          n.diary_id === tripId || diaryIdSet.has(n.diary_id) || expenseIdSet.has(n.diary_id)
+        ).map(n => n.id)
+      : [];
+
+    // 逐 sheet batch delete
+    if (expenseIds.length > 0) await API.batchDeleteRows('Expenses', expenseIds);
+    if (diaryIds.length > 0) await API.batchDeleteRows('Diaries', diaryIds);
+    if (commentIds.length > 0) await API.batchDeleteRows('Comments', commentIds);
+    if (notifIds.length > 0) await API.batchDeleteRows('Notifications', notifIds);
+    await API.deleteRow('Trips', tripId);
+
+    // 同步 memory + cache
+    if (typeof Expenses !== 'undefined') {
+      Expenses.allList = Expenses.allList.filter(e => e.trip_id !== tripId);
+      Expenses._filter();
+      Cache.set('expenses', Expenses.allList);
+    }
+    if (typeof Diaries !== 'undefined') {
+      Diaries.allList = Diaries.allList.filter(d => d.trip_id !== tripId);
+      Diaries._filter();
+      Cache.set('diaries', Diaries.allList);
+    }
+    if (typeof Comments !== 'undefined') {
+      Comments.list = Comments.list.filter(c => !diaryIdSet.has(c.diary_id));
+      Cache.set('comments', Comments.list);
+    }
+    if (typeof Notifications !== 'undefined') {
+      Notifications.list = Notifications.list.filter(n =>
+        !(n.diary_id === tripId || diaryIdSet.has(n.diary_id) || expenseIdSet.has(n.diary_id))
+      );
+      Cache.set('notifications', Notifications.list);
+    }
+
+    this.list = this.list.filter(t => t.trip_id !== tripId);
+    Cache.set('trips', this.list);
+
+    // 如果刪掉的是 current trip，切換到剩下的（或 null）
+    if (this.current && this.current.trip_id === tripId) {
+      this.current = null;
+      localStorage.removeItem('brotrip_current_trip');
+      this._restoreCurrent();
+    }
+
+    return {
+      expenses: expenseIds.length,
+      diaries: diaryIds.length,
+      comments: commentIds.length,
+      notifications: notifIds.length,
+    };
+  },
+
   async update(tripId, data) {
     const existing = this.list.find(t => t.trip_id === tripId);
     if (!existing) throw new Error('找不到該 trip');

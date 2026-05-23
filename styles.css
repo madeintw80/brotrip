@@ -552,6 +552,19 @@ summary {
 }
 .trip-edit-btn:hover { background: rgba(0,0,0,0.08); }
 .trip-item.current .trip-edit-btn:hover { background: rgba(255,255,255,0.2); }
+.trip-delete-btn {
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  padding: 8px 10px;
+  font-size: 16px;
+  color: inherit;
+  border-radius: 4px;
+  line-height: 1;
+  opacity: 0.6;
+}
+.trip-delete-btn:hover { background: rgba(239,68,68,0.15); opacity: 1; }
+.trip-item.current .trip-delete-btn:hover { background: rgba(255,255,255,0.25); }
 
 @media (min-width: 768px) {
   main { max-width: 720px; margin: 0 auto; }

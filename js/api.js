@@ -198,4 +198,29 @@ const API = {
       }),
     });
   },
+
+  // 一次刪掉多 rows（給 Trip 刪除時清關聯資料用，避免 API rate limit）
+  async batchDeleteRows(sheetName, ids) {
+    if (!ids || ids.length === 0) return;
+    const sheetId = CONFIG.SHEET_TAB_IDS[sheetName];
+    if (sheetId === undefined) throw new Error('未知的 sheet: ' + sheetName);
+    const rows = await this.getSheet(sheetName);
+    const idSet = new Set(ids);
+    const indexes = [];
+    rows.forEach((r, i) => {
+      if (i > 0 && idSet.has(r[0])) indexes.push(i);
+    });
+    if (indexes.length === 0) return;
+    // 從後面開始刪（避免 index shift）
+    indexes.sort((a, b) => b - a);
+    const requests = indexes.map(idx => ({
+      deleteDimension: {
+        range: { sheetId, dimension: 'ROWS', startIndex: idx, endIndex: idx + 1 },
+      },
+    }));
+    return await this.sheetsRequest(':batchUpdate', {
+      method: 'POST',
+      body: JSON.stringify({ requests }),
+    });
+  },
 };
