@@ -1,22 +1,22 @@
 // 改版時記得升 version，下次載入會清舊 cache
-const CACHE = 'brotrip-v20';
+const CACHE = 'brotrip-v21';
 const ASSETS = [
   './',
   './index.html',
-  './styles.css?v=20',
+  './styles.css?v=21',
   './manifest.json',
   './icons/icon.svg',
-  './js/config.js?v=20',
-  './js/auth.js?v=20',
-  './js/api.js?v=20',
-  './js/cache.js?v=20',
-  './js/trips.js?v=20',
-  './js/expenses.js?v=20',
-  './js/diaries.js?v=20',
-  './js/nicknames.js?v=20',
-  './js/comments.js?v=20',
-  './js/notifications.js?v=20',
-  './js/app.js?v=20',
+  './js/config.js?v=21',
+  './js/auth.js?v=21',
+  './js/api.js?v=21',
+  './js/cache.js?v=21',
+  './js/trips.js?v=21',
+  './js/expenses.js?v=21',
+  './js/diaries.js?v=21',
+  './js/nicknames.js?v=21',
+  './js/comments.js?v=21',
+  './js/notifications.js?v=21',
+  './js/app.js?v=21',
 ];
 
 self.addEventListener('install', e => {
