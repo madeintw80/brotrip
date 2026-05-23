@@ -196,6 +196,43 @@ const Expenses = {
     return result;
   },
 
+  // ⭐ v2.0.1 每個人實際花了多少（分攤後應付金額），按幣別分
+  // 用於「個人支出統計」section，看每個人這趟旅行的真實花費
+  // 含已結清的（因為這是 trip 回顧，要看實際花費，不是欠款）
+  getPerPersonSpending() {
+    const result = {}; // { TWD: { email: amount, ... }, USD: {...} }
+    this.list.forEach(e => {
+      const currency = e.currency || 'TWD';
+      if (!result[currency]) result[currency] = {};
+      let splits;
+      try { splits = JSON.parse(e.splits || '[]'); } catch {}
+      if (!Array.isArray(splits) || splits.length === 0) return;
+
+      const totalAmount = parseFloat(e.amount) || 0;
+      const hasShare = splits.some(s => s.share !== undefined);
+      if (hasShare) {
+        splits.forEach(s => {
+          const share = parseFloat(s.share) || 0;
+          result[currency][s.email] = (result[currency][s.email] || 0) + share;
+        });
+      } else {
+        const totalRatio = splits.reduce((sum, x) => sum + (parseFloat(x.ratio) || 0), 0);
+        if (totalRatio === 0) return;
+        splits.forEach(s => {
+          const share = totalAmount * (parseFloat(s.ratio) || 0) / totalRatio;
+          result[currency][s.email] = (result[currency][s.email] || 0) + share;
+        });
+      }
+    });
+    // round 到 2 位
+    for (const cur in result) {
+      for (const email in result[cur]) {
+        result[cur][email] = Math.round(result[cur][email] * 100) / 100;
+      }
+    }
+    return result;
+  },
+
   async update(id, data) {
     const existing = this.list.find(e => e.id === id);
     if (!existing) throw new Error('找不到該支出');

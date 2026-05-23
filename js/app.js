@@ -1366,6 +1366,39 @@ const App = {
       }
       html += `<button id="mark-all-settled-btn" type="button" class="btn-link" style="width:100%;margin-top:10px;font-size:12px;">🏁 強制全部結清（${unsettledCount} 筆，跳過確認）</button>`;
     }
+
+    // ⭐ v2.0.1 個人支出統計（每人實際分攤後的花費，含已結清，按金額多→少）
+    const perPerson = Expenses.getPerPersonSpending();
+    const perPersonCurrencies = Object.keys(perPerson);
+    if (perPersonCurrencies.length > 0) {
+      html += `<details class="per-person-section"><summary>📊 個人支出統計（含已結清）</summary>`;
+      perPersonCurrencies.forEach(currency => {
+        const entries = Object.entries(perPerson[currency])
+          .filter(([_, amt]) => amt > 0.01)
+          .sort((a, b) => b[1] - a[1]); // 多 → 少
+        if (entries.length === 0) return;
+        const total = entries.reduce((s, [_, v]) => s + v, 0);
+        if (perPersonCurrencies.length > 1) {
+          html += `<div class="per-person-currency-label">${this.escapeHtml(currency)}</div>`;
+        }
+        entries.forEach(([email, amt]) => {
+          const isMe = Auth.user && email === Auth.user.email;
+          const pct = total > 0 ? Math.round((amt / total) * 100) : 0;
+          html += `
+            <div class="per-person-row ${isMe ? 'me' : ''}">
+              <span class="per-person-name">${isMe ? '👤 ' : ''}${this.escapeHtml(this.nameOf(email))}</span>
+              <span class="per-person-bar-wrap">
+                <span class="per-person-bar" style="width:${pct}%"></span>
+              </span>
+              <span class="per-person-amount">${currency} ${amt.toLocaleString(undefined, { maximumFractionDigits: 2 })}</span>
+            </div>
+          `;
+        });
+        html += `<div class="per-person-total">小計 ${currency} ${total.toLocaleString(undefined, { maximumFractionDigits: 2 })}</div>`;
+      });
+      html += `</details>`;
+    }
+
     el.innerHTML = html;
   },
 

@@ -523,6 +523,81 @@ summary {
   flex-shrink: 0;
 }
 
+/* ⭐ v2.0.1 個人支出統計 */
+.per-person-section {
+  margin-top: 14px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--border);
+  font-size: 13px;
+}
+.per-person-section summary {
+  cursor: pointer;
+  font-weight: 600;
+  padding: 4px 0;
+  color: var(--text);
+  user-select: none;
+}
+.per-person-section summary:hover { color: var(--primary); }
+.per-person-currency-label {
+  font-size: 11px;
+  color: var(--text-light);
+  margin: 8px 0 4px;
+}
+.per-person-row {
+  display: grid;
+  grid-template-columns: 1fr 1.4fr auto;
+  gap: 8px;
+  align-items: center;
+  padding: 6px 4px;
+  border-bottom: 1px solid var(--border);
+}
+.per-person-row:last-of-type { border-bottom: none; }
+.per-person-row.me {
+  background: rgba(59, 130, 246, 0.08);
+  border-radius: 6px;
+  padding: 8px;
+  border-bottom: none;
+}
+.per-person-row.me .per-person-name { font-weight: 700; color: var(--primary); }
+.per-person-name {
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.per-person-bar-wrap {
+  height: 8px;
+  background: var(--border);
+  border-radius: 4px;
+  overflow: hidden;
+  position: relative;
+}
+.per-person-bar {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, var(--primary), #60a5fa);
+  border-radius: 4px;
+  transition: width 0.3s;
+}
+.per-person-row.me .per-person-bar {
+  background: linear-gradient(90deg, #10b981, #34d399);
+}
+.per-person-amount {
+  font-weight: 600;
+  text-align: right;
+  white-space: nowrap;
+  color: var(--text);
+}
+.per-person-total {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid var(--border);
+  text-align: right;
+  font-size: 12px;
+  color: var(--text-light);
+  font-style: italic;
+}
+
 .diary-item {
   background: white;
   padding: 14px;
