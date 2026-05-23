@@ -18,7 +18,7 @@
       if (t) document.documentElement.dataset.theme = t;
     } catch (e) {}
   </script>
-  <link rel="stylesheet" href="styles.css?v=23">
+  <link rel="stylesheet" href="styles.css?v=24">
 </head>
 <body>
   <div id="pull-indicator" class="pull-indicator"></div>
@@ -105,6 +105,10 @@
             <span>🔄 檢查新版本</span>
             <small>強制更新 app code（不會登出、不會清掉剛改的資料）</small>
           </button>
+          <button id="reset-app-btn" class="settings-btn" type="button" style="border-color:#ef4444;">
+            <span style="color:#ef4444;">🚨 完全重置（救援用）</span>
+            <small>清所有本地快取 + 登出。Sheet 資料不會掉，只是本地 reset</small>
+          </button>
           <button id="open-sheet-btn" class="settings-btn" type="button">
             <span>📊 開啟 BroTrip-Data Sheet</span>
             <small>看原始資料 / 手動修</small>
@@ -120,7 +124,7 @@
           <div id="nicknames-list"></div>
         </div>
         <div class="version-info-wrap">
-          <span id="version-info">BroTrip v1.7.8</span>
+          <span id="version-info">BroTrip v1.7.9</span>
         </div>
       </section>
     </main>
@@ -307,17 +311,17 @@
   <script src="https://accounts.google.com/gsi/client" async defer></script>
 
   <!-- App 程式碼（順序很重要，後面的依賴前面的）-->
-  <script src="js/config.js?v=23"></script>
-  <script src="js/auth.js?v=23"></script>
-  <script src="js/api.js?v=23"></script>
-  <script src="js/cache.js?v=23"></script>
-  <script src="js/trips.js?v=23"></script>
-  <script src="js/expenses.js?v=23"></script>
-  <script src="js/diaries.js?v=23"></script>
-  <script src="js/nicknames.js?v=23"></script>
-  <script src="js/comments.js?v=23"></script>
-  <script src="js/notifications.js?v=23"></script>
-  <script src="js/app.js?v=23"></script>
+  <script src="js/config.js?v=24"></script>
+  <script src="js/auth.js?v=24"></script>
+  <script src="js/api.js?v=24"></script>
+  <script src="js/cache.js?v=24"></script>
+  <script src="js/trips.js?v=24"></script>
+  <script src="js/expenses.js?v=24"></script>
+  <script src="js/diaries.js?v=24"></script>
+  <script src="js/nicknames.js?v=24"></script>
+  <script src="js/comments.js?v=24"></script>
+  <script src="js/notifications.js?v=24"></script>
+  <script src="js/app.js?v=24"></script>
 
   <!-- Service Worker -->
   <script>

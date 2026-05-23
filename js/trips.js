@@ -33,10 +33,15 @@ const Trips = {
   },
 
   async loadAll() {
-    const rows = await API.getSheet('Trips');
-    this.list = API.rowsToObjects(rows);
-    Cache.set('trips', this.list);
-    this._restoreCurrent();
+    try {
+      const rows = await API.getSheet('Trips');
+      this.list = API.rowsToObjects(rows);
+      Cache.set('trips', this.list);
+      this._restoreCurrent();
+    } catch (err) {
+      console.error('Trips.loadAll failed:', err);
+      throw err;  // 讓 caller 知道，可以顯示 UI 錯誤
+    }
     return this.list;
   },
 

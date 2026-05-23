@@ -197,6 +197,9 @@ const App = {
     // Dark mode toggle
     document.getElementById('toggle-dark-btn').addEventListener('click', () => this.toggleDarkMode());
 
+    // 完全重置（救援按鈕）
+    document.getElementById('reset-app-btn').addEventListener('click', () => this.resetApp());
+
     // 已結清解鎖 / 反悔重新鎖定
     document.getElementById('expense-unlock-btn').addEventListener('click', () => this.unlockExpense());
     document.getElementById('expense-relock-btn').addEventListener('click', () => this.relockExpense());
@@ -459,6 +462,39 @@ const App = {
     }
   },
 
+  // 完全重置：清所有 cache + localStorage + SW + logout
+  async resetApp() {
+    if (!confirm('🚨 完全重置 BroTrip\n\n會清掉：\n• 所有本地快取\n• 登入狀態（要重登）\n• Service Worker\n\n資料在 Google Sheet 不會掉，只是本地 reset。\n\n確定？')) return;
+    this.toast('重置中...');
+    // SW caches
+    if ('caches' in window) {
+      try {
+        const names = await caches.keys();
+        await Promise.all(names.map(n => caches.delete(n)));
+      } catch {}
+    }
+    // Data cache
+    if (typeof Cache !== 'undefined') Cache.clear();
+    // All brotrip_* localStorage
+    try {
+      Object.keys(localStorage).forEach(k => {
+        if (k.startsWith('brotrip_')) localStorage.removeItem(k);
+      });
+    } catch {}
+    // Unregister SW
+    if ('serviceWorker' in navigator) {
+      try {
+        const regs = await navigator.serviceWorker.getRegistrations();
+        await Promise.all(regs.map(r => r.unregister()));
+      } catch {}
+    }
+    // Revoke OAuth token
+    try { Auth.logout(); } catch {}
+    setTimeout(() => {
+      window.location.href = window.location.pathname + '?t=' + Date.now();
+    }, 600);
+  },
+
   async checkUpdate() {
     this.toast('檢查新版本中...');
     if ('serviceWorker' in navigator) {
@@ -623,14 +659,26 @@ const App = {
     }
 
     // Phase 2: 背景同步
-    await this.ensureMemberRegistered();
-    await Trips.loadAll();
-    if (Trips.list.length === 0) {
-      this.toast('還沒有任何 trip，先建一個吧');
-      this.openNewTripModal();
-      return;
+    try {
+      await this.ensureMemberRegistered();
+      await Trips.loadAll();
+      if (Trips.list.length === 0) {
+        this.toast('還沒有任何 trip，先建一個吧');
+        this.openNewTripModal();
+        return;
+      }
+      await this.refreshAll();
+    } catch (err) {
+      console.error('showMainApp Phase 2 failed:', err);
+      const msg = err.message || '未知錯誤';
+      if (msg.includes('403') || msg.includes('Forbidden') || msg.includes('permission')) {
+        this.toast('⚠️ 你的帳號沒有 Sheet 讀取權限。請聯絡管理員 madeintw80@gmail.com', 8000);
+      } else if (msg.includes('404')) {
+        this.toast('⚠️ 找不到 BroTrip-Data Sheet。請聯絡管理員', 8000);
+      } else {
+        this.toast('⚠️ 載入失敗：' + msg.slice(0, 100), 6000);
+      }
     }
-    await this.refreshAll();
   },
 
   async ensureMemberRegistered() {
