@@ -54,6 +54,7 @@ const App = {
   _diaryFilter: { authors: [], dateFrom: '', dateTo: '' },
   _lightboxPhotos: [],
   _lightboxIndex: 0,
+  _mentionState: null,  // { inputEl, atIdx } 當 @ 正在輸入中
 
   async init() {
     // 還原 dark/light theme（最早做以免閃白）
@@ -207,20 +208,11 @@ const App = {
       const pinBtn = e.target.closest('[data-action="pin-diary"]');
       const delCommentBtn = e.target.closest('[data-action="delete-comment"]');
       const sendBtn = e.target.closest('.comment-send');
-      const mentionChip = e.target.closest('.mention-chip');
+      // Note: mention-chip click handler 已移除（v1.7.5 改用 @autocomplete dropdown）
       if (editBtn) { e.stopPropagation(); this.openDiaryModal(editBtn.dataset.id); return; }
       if (delBtn) { e.stopPropagation(); this.deleteDiary(delBtn.dataset.id); return; }
       if (pinBtn) { e.stopPropagation(); this.togglePin(pinBtn.dataset.id); return; }
       if (delCommentBtn) { e.stopPropagation(); this.deleteComment(delCommentBtn.dataset.id); return; }
-      if (mentionChip) {
-        e.stopPropagation();
-        const wrap = mentionChip.closest('.comments-section');
-        if (wrap) {
-          const input = wrap.querySelector('.comment-input');
-          if (input) this.insertAtCursor(input, `@${mentionChip.dataset.name} `);
-        }
-        return;
-      }
       if (sendBtn) {
         e.stopPropagation();
         const wrap = sendBtn.closest('.comment-input-wrap');
@@ -366,12 +358,26 @@ const App = {
       }
     });
 
-    // Mention chips in diary modal
-    document.getElementById('diary-mention-chips').addEventListener('click', e => {
-      const chip = e.target.closest('.mention-chip');
-      if (!chip) return;
-      const textarea = document.querySelector('#diary-form [name="content"]');
-      if (textarea) this.insertAtCursor(textarea, `@${chip.dataset.name} `);
+    // === Mention autocomplete ===
+    // 日記 textarea
+    const diaryTextarea = document.querySelector('#diary-form [name="content"]');
+    if (diaryTextarea) {
+      diaryTextarea.addEventListener('input', () => this.handleMentionInput(diaryTextarea));
+      diaryTextarea.addEventListener('keydown', (e) => this.handleMentionKey(e));
+    }
+    // 留言 input（用 delegation 抓 dynamic 元素）
+    document.getElementById('diary-list').addEventListener('input', (e) => {
+      if (e.target.classList.contains('comment-input')) this.handleMentionInput(e.target);
+    });
+    document.getElementById('diary-list').addEventListener('keydown', (e) => {
+      if (e.target.classList.contains('comment-input')) this.handleMentionKey(e);
+    });
+    // 點 dropdown 外面就關（用 mousedown 比 click 早，避免 blur 先觸發）
+    document.addEventListener('mousedown', (e) => {
+      if (!this._mentionState) return;
+      if (e.target.closest('#mention-dropdown')) return;
+      if (e.target === this._mentionState.inputEl) return;
+      this.closeMentionDropdown();
     });
 
     // 通知 bell + modal
@@ -984,13 +990,110 @@ const App = {
     el.focus();
   },
 
-  renderDiaryMentionChips() {
-    const wrap = document.getElementById('diary-mention-chips');
-    if (!wrap) return;
-    wrap.innerHTML = '<span class="chip-label">💡 點 chip 提到人：</span>' + CONFIG.ALLOWED_MEMBERS.map(m => {
+  // ===== Mention autocomplete dropdown =====
+
+  // 偵測游標前是否有 @xxx，若有就 show dropdown
+  handleMentionInput(inputEl) {
+    const text = inputEl.value;
+    const pos = inputEl.selectionStart || 0;
+    const before = text.slice(0, pos);
+    const atIdx = before.lastIndexOf('@');
+    if (atIdx === -1) { this.closeMentionDropdown(); return; }
+    const between = before.slice(atIdx + 1);
+    // @ 跟游標之間如果有 space / 標點，已經結束 mention
+    if (/[\s,，。、!?！？]/.test(between)) { this.closeMentionDropdown(); return; }
+    if (between.length > 20) { this.closeMentionDropdown(); return; }
+    this.showMentionDropdown(inputEl, atIdx, between);
+  },
+
+  showMentionDropdown(inputEl, atIdx, query) {
+    this._mentionState = { inputEl, atIdx };
+    const dropdown = document.getElementById('mention-dropdown');
+    if (!dropdown) return;
+
+    const lowerQ = (query || '').toLowerCase();
+    const matches = CONFIG.ALLOWED_MEMBERS.filter(m => {
+      if (!lowerQ) return true;
+      const display = this.nameOf(m.email).toLowerCase();
+      return display.includes(lowerQ) || m.name.toLowerCase().includes(lowerQ);
+    });
+    if (matches.length === 0) { this.closeMentionDropdown(); return; }
+
+    dropdown.innerHTML = matches.map((m, i) => {
       const display = this.nameOf(m.email);
-      return `<button class="mention-chip" type="button" data-name="${this.escapeAttr(display)}">@${this.escapeHtml(display)}</button>`;
-    }).join(' ');
+      return `<div class="mention-option ${i === 0 ? 'active' : ''}" data-name="${this.escapeAttr(display)}">@${this.escapeHtml(display)}</div>`;
+    }).join('');
+
+    // 定位在 input 下方
+    const rect = inputEl.getBoundingClientRect();
+    dropdown.style.left = `${rect.left + window.scrollX}px`;
+    dropdown.style.top = `${rect.bottom + window.scrollY + 4}px`;
+    dropdown.style.minWidth = `${Math.min(Math.max(rect.width, 160), 240)}px`;
+    dropdown.classList.remove('hidden');
+    dropdown.classList.add('show');
+
+    // Mousedown + touchstart 避免 blur 觸發
+    dropdown.querySelectorAll('.mention-option').forEach(opt => {
+      opt.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        this.applyMention(opt.dataset.name);
+      });
+      opt.addEventListener('touchstart', (e) => {
+        e.preventDefault();
+        this.applyMention(opt.dataset.name);
+      }, { passive: false });
+    });
+  },
+
+  closeMentionDropdown() {
+    const dropdown = document.getElementById('mention-dropdown');
+    if (dropdown) {
+      dropdown.classList.add('hidden');
+      dropdown.classList.remove('show');
+    }
+    this._mentionState = null;
+  },
+
+  applyMention(name) {
+    if (!this._mentionState) return;
+    const { inputEl, atIdx } = this._mentionState;
+    const pos = inputEl.selectionStart || 0;
+    const before = inputEl.value.slice(0, atIdx);
+    const after = inputEl.value.slice(pos);
+    const inserted = `@${name} `;
+    inputEl.value = before + inserted + after;
+    const newPos = atIdx + inserted.length;
+    inputEl.selectionStart = inputEl.selectionEnd = newPos;
+    inputEl.focus();
+    this.closeMentionDropdown();
+    inputEl.dispatchEvent(new Event('input', { bubbles: true }));
+  },
+
+  handleMentionKey(e) {
+    const dropdown = document.getElementById('mention-dropdown');
+    if (!dropdown || dropdown.classList.contains('hidden')) return;
+
+    if (e.key === 'Escape') { this.closeMentionDropdown(); e.preventDefault(); return; }
+
+    if (e.key === 'Enter' || e.key === 'Tab') {
+      const active = dropdown.querySelector('.mention-option.active');
+      if (active) {
+        e.preventDefault();
+        this.applyMention(active.dataset.name);
+      }
+      return;
+    }
+
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      const options = Array.from(dropdown.querySelectorAll('.mention-option'));
+      if (options.length === 0) return;
+      let activeIdx = options.findIndex(o => o.classList.contains('active'));
+      if (activeIdx === -1) activeIdx = 0;
+      if (e.key === 'ArrowDown') activeIdx = (activeIdx + 1) % options.length;
+      else activeIdx = (activeIdx - 1 + options.length) % options.length;
+      options.forEach((o, i) => o.classList.toggle('active', i === activeIdx));
+    }
   },
 
   escapeHtml(s) {
@@ -1260,8 +1363,7 @@ const App = {
       }
     } catch (err) { console.warn('Places autocomplete 未啟用：', err.message); }
 
-    this.renderDiaryMentionChips();
-
+    // v1.7.5: 取消 chip 列，改用 @autocomplete dropdown
     if (id) {
       const d = Diaries.list.find(x => x.id === id);
       if (!d) { this.toast('找不到該日記'); return; }

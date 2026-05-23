@@ -1088,42 +1088,31 @@ summary {
 .notif-text { font-size: 14px; line-height: 1.4; }
 .notif-time { color: var(--text-light); font-size: 11px; }
 
-/* === Mention chips (in diary modal + comments) === */
-.mention-chips-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-bottom: 14px;
-  align-items: center;
-  font-size: 13px;
-}
-.chip-label {
-  color: var(--text-light);
-  font-size: 12px;
-  margin-right: 4px;
-}
-.mention-chip {
-  background: var(--bg);
+/* === Mention autocomplete dropdown (打 @ 跳推薦) === */
+.mention-dropdown {
+  position: absolute;
+  background: var(--card);
   border: 1px solid var(--border);
-  padding: 4px 10px;
-  border-radius: 14px;
-  font-size: 13px;
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.18);
+  z-index: 300;
+  max-height: 240px;
+  overflow-y: auto;
+  min-width: 160px;
+}
+.mention-dropdown.hidden { display: none; }
+.mention-option {
+  padding: 10px 14px;
   cursor: pointer;
+  font-size: 15px;
   color: var(--text);
-  font-family: inherit;
+  border-bottom: 1px solid var(--border);
 }
-.mention-chip:hover { background: var(--primary); color: white; border-color: var(--primary); }
-.mention-chip.mini {
-  font-size: 11px;
-  padding: 2px 8px;
-  border-radius: 12px;
-}
-.comment-mention-chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-  margin-bottom: 6px;
-  padding: 4px 0;
+.mention-option:last-child { border-bottom: none; }
+.mention-option:hover,
+.mention-option.active {
+  background: var(--primary);
+  color: white;
 }
 
 /* === Mention span (highlighted @name in content) === */
