@@ -444,8 +444,10 @@ const App = {
       this.renderWaypointRows();
     });
 
-    // 行程列表 click：用 Google Maps 開 / 刪除 / 載入到地圖
+    // 行程列表 click：取消選擇 / 用 Google Maps 開 / 刪除 / 載入到地圖
     document.getElementById('itinerary-list').addEventListener('click', e => {
+      const clearBtn = e.target.closest('[data-action="clear-itinerary"]');
+      if (clearBtn) { e.stopPropagation(); this.clearItinerarySelection(); return; }
       const gmapsBtn = e.target.closest('[data-action="open-in-gmaps"]');
       if (gmapsBtn) { e.stopPropagation(); this.openItineraryInGoogleMaps(gmapsBtn.dataset.id); return; }
       const delBtn = e.target.closest('[data-action="delete-itinerary"]');
@@ -800,13 +802,15 @@ const App = {
       const isMine = Auth.user && itin.author === Auth.user.email;
       const isActive = this._activeItineraryId === itin.id;
       const summary = wps.map(w => w.name).slice(0, 3).join(' → ') + (wps.length > 3 ? ` → ...(+${wps.length - 3})` : '');
+      // active 時顯示 ● 點 + 「取消」按鈕；點 item 本身也能 toggle 取消
       return `
         <div class="itinerary-item ${isActive ? 'active' : ''}" data-id="${this.escapeAttr(itin.id)}">
           <div class="itinerary-info">
-            <div class="itinerary-name">${modeIcon} ${this.escapeHtml(itin.name)}</div>
+            <div class="itinerary-name">${isActive ? '<span class="itinerary-active-dot">●</span> ' : ''}${modeIcon} ${this.escapeHtml(itin.name)}</div>
             <div class="itinerary-meta">${this.escapeHtml(this.nameOf(itin.author))} · ${wps.length} 個地點 · ${this.escapeHtml(summary)}</div>
           </div>
           <div class="itinerary-actions">
+            ${isActive ? `<button data-action="clear-itinerary" type="button" title="取消選擇，回到日記模式" class="itinerary-clear-btn">✕ 取消</button>` : ''}
             <button data-action="open-in-gmaps" data-id="${this.escapeAttr(itin.id)}" type="button" title="用 Google Maps 開（含完整導航）">🗺</button>
             ${isMine ? `<button data-action="delete-itinerary" data-id="${this.escapeAttr(itin.id)}" type="button" title="刪除">🗑</button>` : ''}
           </div>
@@ -910,10 +914,27 @@ const App = {
     }
   },
 
-  // 點某行程 → 在地圖上畫路線
+  // 取消行程選擇 → 清路線 + 重新顯示日記 markers
+  async clearItinerarySelection() {
+    this.clearItineraryRoute();
+    this._activeItineraryId = null;
+    // 重新跑 initOrRefreshMap 把日記 markers 畫回來
+    await this.initOrRefreshMap();
+    this.renderItineraries();
+    this.toast('已取消行程選擇，回到日記模式');
+  },
+
+  // 點行程 → 切到地圖顯示路線。如果點到當前 active 行程則 toggle 取消
   async showItineraryOnMap(id) {
     const itin = Itineraries.list.find(x => x.id === id);
     if (!itin) return;
+
+    // Toggle：點當前 active 那個 → 取消選擇，回到日記 markers 模式
+    if (this._activeItineraryId === id) {
+      await this.clearItinerarySelection();
+      return;
+    }
+
     const wps = Itineraries.getWaypoints(itin);
     if (wps.length < 2) { this.toast('行程地點不足'); return; }
 
