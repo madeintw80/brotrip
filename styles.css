@@ -574,30 +574,42 @@ summary {
   .fab { right: calc(50% - 300px + 16px); }
 }
 
-/* Photo lightbox */
+/* Photo lightbox — 整個 viewport 撐滿，按鈕都在 dialog 內部 */
 #photo-lightbox {
   border: none;
   padding: 0;
-  background: transparent;
-  max-width: 95vw;
-  max-height: 95vh;
-  overflow: visible;
+  margin: 0;
+  background: rgba(0,0,0,0.95);
+  /* 撐滿整個 viewport：避免底層 UI 透出 + 按鈕跑出邊界被裁 */
+  width: 100vw;
+  height: 100vh;
+  max-width: 100vw;
+  max-height: 100vh;
+  overflow: hidden;
+}
+#photo-lightbox[open] {
+  /* dialog open 時改成 flex 置中圖片 */
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 #photo-lightbox::backdrop {
-  background: rgba(0,0,0,0.9);
+  background: rgba(0,0,0,0.95);
   cursor: zoom-out;
 }
 #lightbox-img {
-  max-width: 95vw;
-  max-height: 95vh;
+  max-width: 100vw;
+  /* 留 vh 給上下安全區 + counter（72px ≈ status bar + 邊距）*/
+  max-height: calc(100vh - 80px);
   object-fit: contain;
   display: block;
-  border-radius: 8px;
+  border-radius: 4px;
 }
 #lightbox-close {
   position: absolute;
-  top: -16px;
-  right: -16px;
+  /* 內部 positioning + safe-area 避開 iPhone 動態島 / notch */
+  top: max(16px, env(safe-area-inset-top, 16px));
+  right: max(16px, env(safe-area-inset-right, 16px));
   font-size: 20px;
   background: rgba(0,0,0,0.75);
   color: white;
@@ -1005,11 +1017,13 @@ summary {
   align-items: center;
   justify-content: center;
 }
-#lightbox-prev { left: -20px; }
-#lightbox-next { right: -20px; }
+/* 改成內部 positioning，貼著 dialog 左右邊（safe-area 避開瀏海/動態島） */
+#lightbox-prev { left: max(12px, env(safe-area-inset-left, 12px)); }
+#lightbox-next { right: max(12px, env(safe-area-inset-right, 12px)); }
 #lightbox-counter {
   position: absolute;
-  bottom: -32px;
+  /* 內部底部，safe-area 避開 home indicator */
+  bottom: max(16px, env(safe-area-inset-bottom, 16px));
   left: 50%;
   transform: translateX(-50%);
   background: rgba(0,0,0,0.7);
