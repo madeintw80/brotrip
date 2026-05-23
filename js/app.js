@@ -879,10 +879,6 @@ const App = {
   renderCommentsSection(diaryId) {
     if (typeof Comments === 'undefined') return '';
     const comments = Comments.getForDiary(diaryId);
-    const chipsHtml = `<div class="comment-mention-chips">${CONFIG.ALLOWED_MEMBERS.map(m => {
-      const display = this.nameOf(m.email);
-      return `<button class="mention-chip mini" type="button" data-name="${this.escapeAttr(display)}">@${this.escapeHtml(display)}</button>`;
-    }).join(' ')}</div>`;
     return `
       <div class="comments-section">
         ${comments.length > 0 ? `
@@ -902,9 +898,8 @@ const App = {
             }).join('')}
           </div>
         ` : ''}
-        ${chipsHtml}
         <div class="comment-input-wrap" data-diary-id="${this.escapeAttr(diaryId)}">
-          <input type="text" class="comment-input" placeholder="💬 留言（打「@」可 tag 人）..." maxlength="500">
+          <input type="text" class="comment-input" placeholder="💬 留言（打「@」跳推薦）..." maxlength="500">
           <button type="button" class="comment-send">送出</button>
         </div>
       </div>
