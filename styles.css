@@ -935,14 +935,132 @@ summary {
 }
 
 /* === Trip map === */
+#tab-map {
+  display: flex;
+  flex-direction: column;
+  /* 撐滿 viewport 剩餘空間（扣 header ~80 + bottom nav ~60 + padding） */
+  min-height: calc(100dvh - 160px);
+  gap: 10px;
+}
 #trip-map {
-  height: calc(100vh - 280px);
+  /* 地圖佔大頭，最少 320px，最多到行程 section 邊界 */
+  flex: 1 1 60vh;
   min-height: 320px;
   border-radius: 12px;
   overflow: hidden;
-  margin-bottom: 12px;
   background: var(--bg);
 }
+/* === 預計行程 === */
+#itinerary-section {
+  background: var(--card);
+  border-radius: 12px;
+  padding: 12px;
+  border: 1px solid var(--border);
+}
+.itinerary-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+}
+.itinerary-header h3 {
+  margin: 0;
+  font-size: 16px;
+}
+.btn-small {
+  background: var(--primary);
+  color: white;
+  border: none;
+  padding: 6px 14px;
+  border-radius: 14px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.itinerary-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 30vh;
+  overflow-y: auto;
+}
+.itinerary-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  background: var(--bg);
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.itinerary-item:active { transform: scale(0.98); }
+.itinerary-item.active {
+  border-color: var(--primary);
+  background: rgba(59, 130, 246, 0.08);
+}
+.itinerary-info { flex: 1; min-width: 0; }
+.itinerary-name { font-weight: 600; font-size: 14px; margin-bottom: 2px; }
+.itinerary-meta { font-size: 12px; color: var(--text-light); }
+.itinerary-actions { display: flex; gap: 4px; }
+.itinerary-actions button {
+  background: transparent;
+  border: none;
+  font-size: 16px;
+  cursor: pointer;
+  padding: 4px 6px;
+}
+[data-theme="dark"] .itinerary-item { background: var(--card); }
+[data-theme="dark"] .itinerary-item.active { background: rgba(59, 130, 246, 0.15); }
+
+/* 新增行程 modal 內 waypoints */
+.itinerary-waypoints-section { margin: 12px 0; }
+.waypoints-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 14px;
+  font-weight: 500;
+  margin-bottom: 8px;
+}
+.waypoint-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  margin-bottom: 6px;
+}
+.waypoint-num {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--primary);
+  color: white;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+.waypoint-input {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 10px;
+  font-size: 16px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.waypoint-up, .waypoint-down, .waypoint-remove {
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  font-size: 16px;
+  padding: 4px;
+  color: var(--text-light);
+}
+.waypoint-remove { color: #ef4444; }
+
 #trip-map-empty {
   margin-top: 12px;
 }

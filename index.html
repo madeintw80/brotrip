@@ -18,7 +18,7 @@
       if (t) document.documentElement.dataset.theme = t;
     } catch (e) {}
   </script>
-  <link rel="stylesheet" href="styles.css?v=35">
+  <link rel="stylesheet" href="styles.css?v=36">
 </head>
 <body>
   <div id="pull-indicator" class="pull-indicator"></div>
@@ -92,9 +92,16 @@
 
       <!-- 地圖 tab -->
       <section id="tab-map" class="tab-content hidden">
-        <h3 class="section-title">🗺 Trip 地圖（有座標的日記）</h3>
         <div id="trip-map"></div>
-        <div id="trip-map-empty" class="list-empty hidden">這趟還沒有日記用 Google 地點選位置 — 新增日記時在「地點」欄位用自動推薦選地點，就會出現在地圖上。</div>
+        <div id="trip-map-empty" class="list-empty hidden">還沒有日記/行程有座標 — 新增日記時用「地點」自動推薦選地點，或下方按 +規劃預計行程。</div>
+        <!-- 預計行程 -->
+        <div id="itinerary-section">
+          <div class="itinerary-header">
+            <h3>📋 預計行程</h3>
+            <button id="new-itinerary-btn" type="button" class="btn-small">+ 新增</button>
+          </div>
+          <div id="itinerary-list" class="itinerary-list"></div>
+        </div>
       </section>
 
       <!-- 設定 tab -->
@@ -133,7 +140,7 @@
           <div id="debug-info"></div>
         </div>
         <div class="version-info-wrap">
-          <span id="version-info">BroTrip v1.8.10</span>
+          <span id="version-info">BroTrip v1.9.0</span>
         </div>
       </section>
     </main>
@@ -289,6 +296,39 @@
     </div>
   </div>
 
+  <!-- Modal: 新增 / 檢視 行程 -->
+  <div id="modal-itinerary" class="modal hidden">
+    <div class="modal-content">
+      <header class="modal-header">
+        <h2>📋 新增預計行程</h2>
+        <button class="modal-close" type="button">✕</button>
+      </header>
+      <form id="itinerary-form">
+        <label>行程名稱 <input name="name" type="text" required placeholder="例：第一天 北部一日遊"></label>
+        <label>交通方式
+          <select name="travel_mode">
+            <option value="DRIVING">🚗 開車</option>
+            <option value="TRANSIT">🚆 大眾運輸</option>
+            <option value="WALKING">🚶 走路</option>
+            <option value="BICYCLING">🚴 騎車</option>
+          </select>
+        </label>
+        <div class="itinerary-waypoints-section">
+          <div class="waypoints-header">
+            <span>地點順序（最少 2 個）</span>
+            <button type="button" id="add-waypoint-btn" class="btn-small">+ 加地點</button>
+          </div>
+          <div id="waypoint-rows"></div>
+          <small style="color:var(--text-light);">輸入地點時會跳 Google 推薦，選一個。可拖拉重排（暫時用上下箭頭調）。</small>
+        </div>
+        <div class="form-actions">
+          <button type="button" class="btn-cancel modal-close">取消</button>
+          <button type="submit" class="btn-primary">儲存行程</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
   <!-- Modal: 通知 -->
   <div id="modal-notifications" class="modal hidden">
     <div class="modal-content">
@@ -320,17 +360,18 @@
   <script src="https://accounts.google.com/gsi/client" async defer></script>
 
   <!-- App 程式碼（順序很重要，後面的依賴前面的）-->
-  <script src="js/config.js?v=35"></script>
-  <script src="js/auth.js?v=35"></script>
-  <script src="js/api.js?v=35"></script>
-  <script src="js/cache.js?v=35"></script>
-  <script src="js/trips.js?v=35"></script>
-  <script src="js/expenses.js?v=35"></script>
-  <script src="js/diaries.js?v=35"></script>
-  <script src="js/nicknames.js?v=35"></script>
-  <script src="js/comments.js?v=35"></script>
-  <script src="js/notifications.js?v=35"></script>
-  <script src="js/app.js?v=35"></script>
+  <script src="js/config.js?v=36"></script>
+  <script src="js/auth.js?v=36"></script>
+  <script src="js/api.js?v=36"></script>
+  <script src="js/cache.js?v=36"></script>
+  <script src="js/trips.js?v=36"></script>
+  <script src="js/expenses.js?v=36"></script>
+  <script src="js/diaries.js?v=36"></script>
+  <script src="js/nicknames.js?v=36"></script>
+  <script src="js/comments.js?v=36"></script>
+  <script src="js/notifications.js?v=36"></script>
+  <script src="js/itineraries.js?v=36"></script>
+  <script src="js/app.js?v=36"></script>
 
   <!-- Service Worker + auto-update（偵測新版 SW 後通知用戶 reload） -->
   <script>

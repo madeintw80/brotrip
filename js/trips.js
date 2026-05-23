@@ -119,9 +119,13 @@ const Trips = {
     const commentIds = (typeof Comments !== 'undefined')
       ? Comments.list.filter(c => diaryIdSet.has(c.diary_id)).map(c => c.id)
       : [];
+    const itineraryIds = (typeof Itineraries !== 'undefined')
+      ? Itineraries.allList.filter(i => i.trip_id === tripId).map(i => i.id)
+      : [];
+    const itineraryIdSet = new Set(itineraryIds);
     const notifIds = (typeof Notifications !== 'undefined')
       ? Notifications.list.filter(n =>
-          n.diary_id === tripId || diaryIdSet.has(n.diary_id) || expenseIdSet.has(n.diary_id)
+          n.diary_id === tripId || diaryIdSet.has(n.diary_id) || expenseIdSet.has(n.diary_id) || itineraryIdSet.has(n.diary_id)
         ).map(n => n.id)
       : [];
 
@@ -129,6 +133,7 @@ const Trips = {
     if (expenseIds.length > 0) await API.batchDeleteRows('Expenses', expenseIds);
     if (diaryIds.length > 0) await API.batchDeleteRows('Diaries', diaryIds);
     if (commentIds.length > 0) await API.batchDeleteRows('Comments', commentIds);
+    if (itineraryIds.length > 0) await API.batchDeleteRows('Itineraries', itineraryIds);
     if (notifIds.length > 0) await API.batchDeleteRows('Notifications', notifIds);
     await API.deleteRow('Trips', tripId);
 
@@ -147,9 +152,14 @@ const Trips = {
       Comments.list = Comments.list.filter(c => !diaryIdSet.has(c.diary_id));
       Cache.set('comments', Comments.list);
     }
+    if (typeof Itineraries !== 'undefined') {
+      Itineraries.allList = Itineraries.allList.filter(i => i.trip_id !== tripId);
+      Itineraries._filter();
+      Cache.set('itineraries', Itineraries.allList);
+    }
     if (typeof Notifications !== 'undefined') {
       Notifications.list = Notifications.list.filter(n =>
-        !(n.diary_id === tripId || diaryIdSet.has(n.diary_id) || expenseIdSet.has(n.diary_id))
+        !(n.diary_id === tripId || diaryIdSet.has(n.diary_id) || expenseIdSet.has(n.diary_id) || itineraryIdSet.has(n.diary_id))
       );
       Cache.set('notifications', Notifications.list);
     }
@@ -168,6 +178,7 @@ const Trips = {
       expenses: expenseIds.length,
       diaries: diaryIds.length,
       comments: commentIds.length,
+      itineraries: itineraryIds.length,
       notifications: notifIds.length,
     };
   },

@@ -51,6 +51,9 @@ const App = {
   _editingTripId: null,
   _map: null,
   _mapMarkers: null,
+  _itineraryRenderer: null,  // DirectionsRenderer 實例
+  _itineraryWaypoints: [],   // 新增 modal 用的暫存 waypoints
+  _activeItineraryId: null,  // 當前在地圖上顯示的行程
   _diaryFilter: { authors: [], dateFrom: '', dateTo: '', keyword: '' },
   _lightboxPhotos: [],
   _lightboxIndex: 0,
@@ -409,6 +412,46 @@ const App = {
       this.closeMentionDropdown();
     });
 
+    // ===== 預計行程 =====
+    const newItinBtn = document.getElementById('new-itinerary-btn');
+    if (newItinBtn) newItinBtn.addEventListener('click', () => this.openNewItineraryModal());
+
+    const itinForm = document.getElementById('itinerary-form');
+    if (itinForm) itinForm.addEventListener('submit', e => this.handleItinerarySubmit(e));
+
+    // waypoint 動態加 / 上下移動 / 移除
+    const addWpBtn = document.getElementById('add-waypoint-btn');
+    if (addWpBtn) addWpBtn.addEventListener('click', () => {
+      // 把當前 input 值同步到暫存（input 沒選 place 也保留 typed 文字方便用戶調整順序時不丟）
+      this._syncWaypointInputs();
+      this._itineraryWaypoints.push({ name: '', address: '', lat: null, lng: null, place_id: '' });
+      this.renderWaypointRows();
+    });
+
+    document.getElementById('waypoint-rows').addEventListener('click', e => {
+      const btn = e.target.closest('[data-action^="wp-"]');
+      if (!btn) return;
+      this._syncWaypointInputs();
+      const idx = parseInt(btn.dataset.idx, 10);
+      const wps = this._itineraryWaypoints;
+      if (btn.dataset.action === 'wp-up' && idx > 0) {
+        [wps[idx - 1], wps[idx]] = [wps[idx], wps[idx - 1]];
+      } else if (btn.dataset.action === 'wp-down' && idx < wps.length - 1) {
+        [wps[idx], wps[idx + 1]] = [wps[idx + 1], wps[idx]];
+      } else if (btn.dataset.action === 'wp-remove' && wps.length > 2) {
+        wps.splice(idx, 1);
+      }
+      this.renderWaypointRows();
+    });
+
+    // 行程列表 click：刪除 / 載入到地圖
+    document.getElementById('itinerary-list').addEventListener('click', e => {
+      const delBtn = e.target.closest('[data-action="delete-itinerary"]');
+      if (delBtn) { e.stopPropagation(); this.deleteItinerary(delBtn.dataset.id); return; }
+      const item = e.target.closest('.itinerary-item');
+      if (item) this.showItineraryOnMap(item.dataset.id);
+    });
+
     // 通知 bell + modal
     document.getElementById('notif-bell').addEventListener('click', () => this.openNotifModal());
     document.getElementById('mark-all-read-btn').addEventListener('click', () => {
@@ -465,6 +508,10 @@ const App = {
           this.renderAll();
           this.switchTab('expenses');
         }
+      } else if (type === 'itinerary-add') {
+        // refId = itinerary_id
+        this.switchTab('map');
+        setTimeout(() => this.showItineraryOnMap(refId), 300);
       }
 
       // 背景拉最新資料（cache 可能過時），拿到後自動 re-render
@@ -481,6 +528,8 @@ const App = {
     const threshold = 60;
     document.addEventListener('touchstart', (e) => {
       if (document.querySelector('.modal:not(.hidden), dialog[open]')) return;
+      // 地圖頁停用下拉：跟 Google Maps 互動（拖移/縮放）衝突且無意義
+      if (this.currentTab === 'map') return;
       if (window.scrollY === 0) { startY = e.touches[0].clientY; pulling = true; }
     }, { passive: true });
     document.addEventListener('touchmove', (e) => {
@@ -715,6 +764,190 @@ const App = {
     }, 150);
   },
 
+  // ===== 預計行程 =====
+
+  renderItineraries() {
+    const el = document.getElementById('itinerary-list');
+    if (!el || typeof Itineraries === 'undefined') return;
+    const list = Itineraries.list;
+    if (list.length === 0) {
+      el.innerHTML = '<div style="text-align:center; color:var(--text-light); padding:14px; font-size:13px;">還沒有行程，點 + 新增規劃一條路線</div>';
+      return;
+    }
+    el.innerHTML = list.map(itin => {
+      const wps = Itineraries.getWaypoints(itin);
+      const modeIcon = { DRIVING: '🚗', TRANSIT: '🚆', WALKING: '🚶', BICYCLING: '🚴' }[itin.travel_mode] || '🚗';
+      const isMine = Auth.user && itin.author === Auth.user.email;
+      const isActive = this._activeItineraryId === itin.id;
+      const summary = wps.map(w => w.name).slice(0, 3).join(' → ') + (wps.length > 3 ? ` → ...(+${wps.length - 3})` : '');
+      return `
+        <div class="itinerary-item ${isActive ? 'active' : ''}" data-id="${this.escapeAttr(itin.id)}">
+          <div class="itinerary-info">
+            <div class="itinerary-name">${modeIcon} ${this.escapeHtml(itin.name)}</div>
+            <div class="itinerary-meta">${this.escapeHtml(this.nameOf(itin.author))} · ${wps.length} 個地點 · ${this.escapeHtml(summary)}</div>
+          </div>
+          <div class="itinerary-actions">
+            ${isMine ? `<button data-action="delete-itinerary" data-id="${this.escapeAttr(itin.id)}" type="button" title="刪除">🗑</button>` : ''}
+          </div>
+        </div>
+      `;
+    }).join('');
+  },
+
+  openNewItineraryModal() {
+    if (!Trips.current) { this.toast('先選一個 trip'); return; }
+    const form = document.getElementById('itinerary-form');
+    form.reset();
+    this._itineraryWaypoints = [
+      { name: '', address: '', lat: null, lng: null, place_id: '' },
+      { name: '', address: '', lat: null, lng: null, place_id: '' },
+    ];
+    this.renderWaypointRows();
+    this.openModal('modal-itinerary');
+  },
+
+  // 把當前 DOM input 的值同步回 _itineraryWaypoints[i].name（避免重排時丟字）
+  _syncWaypointInputs() {
+    const inputs = document.querySelectorAll('#waypoint-rows .waypoint-input');
+    inputs.forEach((input, i) => {
+      if (this._itineraryWaypoints[i]) {
+        this._itineraryWaypoints[i].name = input.value;
+      }
+    });
+  },
+
+  renderWaypointRows() {
+    const container = document.getElementById('waypoint-rows');
+    const wps = this._itineraryWaypoints;
+    container.innerHTML = wps.map((w, i) => `
+      <div class="waypoint-row" data-idx="${i}">
+        <span class="waypoint-num">${i + 1}</span>
+        <input type="text" class="waypoint-input" placeholder="搜尋地點..." value="${this.escapeAttr(w.name)}" autocomplete="off">
+        ${i > 0 ? `<button type="button" class="waypoint-up" data-action="wp-up" data-idx="${i}" title="往上">↑</button>` : '<span style="width:24px;"></span>'}
+        ${i < wps.length - 1 ? `<button type="button" class="waypoint-down" data-action="wp-down" data-idx="${i}" title="往下">↓</button>` : '<span style="width:24px;"></span>'}
+        ${wps.length > 2 ? `<button type="button" class="waypoint-remove" data-action="wp-remove" data-idx="${i}" title="移除">✕</button>` : ''}
+      </div>
+    `).join('');
+
+    // 每個 input 綁 Places Autocomplete
+    container.querySelectorAll('.waypoint-input').forEach((input, i) => {
+      Maps.attachAutocomplete(input, (place) => {
+        this._itineraryWaypoints[i] = place;
+        input.value = place.name;
+      });
+    });
+  },
+
+  async handleItinerarySubmit(e) {
+    e.preventDefault();
+    const form = e.target;
+    const name = form.elements['name'].value.trim();
+    const travelMode = form.elements['travel_mode'].value;
+    // 過濾掉沒選 place（lat 為 null）的 waypoints
+    const wps = this._itineraryWaypoints.filter(w => w.lat && w.lng);
+    if (wps.length < 2) { this.toast('至少要 2 個有效地點'); return; }
+    const submitBtn = form.querySelector('[type="submit"]');
+    submitBtn.disabled = true;
+    submitBtn.textContent = '儲存中...';
+    try {
+      const itin = await Itineraries.create({ name, waypoints: wps, travel_mode: travelMode });
+      this.toast('✅ 行程已新增');
+      this.closeModal('modal-itinerary');
+      this.renderItineraries();
+      // 自動載入到地圖
+      this.showItineraryOnMap(itin.id);
+    } catch (err) {
+      console.error(err);
+      this.toast('新增失敗：' + err.message);
+    } finally {
+      submitBtn.disabled = false;
+      submitBtn.textContent = '儲存行程';
+    }
+  },
+
+  async deleteItinerary(id) {
+    const itin = Itineraries.list.find(x => x.id === id);
+    if (!itin) return;
+    if (!confirm(`刪除行程「${itin.name}」？`)) return;
+    try {
+      await Itineraries.delete(id);
+      this.toast('✅ 已刪除');
+      if (this._activeItineraryId === id) {
+        this._activeItineraryId = null;
+        this.clearItineraryRoute();
+      }
+      this.renderItineraries();
+    } catch (err) {
+      this.toast('刪除失敗：' + err.message);
+    }
+  },
+
+  clearItineraryRoute() {
+    if (this._itineraryRenderer) {
+      this._itineraryRenderer.setMap(null);
+      this._itineraryRenderer = null;
+    }
+  },
+
+  // 點某行程 → 在地圖上畫路線
+  async showItineraryOnMap(id) {
+    const itin = Itineraries.list.find(x => x.id === id);
+    if (!itin) return;
+    const wps = Itineraries.getWaypoints(itin);
+    if (wps.length < 2) { this.toast('行程地點不足'); return; }
+
+    // 切到地圖 tab + 等地圖初始化
+    this.switchTab('map');
+    await Maps.loadScript(CONFIG.MAPS_API_KEY);
+    // initOrRefreshMap 是 sync，這裡保險再等一個 tick
+    await new Promise(r => setTimeout(r, 50));
+    if (!this._map) return;
+
+    this.clearItineraryRoute();
+    const service = new google.maps.DirectionsService();
+    const renderer = new google.maps.DirectionsRenderer({
+      map: this._map,
+      suppressMarkers: false,
+      polylineOptions: { strokeColor: '#3b82f6', strokeWeight: 5, strokeOpacity: 0.8 },
+    });
+    this._itineraryRenderer = renderer;
+    this._activeItineraryId = id;
+
+    const origin = { lat: wps[0].lat, lng: wps[0].lng };
+    const destination = { lat: wps[wps.length - 1].lat, lng: wps[wps.length - 1].lng };
+    const middleWps = wps.slice(1, -1).map(w => ({
+      location: new google.maps.LatLng(w.lat, w.lng),
+      stopover: true,
+    }));
+
+    service.route({
+      origin,
+      destination,
+      waypoints: middleWps,
+      travelMode: google.maps.TravelMode[itin.travel_mode] || google.maps.TravelMode.DRIVING,
+      optimizeWaypoints: false,
+    }, (result, status) => {
+      if (status === 'OK') {
+        renderer.setDirections(result);
+        // 算總時間/距離 → toast 顯示
+        let totalDist = 0, totalDur = 0;
+        result.routes[0].legs.forEach(leg => {
+          totalDist += leg.distance.value;
+          totalDur += leg.duration.value;
+        });
+        const km = (totalDist / 1000).toFixed(1);
+        const mins = Math.round(totalDur / 60);
+        const dur = mins >= 60 ? `${Math.floor(mins / 60)} 小時 ${mins % 60} 分` : `${mins} 分鐘`;
+        this.toast(`📍 ${itin.name}：${km} 公里 · 約 ${dur}`, 5000);
+        this.renderItineraries(); // 更新 active 樣式
+      } else {
+        this.toast('路線計算失敗：' + status, 5000);
+        this.clearItineraryRoute();
+        this._activeItineraryId = null;
+      }
+    });
+  },
+
   openLightbox(photoIds, startIdx) {
     this._lightboxPhotos = photoIds;
     this._lightboxIndex = startIdx;
@@ -785,6 +1018,7 @@ const App = {
       Diaries.loadFromCache();
       Comments.loadFromCache();
       Notifications.loadFromCache();
+      if (typeof Itineraries !== 'undefined') Itineraries.loadFromCache();
       this.renderAll();
       this.updateNotifBadge();
     }
@@ -874,6 +1108,7 @@ const App = {
       Expenses.loadAll(), Diaries.loadAll(),
       Nicknames.loadAll(), Comments.loadAll(),
       Notifications.loadAll(),
+      typeof Itineraries !== 'undefined' ? Itineraries.loadAll() : Promise.resolve(),
     ]);
     this.renderAll();
     this.updateNotifBadge();
@@ -888,6 +1123,7 @@ const App = {
     this.renderDiaryFilters();
     this.renderDiaries();
     this.renderNicknamesUI();
+    this.renderItineraries();
     this.updateDebugInfo();
   },
 
@@ -1696,9 +1932,12 @@ const App = {
       ? Expenses.allList.filter(e => e.trip_id === tripId) : [];
     const tripDiaries = (typeof Diaries !== 'undefined')
       ? Diaries.allList.filter(d => d.trip_id === tripId) : [];
+    const tripItineraries = (typeof Itineraries !== 'undefined')
+      ? Itineraries.allList.filter(i => i.trip_id === tripId) : [];
     const stats = `📊 ${trip.name} (${trip.start_date} ~ ${trip.end_date})\n` +
       `  • ${tripExpenses.length} 筆記帳\n` +
       `  • ${tripDiaries.length} 篇日記\n` +
+      `  • ${tripItineraries.length} 條行程\n` +
       `  • 留言/通知會連帶清掉\n` +
       `  • 照片仍保留在 Drive`;
     // 第 1 次確認
@@ -1709,7 +1948,7 @@ const App = {
     this.toast('刪除中...請稍候');
     try {
       const counts = await Trips.delete(tripId);
-      const total = counts.expenses + counts.diaries + counts.comments + counts.notifications;
+      const total = counts.expenses + counts.diaries + counts.comments + (counts.itineraries || 0) + counts.notifications;
       this.toast(`✅ Trip「${trip.name}」已刪除（連 ${total} 筆相關資料）`, 5000);
       if (Trips.list.length === 0) {
         this.toast('沒有 trip 了，建一個新的吧');
@@ -2000,6 +2239,11 @@ const App = {
       }
       else if (n.type === 'expense-split') { typeIcon = '💰'; text = `<strong>${this.nameOf(n.from_email)}</strong> 新增/編輯了支出，你也要分`; }
       else if (n.type === 'expense-settle') { typeIcon = '🏁'; text = `<strong>${this.nameOf(n.from_email)}</strong> 結清了和你有關的支出`; }
+      else if (n.type === 'itinerary-add') {
+        const itin = (typeof Itineraries !== 'undefined') ? Itineraries.allList.find(x => x.id === n.diary_id) : null;
+        typeIcon = '📋';
+        text = `<strong>${this.nameOf(n.from_email)}</strong> 規劃了新行程「${itin ? this.escapeHtml(itin.name) : '行程'}」`;
+      }
       else text = '通知';
       return `
         <div class="notif-item ${isUnread ? 'unread' : ''}" data-type="${this.escapeAttr(n.type)}" data-ref-id="${this.escapeAttr(n.diary_id)}">
