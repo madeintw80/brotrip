@@ -444,8 +444,10 @@ const App = {
       this.renderWaypointRows();
     });
 
-    // 行程列表 click：刪除 / 載入到地圖
+    // 行程列表 click：用 Google Maps 開 / 刪除 / 載入到地圖
     document.getElementById('itinerary-list').addEventListener('click', e => {
+      const gmapsBtn = e.target.closest('[data-action="open-in-gmaps"]');
+      if (gmapsBtn) { e.stopPropagation(); this.openItineraryInGoogleMaps(gmapsBtn.dataset.id); return; }
       const delBtn = e.target.closest('[data-action="delete-itinerary"]');
       if (delBtn) { e.stopPropagation(); this.deleteItinerary(delBtn.dataset.id); return; }
       const item = e.target.closest('.itinerary-item');
@@ -695,29 +697,47 @@ const App = {
       return null;
     }).filter(Boolean);
 
-    if (diariesWithCoords.length === 0) {
-      mapEl.style.display = 'none';
-      emptyEl.classList.remove('hidden');
-      return;
-    }
-    mapEl.style.display = '';
-    emptyEl.classList.add('hidden');
-
+    // 永遠載入並建立地圖（即使沒日記座標，也讓行程功能能用）
     try { await Maps.load(); }
     catch (err) {
       mapEl.innerHTML = `<div class="list-empty">地圖載入失敗：${err.message}</div>`;
       return;
     }
 
+    mapEl.style.display = '';
+    // 沒日記座標+沒行程 → 顯示空態提示在地圖下方但仍建地圖
+    const hasItineraries = (typeof Itineraries !== 'undefined') && Itineraries.list.length > 0;
+    if (diariesWithCoords.length === 0 && !hasItineraries) {
+      emptyEl.classList.remove('hidden');
+    } else {
+      emptyEl.classList.add('hidden');
+    }
+
+    // 預設中心：第一個日記座標 → 第一個行程第一個點 → 台北 101 (fallback)
+    let defaultCenter = { lat: 25.0339, lng: 121.5645 };
+    if (diariesWithCoords.length > 0) {
+      defaultCenter = { lat: diariesWithCoords[0].lat, lng: diariesWithCoords[0].lng };
+    } else if (hasItineraries) {
+      const firstItin = Itineraries.list[0];
+      const wps = Itineraries.getWaypoints(firstItin);
+      if (wps.length > 0) defaultCenter = { lat: wps[0].lat, lng: wps[0].lng };
+    }
+
     if (!this._map) {
       this._map = new google.maps.Map(mapEl, {
         zoom: 12,
-        center: { lat: diariesWithCoords[0].lat, lng: diariesWithCoords[0].lng },
+        center: defaultCenter,
         mapTypeControl: false, streetViewControl: false, fullscreenControl: false,
       });
+    } else {
+      // map 已存在但 viewport 改變（PWA resize / dark mode 切換）→ 觸發 resize 避免灰屏
+      google.maps.event.trigger(this._map, 'resize');
     }
     if (this._mapMarkers) this._mapMarkers.forEach(m => m.setMap(null));
     this._mapMarkers = [];
+
+    // 沒日記座標時直接 return（不畫 markers，但 _map 已建立讓行程功能可用）
+    if (diariesWithCoords.length === 0) return;
 
     let activeInfo = null;
     const bounds = new google.maps.LatLngBounds();
@@ -787,6 +807,7 @@ const App = {
             <div class="itinerary-meta">${this.escapeHtml(this.nameOf(itin.author))} · ${wps.length} 個地點 · ${this.escapeHtml(summary)}</div>
           </div>
           <div class="itinerary-actions">
+            <button data-action="open-in-gmaps" data-id="${this.escapeAttr(itin.id)}" type="button" title="用 Google Maps 開（含完整導航）">🗺</button>
             ${isMine ? `<button data-action="delete-itinerary" data-id="${this.escapeAttr(itin.id)}" type="button" title="刪除">🗑</button>` : ''}
           </div>
         </div>
@@ -896,19 +917,22 @@ const App = {
     const wps = Itineraries.getWaypoints(itin);
     if (wps.length < 2) { this.toast('行程地點不足'); return; }
 
-    // 切到地圖 tab + 等地圖初始化
+    // 切到地圖 tab + await 等地圖完全就緒（之前 switchTab 是 sync 不 await initOrRefreshMap → _map 還沒建好就 return）
     this.switchTab('map');
-    await Maps.loadScript(CONFIG.MAPS_API_KEY);
-    // initOrRefreshMap 是 sync，這裡保險再等一個 tick
-    await new Promise(r => setTimeout(r, 50));
-    if (!this._map) return;
+    await this.initOrRefreshMap();
+    if (!this._map) { this.toast('地圖尚未就緒，請再試一次'); return; }
 
+    // 清掉日記 markers（讓畫面只剩行程路線+其標記，比較清楚）
+    if (this._mapMarkers) {
+      this._mapMarkers.forEach(m => m.setMap(null));
+      this._mapMarkers = [];
+    }
     this.clearItineraryRoute();
     const service = new google.maps.DirectionsService();
     const renderer = new google.maps.DirectionsRenderer({
       map: this._map,
       suppressMarkers: false,
-      polylineOptions: { strokeColor: '#3b82f6', strokeWeight: 5, strokeOpacity: 0.8 },
+      polylineOptions: { strokeColor: '#3b82f6', strokeWeight: 6, strokeOpacity: 0.85 },
     });
     this._itineraryRenderer = renderer;
     this._activeItineraryId = id;
@@ -941,11 +965,75 @@ const App = {
         this.toast(`📍 ${itin.name}：${km} 公里 · 約 ${dur}`, 5000);
         this.renderItineraries(); // 更新 active 樣式
       } else {
-        this.toast('路線計算失敗：' + status, 5000);
-        this.clearItineraryRoute();
-        this._activeItineraryId = null;
+        // 常見錯誤：TRANSIT 在台灣的小範圍可能 ZERO_RESULTS、超出距離 OVER_QUERY_LIMIT 等
+        // → fallback：自己畫直線 + markers 至少讓用戶看到地點
+        console.warn('Directions failed:', status, 'fallback to manual markers');
+        renderer.setMap(null);
+        this._itineraryRenderer = this._renderItineraryFallback(wps, itin.name);
+        this.toast(`⚠️ 無法算路線 (${status})，已標記地點。用 🗺 開 Google Maps 看完整路線`, 6000);
+        this.renderItineraries();
       }
     });
+  },
+
+  // 路線算不出來時的降級顯示：手動畫 markers + 連線 + fitBounds
+  _renderItineraryFallback(wps, name) {
+    const markers = [];
+    const path = [];
+    const bounds = new google.maps.LatLngBounds();
+    wps.forEach((w, i) => {
+      const pos = { lat: w.lat, lng: w.lng };
+      const marker = new google.maps.Marker({
+        position: pos,
+        map: this._map,
+        label: { text: String(i + 1), color: 'white', fontWeight: 'bold' },
+        title: `${i + 1}. ${w.name}`,
+      });
+      markers.push(marker);
+      path.push(pos);
+      bounds.extend(pos);
+    });
+    const polyline = new google.maps.Polyline({
+      path,
+      strokeColor: '#3b82f6',
+      strokeWeight: 4,
+      strokeOpacity: 0.7,
+      map: this._map,
+    });
+    this._map.fitBounds(bounds, { top: 50, bottom: 50, left: 50, right: 50 });
+    // 回傳 fake renderer：setMap(null) 時清掉 markers + polyline
+    return {
+      setMap(map) {
+        if (map === null) {
+          markers.forEach(m => m.setMap(null));
+          polyline.setMap(null);
+        }
+      },
+      setDirections() {},
+    };
+  },
+
+  // 用 Google Maps 開啟行程（手機跳 app、桌面跳 web）
+  openItineraryInGoogleMaps(id) {
+    const itin = Itineraries.list.find(x => x.id === id);
+    if (!itin) return;
+    const wps = Itineraries.getWaypoints(itin);
+    if (wps.length < 2) { this.toast('地點不足'); return; }
+    // Google Maps 通用 URL（dir/?api=1）— 自動跳手機 app 或開 web
+    const modeMap = { DRIVING: 'driving', TRANSIT: 'transit', WALKING: 'walking', BICYCLING: 'bicycling' };
+    const params = new URLSearchParams({
+      api: '1',
+      origin: `${wps[0].lat},${wps[0].lng}`,
+      destination: `${wps[wps.length - 1].lat},${wps[wps.length - 1].lng}`,
+      travelmode: modeMap[itin.travel_mode] || 'driving',
+    });
+    // 中途點（最多 9 個 free，用 | 分隔）
+    if (wps.length > 2) {
+      const middle = wps.slice(1, -1).map(w => `${w.lat},${w.lng}`).join('|');
+      params.set('waypoints', middle);
+    }
+    const url = `https://www.google.com/maps/dir/?${params.toString()}`;
+    window.open(url, '_blank');
   },
 
   openLightbox(photoIds, startIdx) {
