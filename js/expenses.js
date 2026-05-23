@@ -179,6 +179,9 @@ const Expenses = {
     const firstPayer = payers[0].email;
     const totalAmount = payers.reduce((s, p) => s + (parseFloat(p.amount) || 0), 0);
 
+    // 如果是從已結清解鎖出來改的，自動標回未結清
+    const newSettled = data.resetSettled ? '' : (existing.settled || '');
+
     const newRow = [
       existing.id,
       existing.trip_id,
@@ -192,7 +195,7 @@ const Expenses = {
       existing.photo_url || '',
       existing.created_at,
       payersJson,
-      existing.settled || '',  // M
+      newSettled,  // M
     ];
     await API.updateRow('Expenses', id, newRow);
     Object.assign(existing, {
@@ -204,6 +207,7 @@ const Expenses = {
       description: data.description || '',
       splits,
       payers: payersJson,
+      settled: newSettled,
     });
     Cache.set('expenses', this.allList);
     return existing;

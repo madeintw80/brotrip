@@ -1183,3 +1183,26 @@ summary {
 }
 .expense-item { cursor: pointer; }
 .expense-item:active { transform: scale(0.99); }
+
+/* === Lock banner (已結清 expense 鎖定提示) === */
+.lock-banner {
+  background: #fef3c7;
+  color: #92400e;
+  border: 1px solid #fde68a;
+  padding: 10px 12px;
+  border-radius: 8px;
+  margin-bottom: 12px;
+  font-size: 13px;
+  font-weight: 500;
+}
+[data-theme="dark"] .lock-banner {
+  background: #422006;
+  color: #fde68a;
+  border-color: #92400e;
+}
+.modal-content input:disabled,
+.modal-content select:disabled,
+.modal-content textarea:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}

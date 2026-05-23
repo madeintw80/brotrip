@@ -196,6 +196,9 @@ const App = {
     // Dark mode toggle
     document.getElementById('toggle-dark-btn').addEventListener('click', () => this.toggleDarkMode());
 
+    // 已結清解鎖
+    document.getElementById('expense-unlock-btn').addEventListener('click', () => this.unlockExpense());
+
     // Diary list edit/delete/pin + comment + photo lightbox + mention chips
     document.getElementById('diary-list').addEventListener('click', e => {
       const editBtn = e.target.closest('[data-action="edit-diary"]');
@@ -703,7 +706,7 @@ const App = {
           html += `<div class="settle-row"><span><strong>${this.nameOf(t.from)}</strong> 給 <strong>${this.nameOf(t.to)}</strong></span><span>${currency} ${t.amount.toLocaleString()}</span></div>`;
         });
       }
-      html += `<button id="mark-all-settled-btn" type="button" class="btn-primary" style="width:100%;margin-top:10px;">✅ 全部已結清（標記 ${unsettledCount} 筆）</button>`;
+      html += `<button id="mark-all-settled-btn" type="button" class="btn-primary" style="width:100%;margin-top:10px;">🏁 全部結清（標記 ${unsettledCount} 筆）</button>`;
     }
     el.innerHTML = html;
   },
@@ -1069,6 +1072,7 @@ const App = {
     const form = document.getElementById('expense-form');
     form.reset();
     this._editingExpenseId = id;
+    this._expenseUnlockedFromSettled = false;  // reset flag
     const headerTitle = document.querySelector('#modal-expense .modal-header h2');
     headerTitle.textContent = id ? '編輯支出' : '新增支出';
     const members = Trips.getMembers();
@@ -1137,7 +1141,39 @@ const App = {
     this.renderPayerRows(initialPayers);
     this.updateSplitPreview();
     this.updatePayerPreview();
+    // 已結清的鎖定（編輯模式才需要 check）
+    let isLocked = false;
+    if (id) {
+      const e = Expenses.list.find(x => x.id === id);
+      if (e) isLocked = String(e.settled).toUpperCase() === 'TRUE';
+    }
+    this._toggleExpenseFormLock(isLocked);
     this.openModal('modal-expense');
+  },
+
+  _toggleExpenseFormLock(locked) {
+    const form = document.getElementById('expense-form');
+    const banner = document.getElementById('expense-lock-banner');
+    const unlockBtn = document.getElementById('expense-unlock-btn');
+    const submitBtn = form.querySelector('[type="submit"]');
+
+    // 鎖/解鎖所有 inputs/selects/textareas
+    form.querySelectorAll('input, select, textarea').forEach(el => { el.disabled = locked; });
+    // 鎖 add-payer + remove-payer
+    const addPayerBtn = document.getElementById('add-payer-btn');
+    if (addPayerBtn) addPayerBtn.disabled = locked;
+    form.querySelectorAll('.remove-payer').forEach(b => b.disabled = locked);
+
+    if (submitBtn) submitBtn.style.display = locked ? 'none' : '';
+    if (banner) banner.classList.toggle('hidden', !locked);
+    if (unlockBtn) unlockBtn.classList.toggle('hidden', !locked);
+  },
+
+  unlockExpense() {
+    if (!confirm('這筆已結清。\n\n確定要修改嗎？修改後會自動變回「未結清」狀態，重新算入結算。')) return;
+    this._expenseUnlockedFromSettled = true;
+    this._toggleExpenseFormLock(false);
+    this.toast('已解鎖，可修改');
   },
 
   updateSplitPreview() {
@@ -1369,8 +1405,9 @@ const App = {
       };
 
       if (this._editingExpenseId) {
+        data.resetSettled = !!this._expenseUnlockedFromSettled;
         await Expenses.update(this._editingExpenseId, data);
-        this.toast('✅ 已更新支出');
+        this.toast(data.resetSettled ? '✅ 已更新（變回未結清）' : '✅ 已更新支出');
       } else {
         await Expenses.create(data);
         this.toast('✅ 已記錄支出');
@@ -1385,6 +1422,7 @@ const App = {
       submitBtn.disabled = false;
       submitBtn.textContent = origText;
       this._editingExpenseId = null;
+      this._expenseUnlockedFromSettled = false;
     }
   },
 

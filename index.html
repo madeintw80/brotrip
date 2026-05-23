@@ -18,7 +18,7 @@
       if (t) document.documentElement.dataset.theme = t;
     } catch (e) {}
   </script>
-  <link rel="stylesheet" href="styles.css?v=16">
+  <link rel="stylesheet" href="styles.css?v=17">
 </head>
 <body>
   <div id="pull-indicator" class="pull-indicator"></div>
@@ -120,7 +120,7 @@
           <div id="nicknames-list"></div>
         </div>
         <div class="version-info-wrap">
-          <span id="version-info">BroTrip v1.7.1</span>
+          <span id="version-info">BroTrip v1.7.2</span>
         </div>
       </section>
     </main>
@@ -145,6 +145,7 @@
         <button class="modal-close" type="button">✕</button>
       </header>
       <form id="expense-form">
+        <div id="expense-lock-banner" class="lock-banner hidden">🔒 這筆已結清，僅檢視。按「✏️ 解鎖修改」可改（會變回未結清）</div>
         <label>日期<input type="date" name="date" required></label>
         <label>總金額
           <input type="number" name="amount" step="0.01" min="0" required placeholder="0" inputmode="decimal">
@@ -188,6 +189,7 @@
           <div id="split-summary" class="split-summary"></div>
         </fieldset>
         <div class="modal-actions">
+          <button type="button" id="expense-unlock-btn" class="btn-primary hidden" style="background:#f59e0b;">✏️ 解鎖修改</button>
           <button type="button" class="btn-cancel">取消</button>
           <button type="submit" class="btn-primary">儲存</button>
         </div>
@@ -302,17 +304,17 @@
   <script src="https://accounts.google.com/gsi/client" async defer></script>
 
   <!-- App 程式碼（順序很重要，後面的依賴前面的）-->
-  <script src="js/config.js?v=16"></script>
-  <script src="js/auth.js?v=16"></script>
-  <script src="js/api.js?v=16"></script>
-  <script src="js/cache.js?v=16"></script>
-  <script src="js/trips.js?v=16"></script>
-  <script src="js/expenses.js?v=16"></script>
-  <script src="js/diaries.js?v=16"></script>
-  <script src="js/nicknames.js?v=16"></script>
-  <script src="js/comments.js?v=16"></script>
-  <script src="js/notifications.js?v=16"></script>
-  <script src="js/app.js?v=16"></script>
+  <script src="js/config.js?v=17"></script>
+  <script src="js/auth.js?v=17"></script>
+  <script src="js/api.js?v=17"></script>
+  <script src="js/cache.js?v=17"></script>
+  <script src="js/trips.js?v=17"></script>
+  <script src="js/expenses.js?v=17"></script>
+  <script src="js/diaries.js?v=17"></script>
+  <script src="js/nicknames.js?v=17"></script>
+  <script src="js/comments.js?v=17"></script>
+  <script src="js/notifications.js?v=17"></script>
+  <script src="js/app.js?v=17"></script>
 
   <!-- Service Worker -->
   <script>
