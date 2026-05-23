@@ -147,6 +147,21 @@ const Expenses = {
       }
     });
 
+    // ⭐ v2.0.0: 把已 confirmed Settlements 算入抵銷
+    // confirmed settlement (A→B 1000) 表示 A 已實際付給 B 1000
+    // → 等同於 A 多付了 1000 (credit)、B 多收了 1000 (debit)
+    if (typeof Settlements !== 'undefined') {
+      Settlements.getConfirmedForTrip().forEach(s => {
+        const currency = s.currency || 'TWD';
+        if (!balances[currency]) balances[currency] = {};
+        const amt = parseFloat(s.amount) || 0;
+        // from 等同於再多付了 amt（credit balance 增加）
+        balances[currency][s.from_email] = (balances[currency][s.from_email] || 0) + amt;
+        // to 等同於再多被分了 amt（debit balance 減少）
+        balances[currency][s.to_email] = (balances[currency][s.to_email] || 0) - amt;
+      });
+    }
+
     const result = {};
     for (const currency in balances) {
       const b = balances[currency];

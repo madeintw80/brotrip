@@ -123,9 +123,13 @@ const Trips = {
       ? Itineraries.allList.filter(i => i.trip_id === tripId).map(i => i.id)
       : [];
     const itineraryIdSet = new Set(itineraryIds);
+    const settlementIds = (typeof Settlements !== 'undefined')
+      ? Settlements.allList.filter(s => s.trip_id === tripId).map(s => s.id)
+      : [];
+    const settlementIdSet = new Set(settlementIds);
     const notifIds = (typeof Notifications !== 'undefined')
       ? Notifications.list.filter(n =>
-          n.diary_id === tripId || diaryIdSet.has(n.diary_id) || expenseIdSet.has(n.diary_id) || itineraryIdSet.has(n.diary_id)
+          n.diary_id === tripId || diaryIdSet.has(n.diary_id) || expenseIdSet.has(n.diary_id) || itineraryIdSet.has(n.diary_id) || settlementIdSet.has(n.diary_id)
         ).map(n => n.id)
       : [];
 
@@ -134,6 +138,7 @@ const Trips = {
     if (diaryIds.length > 0) await API.batchDeleteRows('Diaries', diaryIds);
     if (commentIds.length > 0) await API.batchDeleteRows('Comments', commentIds);
     if (itineraryIds.length > 0) await API.batchDeleteRows('Itineraries', itineraryIds);
+    if (settlementIds.length > 0) await API.batchDeleteRows('Settlements', settlementIds);
     if (notifIds.length > 0) await API.batchDeleteRows('Notifications', notifIds);
     await API.deleteRow('Trips', tripId);
 
@@ -157,9 +162,14 @@ const Trips = {
       Itineraries._filter();
       Cache.set('itineraries', Itineraries.allList);
     }
+    if (typeof Settlements !== 'undefined') {
+      Settlements.allList = Settlements.allList.filter(s => s.trip_id !== tripId);
+      Settlements._filter();
+      Cache.set('settlements', Settlements.allList);
+    }
     if (typeof Notifications !== 'undefined') {
       Notifications.list = Notifications.list.filter(n =>
-        !(n.diary_id === tripId || diaryIdSet.has(n.diary_id) || expenseIdSet.has(n.diary_id) || itineraryIdSet.has(n.diary_id))
+        !(n.diary_id === tripId || diaryIdSet.has(n.diary_id) || expenseIdSet.has(n.diary_id) || itineraryIdSet.has(n.diary_id) || settlementIdSet.has(n.diary_id))
       );
       Cache.set('notifications', Notifications.list);
     }
@@ -179,6 +189,7 @@ const Trips = {
       diaries: diaryIds.length,
       comments: commentIds.length,
       itineraries: itineraryIds.length,
+      settlements: settlementIds.length,
       notifications: notifIds.length,
     };
   },

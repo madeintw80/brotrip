@@ -1,7 +1,7 @@
 // BroTrip 設定檔
 // CLIENT_ID 是 public（OAuth 本來就公開），可 commit 到 GitHub
 const CONFIG = {
-  VERSION: '1.9.4',
+  VERSION: '2.0.0',
   CLIENT_ID: '38081255296-ojiesn8jsdlkrsa5snlue0s3tprro3rq.apps.googleusercontent.com',
   SHEET_ID: '1vG0BdeLeCwcPlBeoSt5HjB5bgwzUMOPyXRrXJzgOhNE',
   ROOT_FOLDER_ID: '1A9T5NcIcOc6J6PesXZSI67XMgPQVJUcc',
@@ -18,6 +18,7 @@ const CONFIG = {
     Comments: 326413720,
     Notifications: 1132460894,
     Itineraries: 1833642077,
+    Settlements: 1965782035,
   },
   // 白名單：只有這 5 人能用，其他 Gmail 登入直接擋
   ALLOWED_MEMBERS: [

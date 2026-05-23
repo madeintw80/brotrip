@@ -183,9 +183,32 @@ const App = {
 
     // 全部結清按鈕（動態 render，用 delegation）
     document.getElementById('settlement-content').addEventListener('click', async (ev) => {
+      // ⭐ v2.0.0 peer-to-peer 結算動作
+      const claimBtn = ev.target.closest('[data-action="claim-settlement"]');
+      if (claimBtn) {
+        await this.claimSettlement(claimBtn);
+        return;
+      }
+      const cancelBtn = ev.target.closest('[data-action="cancel-settlement"]');
+      if (cancelBtn) {
+        await this.cancelSettlement(cancelBtn.dataset.id);
+        return;
+      }
+      const confirmBtn = ev.target.closest('[data-action="confirm-settlement"]');
+      if (confirmBtn) {
+        await this.confirmSettlementClaim(confirmBtn.dataset.id);
+        return;
+      }
+      const rejectBtn = ev.target.closest('[data-action="reject-settlement"]');
+      if (rejectBtn) {
+        await this.rejectSettlementClaim(rejectBtn.dataset.id);
+        return;
+      }
+
+      // 舊「強制全部結清」按鈕（保留作 emergency 用，但提示用新流程）
       const btn = ev.target.closest('#mark-all-settled-btn');
       if (!btn) return;
-      if (!confirm('確定把所有未結清支出標為「已結清」？\n\n標記後不再算入結算，但記錄保留可以檢視。')) return;
+      if (!confirm('⚠️ 強制全部結清\n\n建議改用「✅ 我已付」流程讓對方確認。\n\n仍要跳過確認直接全清嗎？（不可復原）')) return;
       try {
         btn.disabled = true;
         btn.textContent = '處理中...';
@@ -516,6 +539,20 @@ const App = {
         // refId = itinerary_id
         this.switchTab('map');
         setTimeout(() => this.showItineraryOnMap(refId), 300);
+      } else if (type === 'settlement-claim' || type === 'settlement-confirm' || type === 'settlement-reject') {
+        // 跳到結算頁面（在 expenses tab 上方）
+        const s = (typeof Settlements !== 'undefined') ? Settlements.allList.find(x => x.id === refId) : null;
+        if (s && (!Trips.current || Trips.current.trip_id !== s.trip_id)) {
+          Trips.setCurrent(s.trip_id);
+          Expenses._filter();
+          Diaries._filter();
+          this.renderAll();
+        }
+        this.switchTab('expenses');
+        setTimeout(() => {
+          const settleEl = document.getElementById('settlement-content');
+          if (settleEl) settleEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }, 200);
       }
 
       // 背景拉最新資料（cache 可能過時），拿到後自動 re-render
@@ -1129,6 +1166,7 @@ const App = {
       Comments.loadFromCache();
       Notifications.loadFromCache();
       if (typeof Itineraries !== 'undefined') Itineraries.loadFromCache();
+      if (typeof Settlements !== 'undefined') Settlements.loadFromCache();
       this.renderAll();
       this.updateNotifBadge();
     }
@@ -1219,6 +1257,7 @@ const App = {
       Nicknames.loadAll(), Comments.loadAll(),
       Notifications.loadAll(),
       typeof Itineraries !== 'undefined' ? Itineraries.loadAll() : Promise.resolve(),
+      typeof Settlements !== 'undefined' ? Settlements.loadAll() : Promise.resolve(),
     ]);
     this.renderAll();
     this.updateNotifBadge();
@@ -1275,17 +1314,126 @@ const App = {
       if (String(e.settled).toUpperCase() !== 'TRUE') unsettledCount++;
     });
 
+    // ⭐ v2.0.0: 待我確認的轉帳（最上面顯眼提醒）
+    const pendingForMe = (typeof Settlements !== 'undefined') ? Settlements.getPendingForMe() : [];
+    if (pendingForMe.length > 0) {
+      html += `<div class="pending-claims-section">`;
+      html += `<div class="pending-claims-title">💳 待我確認的轉帳 (${pendingForMe.length})</div>`;
+      pendingForMe.forEach(s => {
+        html += `
+          <div class="pending-claim-row">
+            <div class="pending-claim-info">
+              <strong>${this.escapeHtml(this.nameOf(s.from_email))}</strong> 說已給你
+              <span class="pending-claim-amount">${this.escapeHtml(s.currency || 'TWD')} ${parseFloat(s.amount).toLocaleString()}</span>
+              ${s.note ? `<small>（${this.escapeHtml(s.note)}）</small>` : ''}
+            </div>
+            <div class="pending-claim-actions">
+              <button data-action="confirm-settlement" data-id="${this.escapeAttr(s.id)}" type="button" class="btn-confirm">✓ 收到</button>
+              <button data-action="reject-settlement" data-id="${this.escapeAttr(s.id)}" type="button" class="btn-reject">❌ 沒收到</button>
+            </div>
+          </div>
+        `;
+      });
+      html += `</div>`;
+    }
+
     if (!hasUnsettled) html += '<div style="color:var(--text-light);text-align:center;padding:8px;">✨ 大家都結清了！</div>';
     else {
+      const myEmail = Auth.user ? Auth.user.email : '';
       for (const currency of currencies) {
         if (result[currency].length === 0) continue;
         result[currency].forEach(t => {
-          html += `<div class="settle-row"><span><strong>${this.nameOf(t.from)}</strong> 給 <strong>${this.nameOf(t.to)}</strong></span><span>${currency} ${t.amount.toLocaleString()}</span></div>`;
+          // 該對的 pending（我作為 from 已按「我已付」等對方確認）
+          const pending = (typeof Settlements !== 'undefined')
+            ? Settlements.getPendingPair(t.from, t.to, currency) : null;
+          let btnHtml = '';
+          if (pending && pending.from_email === myEmail) {
+            btnHtml = `<button data-action="cancel-settlement" data-id="${this.escapeAttr(pending.id)}" type="button" class="btn-pending" title="點此撤回">⏳ 等對方確認</button>`;
+          } else if (t.from === myEmail) {
+            // 我是付款方且沒 pending → 顯示「我已付」按鈕
+            btnHtml = `<button data-action="claim-settlement" data-from="${this.escapeAttr(t.from)}" data-to="${this.escapeAttr(t.to)}" data-amount="${t.amount}" data-currency="${this.escapeAttr(currency)}" type="button" class="btn-claim">✅ 我已付</button>`;
+          }
+          html += `
+            <div class="settle-row">
+              <span><strong>${this.nameOf(t.from)}</strong> 給 <strong>${this.nameOf(t.to)}</strong></span>
+              <span class="settle-amount-actions">
+                <span>${currency} ${t.amount.toLocaleString()}</span>
+                ${btnHtml}
+              </span>
+            </div>
+          `;
         });
       }
-      html += `<button id="mark-all-settled-btn" type="button" class="btn-primary" style="width:100%;margin-top:10px;">🏁 全部結清（標記 ${unsettledCount} 筆）</button>`;
+      html += `<button id="mark-all-settled-btn" type="button" class="btn-link" style="width:100%;margin-top:10px;font-size:12px;">🏁 強制全部結清（${unsettledCount} 筆，跳過確認）</button>`;
     }
     el.innerHTML = html;
+  },
+
+  // ⭐ v2.0.0 Peer-to-peer 結算 actions
+
+  // A 按「我已付」 → 建 pending settlement → 通知 B
+  async claimSettlement(btn) {
+    const from = btn.dataset.from;
+    const to = btn.dataset.to;
+    const amount = parseFloat(btn.dataset.amount) || 0;
+    const currency = btn.dataset.currency || 'TWD';
+    if (from !== Auth.user.email) { this.toast('只能標記自己付的'); return; }
+    const note = prompt(`你已給 ${this.nameOf(to)} ${currency} ${amount.toLocaleString()} 了？\n\n可加備註（轉帳方式之類，可空白）：`, '');
+    if (note === null) return; // 取消
+    btn.disabled = true;
+    btn.textContent = '...';
+    try {
+      await Settlements.create({ to_email: to, amount, currency, note: note.trim() });
+      this.toast(`✅ 已記錄，等 ${this.nameOf(to)} 確認`, 4000);
+      this.renderSettlement();
+    } catch (err) {
+      console.error(err);
+      this.toast('失敗：' + err.message);
+      btn.disabled = false;
+    }
+  },
+
+  // A 撤回未確認的 settlement（如果按錯）
+  async cancelSettlement(id) {
+    const s = Settlements.list.find(x => x.id === id);
+    if (!s) return;
+    if (!confirm(`撤回這筆「我已付 ${s.currency} ${parseFloat(s.amount).toLocaleString()}」嗎？\n（如果還沒實際給錢、按錯了就撤回）`)) return;
+    try {
+      await Settlements.cancel(id);
+      this.toast('已撤回');
+      this.renderSettlement();
+    } catch (err) {
+      this.toast('撤回失敗：' + err.message);
+    }
+  },
+
+  // B 按「確認收到」
+  async confirmSettlementClaim(id) {
+    const s = Settlements.list.find(x => x.id === id);
+    if (!s) return;
+    if (!confirm(`確認收到 ${this.nameOf(s.from_email)} 的 ${s.currency} ${parseFloat(s.amount).toLocaleString()}？\n\n確認後就抵銷這筆債務（不可復原）。`)) return;
+    try {
+      await Settlements.confirm(id);
+      this.toast(`✅ 已確認，債務已抵銷`);
+      this.renderSettlement();
+    } catch (err) {
+      console.error(err);
+      this.toast('確認失敗：' + err.message);
+    }
+  },
+
+  // B 拒絕（沒收到）
+  async rejectSettlementClaim(id) {
+    const s = Settlements.list.find(x => x.id === id);
+    if (!s) return;
+    if (!confirm(`回報「沒收到 ${this.nameOf(s.from_email)} 的 ${s.currency} ${parseFloat(s.amount).toLocaleString()}」？\n\n會通知對方，這筆會被刪除（債務維持原樣）`)) return;
+    try {
+      await Settlements.cancel(id);
+      this.toast(`已通知 ${this.nameOf(s.from_email)}`);
+      this.renderSettlement();
+    } catch (err) {
+      this.toast('失敗：' + err.message);
+    }
   },
 
   nameOf(email) {
@@ -2058,7 +2206,7 @@ const App = {
     this.toast('刪除中...請稍候');
     try {
       const counts = await Trips.delete(tripId);
-      const total = counts.expenses + counts.diaries + counts.comments + (counts.itineraries || 0) + counts.notifications;
+      const total = counts.expenses + counts.diaries + counts.comments + (counts.itineraries || 0) + (counts.settlements || 0) + counts.notifications;
       this.toast(`✅ Trip「${trip.name}」已刪除（連 ${total} 筆相關資料）`, 5000);
       if (Trips.list.length === 0) {
         this.toast('沒有 trip 了，建一個新的吧');
@@ -2353,6 +2501,22 @@ const App = {
         const itin = (typeof Itineraries !== 'undefined') ? Itineraries.allList.find(x => x.id === n.diary_id) : null;
         typeIcon = '📋';
         text = `<strong>${this.nameOf(n.from_email)}</strong> 規劃了新行程「${itin ? this.escapeHtml(itin.name) : '行程'}」`;
+      }
+      else if (n.type === 'settlement-claim') {
+        const s = (typeof Settlements !== 'undefined') ? Settlements.allList.find(x => x.id === n.diary_id) : null;
+        typeIcon = '💳';
+        const amt = s ? `${s.currency || 'TWD'} ${parseFloat(s.amount).toLocaleString()}` : '';
+        text = `<strong>${this.nameOf(n.from_email)}</strong> 說已給你 ${amt}，請去結算確認`;
+      }
+      else if (n.type === 'settlement-confirm') {
+        const s = (typeof Settlements !== 'undefined') ? Settlements.allList.find(x => x.id === n.diary_id) : null;
+        typeIcon = '✅';
+        const amt = s ? `${s.currency || 'TWD'} ${parseFloat(s.amount).toLocaleString()}` : '';
+        text = `<strong>${this.nameOf(n.from_email)}</strong> 確認收到你的 ${amt}`;
+      }
+      else if (n.type === 'settlement-reject') {
+        typeIcon = '⚠️';
+        text = `<strong>${this.nameOf(n.from_email)}</strong> 回報「沒收到你說已付的款」，請確認後再試`;
       }
       else text = '通知';
       return `

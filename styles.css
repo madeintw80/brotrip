@@ -454,6 +454,75 @@ summary {
 .settle-row:last-child { border-bottom: none; }
 .settle-row span:last-child { font-weight: 700; color: var(--primary); }
 
+/* ⭐ v2.0.0 Peer-to-peer 結算 UI */
+.settle-amount-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.btn-claim, .btn-pending, .btn-confirm, .btn-reject {
+  border: none;
+  padding: 5px 12px;
+  border-radius: 14px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.btn-claim { background: #10b981; color: white; }
+.btn-pending { background: #f59e0b; color: white; }
+.btn-confirm { background: #10b981; color: white; }
+.btn-reject { background: transparent; color: #ef4444; border: 1px solid #ef4444; }
+.btn-claim:active, .btn-pending:active, .btn-confirm:active, .btn-reject:active { transform: scale(0.95); }
+
+/* 待我確認的轉帳 - 顯眼浮在最上面 */
+.pending-claims-section {
+  background: #fffbeb;
+  border: 1px solid #fbbf24;
+  border-radius: 10px;
+  padding: 10px 12px;
+  margin-bottom: 12px;
+}
+[data-theme="dark"] .pending-claims-section {
+  background: #422006;
+  border-color: #92400e;
+}
+.pending-claims-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: #92400e;
+  margin-bottom: 8px;
+}
+[data-theme="dark"] .pending-claims-title {
+  color: #fde68a;
+}
+.pending-claim-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 0;
+  border-top: 1px dashed rgba(146, 64, 14, 0.3);
+}
+.pending-claim-row:first-of-type { border-top: none; }
+.pending-claim-info {
+  flex: 1;
+  font-size: 13px;
+  color: var(--text);
+  min-width: 0;
+}
+.pending-claim-info small { color: var(--text-light); display: block; margin-top: 2px; }
+.pending-claim-amount {
+  color: var(--primary);
+  font-weight: 700;
+  margin: 0 4px;
+}
+.pending-claim-actions {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
 .diary-item {
   background: white;
   padding: 14px;
