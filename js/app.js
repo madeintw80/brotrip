@@ -965,12 +965,13 @@ const App = {
         this.toast(`📍 ${itin.name}：${km} 公里 · 約 ${dur}`, 5000);
         this.renderItineraries(); // 更新 active 樣式
       } else {
-        // 常見錯誤：TRANSIT 在台灣的小範圍可能 ZERO_RESULTS、超出距離 OVER_QUERY_LIMIT 等
-        // → fallback：自己畫直線 + markers 至少讓用戶看到地點
-        console.warn('Directions failed:', status, 'fallback to manual markers');
+        // 常見錯誤：TRANSIT 在台灣的小範圍可能 ZERO_RESULTS、
+        // API key 沒開 Directions API 會 REQUEST_DENIED (要去 Google Cloud Console 啟用) 等
+        // → fallback：自己畫直線 + numbered markers 至少讓用戶看到地點
+        console.warn('Directions failed:', status, '— fallback to manual markers + Google Maps deep link. If REQUEST_DENIED, enable Directions API in Google Cloud Console.');
         renderer.setMap(null);
         this._itineraryRenderer = this._renderItineraryFallback(wps, itin.name);
-        this.toast(`⚠️ 無法算路線 (${status})，已標記地點。用 🗺 開 Google Maps 看完整路線`, 6000);
+        this.toast('請按 🗺 用 Google Maps 看完整路線', 5000);
         this.renderItineraries();
       }
     });

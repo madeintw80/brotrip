@@ -1421,7 +1421,9 @@ summary {
   font-size: 16px; /* iOS auto-zoom 保險 */
   border: 1px solid var(--border);
   border-radius: 8px;
-  background: white;
+  /* 不寫 background — 由全域 select { background: white } + dark override 接管，
+     避免 .payer-row select (0,0,1,1) 跟 [data-theme="dark"] select (0,0,1,1) 同 specificity
+     但寫在後面 → dark mode 被白底覆蓋 */
 }
 .payer-row .payer-amount {
   width: 110px;
