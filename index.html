@@ -18,7 +18,7 @@
       if (t) document.documentElement.dataset.theme = t;
     } catch (e) {}
   </script>
-  <link rel="stylesheet" href="styles.css?v=27">
+  <link rel="stylesheet" href="styles.css?v=28">
 </head>
 <body>
   <div id="pull-indicator" class="pull-indicator"></div>
@@ -106,8 +106,8 @@
             <small>強制更新 app code（不會登出、不會清掉剛改的資料）</small>
           </button>
           <button id="reset-app-btn" class="settings-btn" type="button" style="border-color:#ef4444;">
-            <span style="color:#ef4444;">🚨 完全重置（救援用）</span>
-            <small>清所有本地快取 + 登出。Sheet 資料不會掉，只是本地 reset</small>
+            <span style="color:#ef4444;">🚨 重置 (登出 + 清 SW)</span>
+            <small>救援用：清 Service Worker + 登出，但保留暱稱/日記/支出快取</small>
           </button>
           <button id="open-sheet-btn" class="settings-btn" type="button">
             <span>📊 開啟 BroTrip-Data Sheet</span>
@@ -129,7 +129,7 @@
           <div id="debug-info"></div>
         </div>
         <div class="version-info-wrap">
-          <span id="version-info">BroTrip v1.8.2</span>
+          <span id="version-info">BroTrip v1.8.3</span>
         </div>
       </section>
     </main>
@@ -316,17 +316,17 @@
   <script src="https://accounts.google.com/gsi/client" async defer></script>
 
   <!-- App 程式碼（順序很重要，後面的依賴前面的）-->
-  <script src="js/config.js?v=27"></script>
-  <script src="js/auth.js?v=27"></script>
-  <script src="js/api.js?v=27"></script>
-  <script src="js/cache.js?v=27"></script>
-  <script src="js/trips.js?v=27"></script>
-  <script src="js/expenses.js?v=27"></script>
-  <script src="js/diaries.js?v=27"></script>
-  <script src="js/nicknames.js?v=27"></script>
-  <script src="js/comments.js?v=27"></script>
-  <script src="js/notifications.js?v=27"></script>
-  <script src="js/app.js?v=27"></script>
+  <script src="js/config.js?v=28"></script>
+  <script src="js/auth.js?v=28"></script>
+  <script src="js/api.js?v=28"></script>
+  <script src="js/cache.js?v=28"></script>
+  <script src="js/trips.js?v=28"></script>
+  <script src="js/expenses.js?v=28"></script>
+  <script src="js/diaries.js?v=28"></script>
+  <script src="js/nicknames.js?v=28"></script>
+  <script src="js/comments.js?v=28"></script>
+  <script src="js/notifications.js?v=28"></script>
+  <script src="js/app.js?v=28"></script>
 
   <!-- Service Worker -->
   <script>

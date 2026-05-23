@@ -141,8 +141,10 @@ const Auth = {
     this.expiresAt = 0;
     localStorage.removeItem('brotrip_user');
     localStorage.removeItem('brotrip_token');
-    // 清資料 cache（換帳號就不該看到舊資料）
-    if (typeof Cache !== 'undefined') Cache.clear();
+    // v1.8.3: 不再清 data cache。原因：
+    //   - 資料屬於 trip 不屬於個人，下個登入的人也是同個 5 人，cache 仍然有用
+    //   - 避免「resetApp → logout → 清掉剛改的暱稱」（sheet 還沒 propagate 就丟）
+    //   - 真要換帳號 / 清 cache：Chrome 設定清網站資料
   },
 
   isLoggedIn() {

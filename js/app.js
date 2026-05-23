@@ -530,23 +530,26 @@ const App = {
     `;
   },
 
-  // 完全重置：清所有 cache + localStorage + SW + logout
+  // 重置：清 SW + login，但保留 data cache（暱稱/日記/支出）
+  // 為什麼保留 data cache：避免「剛改完東西、按重置、sheet 還沒 propagate」的資料消失
+  // 真要 wipe data cache 也行（Sheet 是 source of truth，下次 fetch 會 restore）
   async resetApp() {
-    if (!confirm('🚨 完全重置 BroTrip\n\n會清掉：\n• 所有本地快取\n• 登入狀態（要重登）\n• Service Worker\n\n資料在 Google Sheet 不會掉，只是本地 reset。\n\n確定？')) return;
+    if (!confirm('🚨 重置 BroTrip\n\n會清掉：\n• Service Worker (拿最新 code)\n• 登入狀態 (要重登)\n• UI 偏好 (主題/當前 trip)\n\n保留：\n• 暱稱、日記、支出等本地快取 (避免剛改的東西消失)\n\n確定？')) return;
     this.toast('重置中...');
-    // SW caches
+    // SW caches (code)
     if ('caches' in window) {
       try {
         const names = await caches.keys();
         await Promise.all(names.map(n => caches.delete(n)));
       } catch {}
     }
-    // Data cache
-    if (typeof Cache !== 'undefined') Cache.clear();
-    // All brotrip_* localStorage
+    // 只清 非 cache 的 brotrip_* keys（保留 brotrip_cache_v*_*）
     try {
+      const cachePrefix = (typeof Cache !== 'undefined') ? Cache.PREFIX : 'brotrip_cache_';
       Object.keys(localStorage).forEach(k => {
-        if (k.startsWith('brotrip_')) localStorage.removeItem(k);
+        if (k.startsWith('brotrip_') && !k.startsWith(cachePrefix) && !k.startsWith('brotrip_cache_')) {
+          localStorage.removeItem(k);
+        }
       });
     } catch {}
     // Unregister SW
