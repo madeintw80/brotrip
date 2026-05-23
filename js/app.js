@@ -196,8 +196,9 @@ const App = {
     // Dark mode toggle
     document.getElementById('toggle-dark-btn').addEventListener('click', () => this.toggleDarkMode());
 
-    // 已結清解鎖
+    // 已結清解鎖 / 反悔重新鎖定
     document.getElementById('expense-unlock-btn').addEventListener('click', () => this.unlockExpense());
+    document.getElementById('expense-relock-btn').addEventListener('click', () => this.relockExpense());
 
     // Diary list edit/delete/pin + comment + photo lightbox + mention chips
     document.getElementById('diary-list').addEventListener('click', e => {
@@ -1142,38 +1143,63 @@ const App = {
     this.updateSplitPreview();
     this.updatePayerPreview();
     // 已結清的鎖定（編輯模式才需要 check）
-    let isLocked = false;
+    let lockState = 'normal';
     if (id) {
       const e = Expenses.list.find(x => x.id === id);
-      if (e) isLocked = String(e.settled).toUpperCase() === 'TRUE';
+      if (e && String(e.settled).toUpperCase() === 'TRUE') lockState = 'locked';
     }
-    this._toggleExpenseFormLock(isLocked);
+    this._toggleExpenseFormLock(lockState);
     this.openModal('modal-expense');
   },
 
-  _toggleExpenseFormLock(locked) {
+  // state: 'normal' / 'locked' / 'unlocked-from-settled'
+  _toggleExpenseFormLock(state) {
     const form = document.getElementById('expense-form');
     const banner = document.getElementById('expense-lock-banner');
     const unlockBtn = document.getElementById('expense-unlock-btn');
+    const relockBtn = document.getElementById('expense-relock-btn');
     const submitBtn = form.querySelector('[type="submit"]');
 
-    // 鎖/解鎖所有 inputs/selects/textareas
-    form.querySelectorAll('input, select, textarea').forEach(el => { el.disabled = locked; });
-    // 鎖 add-payer + remove-payer
-    const addPayerBtn = document.getElementById('add-payer-btn');
-    if (addPayerBtn) addPayerBtn.disabled = locked;
-    form.querySelectorAll('.remove-payer').forEach(b => b.disabled = locked);
+    const isLocked = state === 'locked';
 
-    if (submitBtn) submitBtn.style.display = locked ? 'none' : '';
-    if (banner) banner.classList.toggle('hidden', !locked);
-    if (unlockBtn) unlockBtn.classList.toggle('hidden', !locked);
+    // 鎖/解鎖所有 inputs/selects/textareas
+    form.querySelectorAll('input, select, textarea').forEach(el => { el.disabled = isLocked; });
+    const addPayerBtn = document.getElementById('add-payer-btn');
+    if (addPayerBtn) addPayerBtn.disabled = isLocked;
+    form.querySelectorAll('.remove-payer').forEach(b => b.disabled = isLocked);
+
+    if (submitBtn) submitBtn.style.display = isLocked ? 'none' : '';
+
+    if (banner) {
+      banner.classList.remove('unlocked');
+      if (state === 'normal') {
+        banner.classList.add('hidden');
+      } else if (state === 'locked') {
+        banner.classList.remove('hidden');
+        banner.textContent = '🔒 這筆已結清，僅檢視。按「✏️ 解鎖修改」可改（會變回未結清）';
+      } else if (state === 'unlocked-from-settled') {
+        banner.classList.remove('hidden');
+        banner.classList.add('unlocked');
+        banner.textContent = '⚠️ 已解鎖修改中（儲存後變回未結清）。想取消？按「🔒 取消修改」恢復鎖定';
+      }
+    }
+
+    if (unlockBtn) unlockBtn.classList.toggle('hidden', state !== 'locked');
+    if (relockBtn) relockBtn.classList.toggle('hidden', state !== 'unlocked-from-settled');
   },
 
   unlockExpense() {
     if (!confirm('這筆已結清。\n\n確定要修改嗎？修改後會自動變回「未結清」狀態，重新算入結算。')) return;
     this._expenseUnlockedFromSettled = true;
-    this._toggleExpenseFormLock(false);
-    this.toast('已解鎖，可修改');
+    this._toggleExpenseFormLock('unlocked-from-settled');
+    this.toast('已解鎖，可修改（或按「🔒 取消修改」恢復鎖定）');
+  },
+
+  // 解鎖後反悔，恢復鎖定狀態（不改 sheet，只改 UI 跟 flag）
+  relockExpense() {
+    this._expenseUnlockedFromSettled = false;
+    this._toggleExpenseFormLock('locked');
+    this.toast('🔒 已恢復鎖定');
   },
 
   updateSplitPreview() {

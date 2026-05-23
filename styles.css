@@ -1200,6 +1200,16 @@ summary {
   color: #fde68a;
   border-color: #92400e;
 }
+.lock-banner.unlocked {
+  background: #fee2e2;
+  color: #991b1b;
+  border-color: #fecaca;
+}
+[data-theme="dark"] .lock-banner.unlocked {
+  background: #450a0a;
+  color: #fecaca;
+  border-color: #991b1b;
+}
 .modal-content input:disabled,
 .modal-content select:disabled,
 .modal-content textarea:disabled {
