@@ -680,7 +680,7 @@ summary {
 }
 .filter-date {
   padding: 4px 8px;
-  font-size: 14px;
+  font-size: 16px; /* iOS auto-zoom 保險 */
   width: 130px;
 }
 .filter-footer {
@@ -749,7 +749,7 @@ summary {
 .split-row input[type="number"] {
   width: 120px;
   padding: 6px 10px;
-  font-size: 15px;
+  font-size: 16px; /* iOS auto-zoom 保險 */
 }
 .split-summary {
   margin-top: 12px;
@@ -1103,7 +1103,7 @@ summary {
 .comment-input {
   flex: 1;
   padding: 8px 12px;
-  font-size: 14px;
+  font-size: 16px; /* >= 16px 避免 iOS Safari focus 自動放大 */
   border: 1px solid var(--border);
   border-radius: 18px;
   font-family: inherit;
@@ -1220,7 +1220,7 @@ summary {
 .payer-row select {
   flex: 1;
   padding: 6px 8px;
-  font-size: 14px;
+  font-size: 16px; /* iOS auto-zoom 保險 */
   border: 1px solid var(--border);
   border-radius: 8px;
   background: white;
@@ -1228,7 +1228,7 @@ summary {
 .payer-row .payer-amount {
   width: 110px;
   padding: 6px 10px;
-  font-size: 14px;
+  font-size: 16px; /* iOS auto-zoom 保險 */
 }
 .remove-payer {
   background: transparent;
