@@ -18,7 +18,7 @@
       if (t) document.documentElement.dataset.theme = t;
     } catch (e) {}
   </script>
-  <link rel="stylesheet" href="styles.css?v=25">
+  <link rel="stylesheet" href="styles.css?v=26">
 </head>
 <body>
   <div id="pull-indicator" class="pull-indicator"></div>
@@ -123,8 +123,13 @@
           <p class="hint">每人可以給任何人取暱稱，所有人都看得到。誰最後改算數（Meta Messenger 風格）</p>
           <div id="nicknames-list"></div>
         </div>
+        <div class="debug-section">
+          <h4>🔧 Debug 資訊</h4>
+          <p class="hint">給管理員看的，幫忙 debug 用</p>
+          <div id="debug-info"></div>
+        </div>
         <div class="version-info-wrap">
-          <span id="version-info">BroTrip v1.8.0</span>
+          <span id="version-info">BroTrip v1.8.1</span>
         </div>
       </section>
     </main>
@@ -311,17 +316,17 @@
   <script src="https://accounts.google.com/gsi/client" async defer></script>
 
   <!-- App 程式碼（順序很重要，後面的依賴前面的）-->
-  <script src="js/config.js?v=25"></script>
-  <script src="js/auth.js?v=25"></script>
-  <script src="js/api.js?v=25"></script>
-  <script src="js/cache.js?v=25"></script>
-  <script src="js/trips.js?v=25"></script>
-  <script src="js/expenses.js?v=25"></script>
-  <script src="js/diaries.js?v=25"></script>
-  <script src="js/nicknames.js?v=25"></script>
-  <script src="js/comments.js?v=25"></script>
-  <script src="js/notifications.js?v=25"></script>
-  <script src="js/app.js?v=25"></script>
+  <script src="js/config.js?v=26"></script>
+  <script src="js/auth.js?v=26"></script>
+  <script src="js/api.js?v=26"></script>
+  <script src="js/cache.js?v=26"></script>
+  <script src="js/trips.js?v=26"></script>
+  <script src="js/expenses.js?v=26"></script>
+  <script src="js/diaries.js?v=26"></script>
+  <script src="js/nicknames.js?v=26"></script>
+  <script src="js/comments.js?v=26"></script>
+  <script src="js/notifications.js?v=26"></script>
+  <script src="js/app.js?v=26"></script>
 
   <!-- Service Worker -->
   <script>

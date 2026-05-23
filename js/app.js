@@ -55,6 +55,7 @@ const App = {
   _lightboxPhotos: [],
   _lightboxIndex: 0,
   _mentionState: null,  // { inputEl, atIdx } 當 @ 正在輸入中
+  _lastError: null,  // 上次 loadAll 失敗的訊息（debug 用）
 
   async init() {
     // 還原 dark/light theme（最早做以免閃白）
@@ -500,6 +501,33 @@ const App = {
         el.textContent = `BroTrip ${CONFIG.VERSION} | cache: ${cur}`;
       });
     }
+    this.updateDebugInfo();
+  },
+
+  async updateDebugInfo() {
+    const el = document.getElementById('debug-info');
+    if (!el) return;
+    const ua = navigator.userAgent || '?';
+    const isAndroid = /Android/i.test(ua);
+    const isIOS = /iPad|iPhone|iPod/.test(ua);
+    const platform = isAndroid ? '🤖 Android' : (isIOS ? '🍎 iOS' : '💻 Desktop');
+    const swStatus = ('serviceWorker' in navigator)
+      ? (await navigator.serviceWorker.getRegistration() ? '✓ 已註冊' : '✗ 未註冊')
+      : '不支援';
+    const onLine = navigator.onLine ? '✓ 上線' : '✗ 離線';
+    const tripsCount = (typeof Trips !== 'undefined') ? Trips.list.length : '?';
+    const expensesCount = (typeof Expenses !== 'undefined') ? Expenses.allList.length : '?';
+    const diariesCount = (typeof Diaries !== 'undefined') ? Diaries.allList.length : '?';
+    const lastErr = this._lastError ? `<div style="color:#ef4444;">❌ ${this.escapeHtml(this._lastError)}</div>` : '';
+    el.innerHTML = `
+      <div class="debug-row"><span>Email:</span> <code>${this.escapeHtml(Auth.user ? Auth.user.email : '(未登入)')}</code></div>
+      <div class="debug-row"><span>App version:</span> <code>${CONFIG.VERSION}</code></div>
+      <div class="debug-row"><span>平台:</span> <code>${platform}</code></div>
+      <div class="debug-row"><span>SW:</span> <code>${swStatus}</code></div>
+      <div class="debug-row"><span>網路:</span> <code>${onLine}</code></div>
+      <div class="debug-row"><span>Trips/Expenses/Diaries:</span> <code>${tripsCount}/${expensesCount}/${diariesCount}</code></div>
+      ${lastErr}
+    `;
   },
 
   // 完全重置：清所有 cache + localStorage + SW + logout
@@ -711,13 +739,33 @@ const App = {
     } catch (err) {
       console.error('showMainApp Phase 2 failed:', err);
       const msg = err.message || '未知錯誤';
+      this._lastError = msg;
       if (msg.includes('403') || msg.includes('Forbidden') || msg.includes('permission')) {
-        this.toast('⚠️ 你的帳號沒有 Sheet 讀取權限。請聯絡管理員 madeintw80@gmail.com', 8000);
+        this.showErrorBanner(`⚠️ 你的帳號（${Auth.user ? Auth.user.email : '?'}）沒有 Sheet 讀取權限。請聯絡管理員 madeintw80@gmail.com`);
       } else if (msg.includes('404')) {
-        this.toast('⚠️ 找不到 BroTrip-Data Sheet。請聯絡管理員', 8000);
+        this.showErrorBanner('⚠️ 找不到 BroTrip-Data Sheet。請聯絡管理員');
+      } else if (msg.includes('401') || msg.includes('Unauthorized')) {
+        this.showErrorBanner(`⚠️ 登入 token 失效。試試 ⚙ 設定 → 🚨 完全重置`);
       } else {
-        this.toast('⚠️ 載入失敗：' + msg.slice(0, 100), 6000);
+        this.showErrorBanner('⚠️ 載入失敗：' + msg.slice(0, 150));
       }
+    }
+  },
+
+  // 持久錯誤橫幅（toast 會消失，banner 留著）
+  showErrorBanner(msg) {
+    let banner = document.getElementById('global-error-banner');
+    if (!banner) {
+      banner = document.createElement('div');
+      banner.id = 'global-error-banner';
+      banner.className = 'global-error-banner';
+      document.body.insertBefore(banner, document.body.firstChild);
+    }
+    banner.innerHTML = `<div>${msg}</div><button type="button" id="error-banner-close" aria-label="關閉">✕</button>`;
+    banner.classList.remove('hidden');
+    const closeBtn = document.getElementById('error-banner-close');
+    if (closeBtn) {
+      closeBtn.addEventListener('click', () => banner.classList.add('hidden'));
     }
   },
 
@@ -756,6 +804,7 @@ const App = {
     this.renderDiaryFilters();
     this.renderDiaries();
     this.renderNicknamesUI();
+    this.updateDebugInfo();
   },
 
   switchTab(tab) {

@@ -25,10 +25,15 @@ const Expenses = {
   },
 
   async loadAll() {
-    const rows = await API.getSheet('Expenses');
-    this.allList = API.rowsToObjects(rows);
-    Cache.set('expenses', this.allList);
-    this._filter();
+    try {
+      const rows = await API.getSheet('Expenses');
+      this.allList = API.rowsToObjects(rows);
+      Cache.set('expenses', this.allList);
+      this._filter();
+    } catch (err) {
+      console.error('Expenses.loadAll failed:', err);
+      if (typeof App !== 'undefined') App._lastError = `Expenses: ${err.message}`;
+    }
     return this.list;
   },
 

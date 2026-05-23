@@ -27,10 +27,16 @@ const Diaries = {
   },
 
   async loadAll() {
-    const rows = await API.getSheet('Diaries');
-    this.allList = API.rowsToObjects(rows);
-    Cache.set('diaries', this.allList);
-    this._filter();
+    try {
+      const rows = await API.getSheet('Diaries');
+      this.allList = API.rowsToObjects(rows);
+      Cache.set('diaries', this.allList);
+      this._filter();
+    } catch (err) {
+      console.error('Diaries.loadAll failed:', err);
+      // 不 throw（讓其他模組可以繼續），但 expose error 給 debug 用
+      if (typeof App !== 'undefined') App._lastError = `Diaries: ${err.message}`;
+    }
     return this.list;
   },
 
