@@ -1159,7 +1159,7 @@ summary {
 .notif-text { font-size: 14px; line-height: 1.4; }
 .notif-time { color: var(--text-light); font-size: 11px; }
 
-/* === Mention autocomplete dropdown (打 @ 跳推薦) === */
+/* === Mention autocomplete dropdown (打 @ tag 人) === */
 .mention-dropdown {
   position: absolute;
   background: var(--card);

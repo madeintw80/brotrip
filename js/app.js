@@ -1036,7 +1036,7 @@ const App = {
           </div>
         ` : ''}
         <div class="comment-input-wrap" data-diary-id="${this.escapeAttr(diaryId)}">
-          <input type="text" class="comment-input" placeholder="💬 留言（打「@」跳推薦）..." maxlength="500">
+          <input type="text" class="comment-input" placeholder="💬 留言（打「@」tag 人）..." maxlength="500">
           <button type="button" class="comment-send">送出</button>
         </div>
       </div>
