@@ -56,10 +56,15 @@ const App = {
   _lightboxIndex: 0,
 
   async init() {
+    // 還原 dark/light theme（最早做以免閃白）
+    const savedTheme = localStorage.getItem('brotrip_theme');
+    if (savedTheme) document.documentElement.dataset.theme = savedTheme;
+
     await Auth.init();
     this.bindUI();
     this.initPullToRefresh();
     this.updateVersionInfo();
+    this.updateThemeUI();
 
     if (Auth.isLoggedIn()) {
       document.getElementById('loading').classList.add('hidden');
@@ -157,13 +162,39 @@ const App = {
       else if (e.key === 'Escape') lightbox.close();
     });
 
-    // Expense list edit/delete
+    // Expense list edit/delete + 點 row 任何地方都展開 edit modal（檢視或修改）
     document.getElementById('expense-list').addEventListener('click', e => {
       const editBtn = e.target.closest('[data-action="edit-expense"]');
       const delBtn = e.target.closest('[data-action="delete-expense"]');
-      if (editBtn) this.openExpenseModal(editBtn.dataset.id);
-      else if (delBtn) this.deleteExpense(delBtn.dataset.id);
+      if (editBtn) { e.stopPropagation(); this.openExpenseModal(editBtn.dataset.id); return; }
+      if (delBtn) { e.stopPropagation(); this.deleteExpense(delBtn.dataset.id); return; }
+      const item = e.target.closest('.expense-item');
+      if (item && item.dataset.expenseId) {
+        this.openExpenseModal(item.dataset.expenseId);
+      }
     });
+
+    // 全部結清按鈕（動態 render，用 delegation）
+    document.getElementById('settlement-content').addEventListener('click', async (ev) => {
+      const btn = ev.target.closest('#mark-all-settled-btn');
+      if (!btn) return;
+      if (!confirm('確定把所有未結清支出標為「已結清」？\n\n標記後不再算入結算，但記錄保留可以檢視。')) return;
+      try {
+        btn.disabled = true;
+        btn.textContent = '處理中...';
+        const n = await Expenses.markAllSettled();
+        this.toast(`✅ 已標 ${n} 筆為結清`);
+        this.renderExpenses();
+        this.renderSettlement();
+      } catch (err) {
+        console.error(err);
+        this.toast('結清失敗：' + err.message);
+        btn.disabled = false;
+      }
+    });
+
+    // Dark mode toggle
+    document.getElementById('toggle-dark-btn').addEventListener('click', () => this.toggleDarkMode());
 
     // Diary list edit/delete/pin + comment + photo lightbox + mention chips
     document.getElementById('diary-list').addEventListener('click', e => {
@@ -390,6 +421,20 @@ const App = {
         this.softRefresh(indicator);
       }
     });
+  },
+
+  toggleDarkMode() {
+    const current = document.documentElement.dataset.theme || 'light';
+    const next = current === 'dark' ? 'light' : 'dark';
+    document.documentElement.dataset.theme = next;
+    localStorage.setItem('brotrip_theme', next);
+    this.updateThemeUI();
+  },
+
+  updateThemeUI() {
+    const current = document.documentElement.dataset.theme || 'light';
+    const el = document.getElementById('theme-current');
+    if (el) el.textContent = current === 'dark' ? '深色 🌙' : '淺色 ☀';
   },
 
   updateVersionInfo() {
@@ -644,14 +689,21 @@ const App = {
     }
     const totalLine = Object.entries(totals).map(([c, v]) => `${c} ${v.toLocaleString()}`).join(' + ');
     let html = `<div style="font-size:13px;color:var(--text-light);margin-bottom:10px;padding-bottom:8px;border-bottom:1px dashed var(--border);">💵 總花費 ${totalLine}</div>`;
+    // 算未結清筆數
+    let unsettledCount = 0;
+    Expenses.list.forEach(e => {
+      if (String(e.settled).toUpperCase() !== 'TRUE') unsettledCount++;
+    });
+
     if (!hasUnsettled) html += '<div style="color:var(--text-light);text-align:center;padding:8px;">✨ 大家都結清了！</div>';
     else {
       for (const currency of currencies) {
         if (result[currency].length === 0) continue;
         result[currency].forEach(t => {
-          html += `<div class="settle-row"><span>${this.nameOf(t.from)} → ${this.nameOf(t.to)}</span><span>${currency} ${t.amount.toLocaleString()}</span></div>`;
+          html += `<div class="settle-row"><span><strong>${this.nameOf(t.from)}</strong> 給 <strong>${this.nameOf(t.to)}</strong></span><span>${currency} ${t.amount.toLocaleString()}</span></div>`;
         });
       }
+      html += `<button id="mark-all-settled-btn" type="button" class="btn-primary" style="width:100%;margin-top:10px;">✅ 全部已結清（標記 ${unsettledCount} 筆）</button>`;
     }
     el.innerHTML = html;
   },
@@ -691,20 +743,22 @@ const App = {
         }
       } catch {}
 
-      const isMine = Auth.user && e.payer === Auth.user.email;
-      const actions = isMine ? `
+      const isSettled = String(e.settled).toUpperCase() === 'TRUE';
+      const settledBadge = isSettled ? '<span class="settled-badge">✅ 已結清</span>' : '';
+      // v1.7.0: 任何 trip 成員都能編輯/刪除
+      const actions = `
         <div class="item-actions">
           <button data-action="edit-expense" data-id="${this.escapeAttr(e.id)}" type="button" title="編輯">✏️</button>
           <button data-action="delete-expense" data-id="${this.escapeAttr(e.id)}" type="button" title="刪除">🗑</button>
-        </div>` : '';
+        </div>`;
       return `
-        <div class="list-item">
+        <div class="list-item expense-item ${isSettled ? 'settled' : ''}" data-expense-id="${this.escapeAttr(e.id)}">
           <div class="row">
             <span>${this.escapeHtml(e.category || '')} ${this.escapeHtml(e.description || '(無說明)')}</span>
             <span class="expense-amount">${e.currency || 'TWD'} ${amt.toLocaleString()}</span>
           </div>
           <div class="row">
-            <div class="meta">${e.date} · 由 ${payersStr} 付</div>
+            <div class="meta">${e.date} · 由 ${payersStr} 付 ${settledBadge}</div>
             ${actions}
           </div>
         </div>

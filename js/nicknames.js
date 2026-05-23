@@ -17,20 +17,30 @@ const Nicknames = {
     try {
       const rows = await API.getSheet('Nicknames');
       const list = API.rowsToObjects(rows);
-      this.map = {};
+      const newMap = {};
       list.forEach(n => {
         if (n.target_email) {
-          this.map[n.target_email] = {
+          newMap[n.target_email] = {
             nickname: n.nickname || '',
             updated_by: n.updated_by || '',
             updated_at: n.updated_at || '',
           };
         }
       });
+      // 合併策略：本地比 server 新的條目保留
+      // 避免「剛改完暱稱 → 下拉更新 → server 還沒 propagate → 清掉新值」
+      Object.keys(this.map).forEach(email => {
+        const local = this.map[email];
+        const remote = newMap[email];
+        if (local && local.updated_at && (!remote || (remote.updated_at || '') < local.updated_at)) {
+          newMap[email] = local;
+        }
+      });
+      this.map = newMap;
       Cache.set('nicknames', this.map);
     } catch (err) {
       console.warn('Load nicknames failed:', err);
-      this.map = {};
+      // 失敗時不清 map（保留現有狀態）
     }
     return this.map;
   },

@@ -61,6 +61,7 @@ const Expenses = {
       data.photo_url || '',
       new Date().toISOString(),
       payersJson,  // L: payers JSON
+      '',           // M: settled (預設空 = 未結清)
     ];
     await API.appendRow('Expenses', row);
     const newExpense = {
@@ -76,6 +77,7 @@ const Expenses = {
       photo_url: data.photo_url || '',
       created_at: new Date().toISOString(),
       payers: payersJson,
+      settled: '',
     };
     this.allList.push(newExpense);
     this._filter();
@@ -84,10 +86,12 @@ const Expenses = {
   },
 
   // 結算：credit payers，debit splits；幣別分開算
+  // 已結清的 expense (settled=TRUE) 不算入
   settle() {
     const balances = {};
 
     this.list.forEach(e => {
+      if (String(e.settled).toUpperCase() === 'TRUE') return;  // 跳過已結清
       const currency = e.currency || 'TWD';
       if (!balances[currency]) balances[currency] = {};
 
@@ -162,7 +166,7 @@ const Expenses = {
   async update(id, data) {
     const existing = this.list.find(e => e.id === id);
     if (!existing) throw new Error('找不到該支出');
-    if (existing.payer !== Auth.user.email) throw new Error('只能改自己付的支出');
+    // v1.7.0：拿掉 payer 限制，任何 trip 成員都可改（共享記帳）
     const splits = JSON.stringify(data.splits);
 
     let payers;
@@ -188,6 +192,7 @@ const Expenses = {
       existing.photo_url || '',
       existing.created_at,
       payersJson,
+      existing.settled || '',  // M
     ];
     await API.updateRow('Expenses', id, newRow);
     Object.assign(existing, {
@@ -207,12 +212,51 @@ const Expenses = {
   async delete(id) {
     const existing = this.list.find(e => e.id === id);
     if (!existing) throw new Error('找不到該支出');
-    if (existing.payer !== Auth.user.email) throw new Error('只能刪自己付的支出');
+    // v1.7.0：拿掉 payer 限制，任何 trip 成員都可刪
     await API.deleteRow('Expenses', id);
     const idx = this.list.indexOf(existing);
     if (idx >= 0) this.list.splice(idx, 1);
     const allIdx = this.allList.indexOf(existing);
     if (allIdx >= 0) this.allList.splice(allIdx, 1);
     Cache.set('expenses', this.allList);
+  },
+
+  // 切換單筆 settled
+  async toggleSettled(id) {
+    const existing = this.allList.find(e => e.id === id);
+    if (!existing) throw new Error('找不到該支出');
+    const wasSettled = String(existing.settled).toUpperCase() === 'TRUE';
+    const newSettled = wasSettled ? 'FALSE' : 'TRUE';
+    const newRow = [
+      existing.id, existing.trip_id, existing.date, existing.payer,
+      existing.amount, existing.currency, existing.category, existing.description,
+      existing.splits, existing.photo_url || '', existing.created_at,
+      existing.payers || '', newSettled,
+    ];
+    await API.updateRow('Expenses', id, newRow);
+    existing.settled = newSettled;
+    Cache.set('expenses', this.allList);
+    return !wasSettled;
+  },
+
+  // 把當前 trip 所有未結清的標為 TRUE（用 batch 序列 update，因為 Sheets API 沒有原生 batch update by id）
+  async markAllSettled() {
+    if (!Trips.current) throw new Error('沒有當前 trip');
+    const tripId = Trips.current.trip_id;
+    const targets = this.allList.filter(e =>
+      e.trip_id === tripId && String(e.settled).toUpperCase() !== 'TRUE'
+    );
+    if (targets.length === 0) return 0;
+    for (const e of targets) {
+      const newRow = [
+        e.id, e.trip_id, e.date, e.payer, e.amount, e.currency,
+        e.category, e.description, e.splits, e.photo_url || '', e.created_at,
+        e.payers || '', 'TRUE',
+      ];
+      await API.updateRow('Expenses', e.id, newRow);
+      e.settled = 'TRUE';
+    }
+    Cache.set('expenses', this.allList);
+    return targets.length;
   },
 };

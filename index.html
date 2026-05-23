@@ -11,7 +11,14 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <meta name="mobile-web-app-capable" content="yes">
-  <link rel="stylesheet" href="styles.css?v=14">
+  <!-- 還原 dark/light theme（必須在 styles.css 之前，避免閃白）-->
+  <script>
+    try {
+      var t = localStorage.getItem('brotrip_theme');
+      if (t) document.documentElement.dataset.theme = t;
+    } catch (e) {}
+  </script>
+  <link rel="stylesheet" href="styles.css?v=15">
 </head>
 <body>
   <div id="pull-indicator" class="pull-indicator"></div>
@@ -90,6 +97,10 @@
       <section id="tab-settings" class="tab-content hidden">
         <h3 class="section-title">⚙ 設定</h3>
         <div class="settings-list">
+          <button id="toggle-dark-btn" class="settings-btn" type="button">
+            <span>🌓 切換深淺模式</span>
+            <small>目前：<span id="theme-current">淺色 ☀</span></small>
+          </button>
           <button id="check-update-btn" class="settings-btn" type="button">
             <span>🔄 檢查新版本</span>
             <small>強制拿最新 app code（不會登出）</small>
@@ -109,7 +120,7 @@
           <div id="nicknames-list"></div>
         </div>
         <div class="version-info-wrap">
-          <span id="version-info">BroTrip v1.6.0</span>
+          <span id="version-info">BroTrip v1.7.0</span>
         </div>
       </section>
     </main>
@@ -291,17 +302,17 @@
   <script src="https://accounts.google.com/gsi/client" async defer></script>
 
   <!-- App 程式碼（順序很重要，後面的依賴前面的）-->
-  <script src="js/config.js?v=14"></script>
-  <script src="js/auth.js?v=14"></script>
-  <script src="js/api.js?v=14"></script>
-  <script src="js/cache.js?v=14"></script>
-  <script src="js/trips.js?v=14"></script>
-  <script src="js/expenses.js?v=14"></script>
-  <script src="js/diaries.js?v=14"></script>
-  <script src="js/nicknames.js?v=14"></script>
-  <script src="js/comments.js?v=14"></script>
-  <script src="js/notifications.js?v=14"></script>
-  <script src="js/app.js?v=14"></script>
+  <script src="js/config.js?v=15"></script>
+  <script src="js/auth.js?v=15"></script>
+  <script src="js/api.js?v=15"></script>
+  <script src="js/cache.js?v=15"></script>
+  <script src="js/trips.js?v=15"></script>
+  <script src="js/expenses.js?v=15"></script>
+  <script src="js/diaries.js?v=15"></script>
+  <script src="js/nicknames.js?v=15"></script>
+  <script src="js/comments.js?v=15"></script>
+  <script src="js/notifications.js?v=15"></script>
+  <script src="js/app.js?v=15"></script>
 
   <!-- Service Worker -->
   <script>
