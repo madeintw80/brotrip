@@ -180,7 +180,10 @@ const API = {
 
   // 刪除某 row（batchUpdate deleteDimension，整列刪除避免留空格）
   async deleteRow(sheetName, id) {
-    const sheetId = CONFIG.SHEET_TAB_IDS[sheetName];
+    // Phase 2: tab ID 從 active group 取（新群組的 tab ID 由 Google 自動分配）
+    const group = Groups.active();
+    if (!group || !group.sheetTabIds) throw new Error('No active group with sheetTabIds');
+    const sheetId = group.sheetTabIds[sheetName];
     if (sheetId === undefined) throw new Error('未知的 sheet: ' + sheetName);
     const rows = await this.getSheet(sheetName);
     const idx = rows.findIndex(r => r[0] === id);
@@ -205,7 +208,10 @@ const API = {
   // 一次刪掉多 rows（給 Trip 刪除時清關聯資料用，避免 API rate limit）
   async batchDeleteRows(sheetName, ids) {
     if (!ids || ids.length === 0) return;
-    const sheetId = CONFIG.SHEET_TAB_IDS[sheetName];
+    // Phase 2: tab ID 從 active group 取
+    const group = Groups.active();
+    if (!group || !group.sheetTabIds) throw new Error('No active group with sheetTabIds');
+    const sheetId = group.sheetTabIds[sheetName];
     if (sheetId === undefined) throw new Error('未知的 sheet: ' + sheetName);
     const rows = await this.getSheet(sheetName);
     const idSet = new Set(ids);
@@ -225,5 +231,127 @@ const API = {
       method: 'POST',
       body: JSON.stringify({ requests }),
     });
+  },
+
+  // ===== Spreadsheet 建立流程（M2: Phase 2 建新群組用）=====
+
+  // 建立新 Google Sheet（檔案先放 Drive 根目錄，之後 move 到目標 folder）
+  // 回傳 { spreadsheetId, sheets: [{ properties: { sheetId, title } }] }
+  async createSpreadsheet(title) {
+    const token = await Auth.ensureToken();
+    const resp = await fetch('https://sheets.googleapis.com/v4/spreadsheets', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        properties: { title },
+        // 預設一個 tab 叫 Trips（之後再加另外 8 個）
+        sheets: [{ properties: { title: 'Trips' } }],
+      }),
+    });
+    if (!resp.ok) {
+      const err = await resp.text();
+      throw new Error(`Create spreadsheet failed: ${resp.status} ${err.slice(0, 200)}`);
+    }
+    return await resp.json();
+  },
+
+  // 把 Drive 檔案 move 到指定 folder（用於把新建的 Sheet 從根目錄搬進群組資料夾）
+  async moveFileToFolder(fileId, targetFolderId) {
+    const token = await Auth.ensureToken();
+    // 先查當前的 parents
+    const getResp = await fetch(
+      `https://www.googleapis.com/drive/v3/files/${fileId}?fields=parents`,
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+    const fileData = await getResp.json();
+    const previousParents = fileData.parents ? fileData.parents.join(',') : '';
+    // Move
+    const moveResp = await fetch(
+      `https://www.googleapis.com/drive/v3/files/${fileId}?addParents=${targetFolderId}&removeParents=${previousParents}&fields=id,parents`,
+      { method: 'PATCH', headers: { Authorization: `Bearer ${token}` } }
+    );
+    if (!moveResp.ok) {
+      const err = await moveResp.text();
+      throw new Error(`Move file failed: ${moveResp.status} ${err.slice(0, 200)}`);
+    }
+    return await moveResp.json();
+  },
+
+  // 一次加多個 tab 到現有 Sheet，回傳 { tabName: sheetId } 對照表
+  // sheetId 是 Google API 給的整數，後續 deleteRow / batchUpdate 會用到
+  async addSheetTabs(spreadsheetId, tabNames) {
+    const token = await Auth.ensureToken();
+    const requests = tabNames.map(name => ({
+      addSheet: { properties: { title: name } },
+    }));
+    const resp = await fetch(
+      `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}:batchUpdate`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ requests }),
+      }
+    );
+    if (!resp.ok) {
+      const err = await resp.text();
+      throw new Error(`Add tabs failed: ${resp.status} ${err.slice(0, 200)}`);
+    }
+    const data = await resp.json();
+    // data.replies 順序對應 requests 順序
+    const map = {};
+    data.replies.forEach((r, i) => {
+      map[tabNames[i]] = r.addSheet.properties.sheetId;
+    });
+    return map;
+  },
+
+  // 改 Drive 檔案/資料夾名稱（用於重新命名群組資料夾）
+  async renameDriveFile(fileId, newName) {
+    const token = await Auth.ensureToken();
+    const resp = await fetch(
+      `https://www.googleapis.com/drive/v3/files/${fileId}`,
+      {
+        method: 'PATCH',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ name: newName }),
+      }
+    );
+    if (!resp.ok) {
+      const err = await resp.text();
+      throw new Error(`Rename failed: ${resp.status} ${err.slice(0, 200)}`);
+    }
+    return await resp.json();
+  },
+
+  // 寫 headers 到指定 tab 的第一列（用於建群組時初始化 schema）
+  // 注意：這個方法接受任意 spreadsheetId（不像 sheetsRequest 是讀 active group）
+  async setSheetHeaders(spreadsheetId, tabName, headers) {
+    const token = await Auth.ensureToken();
+    const range = `${tabName}!A1`;
+    const resp = await fetch(
+      `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(range)}?valueInputOption=RAW`,
+      {
+        method: 'PUT',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ values: [headers] }),
+      }
+    );
+    if (!resp.ok) {
+      const err = await resp.text();
+      throw new Error(`Set headers failed for ${tabName}: ${resp.status} ${err.slice(0, 200)}`);
+    }
+    return await resp.json();
   },
 };

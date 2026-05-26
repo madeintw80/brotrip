@@ -73,7 +73,7 @@ const App = {
 
     if (Auth.isLoggedIn()) {
       document.getElementById('loading').classList.add('hidden');
-      await this.showMainApp();
+      await this.afterLogin();
       return;
     }
 
@@ -83,13 +83,18 @@ const App = {
         const timeout = new Promise((_, rej) => setTimeout(() => rej(new Error('silent timeout')), 10000));
         await Promise.race([Auth.ensureToken(), timeout]);
         document.getElementById('loading').classList.add('hidden');
-        await this.showMainApp();
+        await this.afterLogin();
         return;
       } catch (err) {
         console.warn('Silent re-auth failed:', err);
         // ⭐ v2.0.2 silent fail 不清 user，改進主畫面 with cache + 顯示續登 banner
-        // 比起跳全螢幕登入畫面更輕量，用戶按 banner 一秒續登（Google 通常還記得授權）
         document.getElementById('loading').classList.add('hidden');
+        // Phase 2: 沒群組時不能跑 cache main app，直接跳 no-group 畫面
+        if (!Groups.active()) {
+          this.showNoGroupScreen();
+          this.showReauthBanner();
+          return;
+        }
         this.showReauthBanner();
         await this._showMainAppCacheOnly();
         return;
@@ -100,17 +105,376 @@ const App = {
     document.getElementById('login-screen').classList.remove('hidden');
   },
 
+  // Phase 2: 登入完成後依群組狀態分流
+  async afterLogin() {
+    // 無群組（新用戶 / TGL legacy 被刪光）→ 顯示無群組畫面
+    if (!Groups.active()) {
+      this.showNoGroupScreen();
+      return;
+    }
+    // 有群組 → 進主畫面
+    await this.showMainApp();
+  },
+
+  // Phase 2: 無群組畫面（建立 / 加入）
+  showNoGroupScreen() {
+    document.getElementById('login-screen').classList.add('hidden');
+    document.getElementById('app').classList.add('hidden');
+    document.getElementById('no-group-screen').classList.remove('hidden');
+  },
+
+  // Phase 2: 打開建立群組 modal
+  openCreateGroupModal() {
+    const modal = document.getElementById('modal-create-group');
+    if (!modal) return;
+    // 重置表單
+    const form = document.getElementById('create-group-form');
+    if (form) form.reset();
+    document.getElementById('create-group-progress').classList.add('hidden');
+    document.getElementById('create-group-submit').disabled = false;
+    modal.classList.remove('hidden');
+  },
+
+  // Phase 2: 處理建立群組表單 submit
+  async handleCreateGroupSubmit(e) {
+    e.preventDefault();
+    const form = e.target;
+    const name = (form.elements.name.value || '').trim();
+    if (!name) {
+      this.toast('請輸入群組名稱');
+      return;
+    }
+
+    const submitBtn = document.getElementById('create-group-submit');
+    const progress = document.getElementById('create-group-progress');
+    const stepText = document.getElementById('create-group-step');
+    submitBtn.disabled = true;
+    progress.classList.remove('hidden');
+
+    try {
+      const newGroup = await Groups.create(name, (step, total, msg) => {
+        if (stepText) stepText.textContent = `${step}/${total} — ${msg}`;
+      });
+
+      // 關閉 modal
+      document.getElementById('modal-create-group').classList.add('hidden');
+      this.toast(`✅ 群組「${newGroup.name}」建立完成！`);
+
+      // 顯示邀請碼
+      this.showInviteCodeModal(newGroup);
+
+      // 如果這是第一個群組（剛從 no-group-screen 進來），直接切去 app
+      const noGroupScreen = document.getElementById('no-group-screen');
+      if (noGroupScreen && !noGroupScreen.classList.contains('hidden')) {
+        noGroupScreen.classList.add('hidden');
+        await this.showMainApp();
+      } else {
+        // 已經在 app 內，切到新群組 + reload 資料
+        // M2 不做 dropdown 切換，所以這裡先 reload 整頁
+        // 之後 M3 加上 dropdown 後可以軟切換
+        setTimeout(() => {
+          if (confirm('新群組已建立！要切過去使用嗎？（會 reload app）')) {
+            location.reload();
+          }
+        }, 500);
+      }
+    } catch (err) {
+      progress.classList.add('hidden');
+      submitBtn.disabled = false;
+      this.toast('建立失敗：' + (err.message || '未知錯誤'));
+      console.error('Create group error:', err);
+    }
+  },
+
+  // Phase 2: 顯示邀請碼 modal
+  showInviteCodeModal(group) {
+    const code = Groups.encodeInvite(group);
+    const modal = document.getElementById('modal-invite-code');
+    const ta = document.getElementById('invite-code-text');
+    if (ta) ta.value = code;
+    if (modal) modal.classList.remove('hidden');
+  },
+
+  // ===== M3: 加入群組流程 =====
+
+  openJoinGroupModal() {
+    const modal = document.getElementById('modal-join-group');
+    if (!modal) return;
+    const form = document.getElementById('join-group-form');
+    if (form) form.reset();
+    document.getElementById('join-group-permission-banner').classList.add('hidden');
+    document.getElementById('join-group-progress').classList.add('hidden');
+    document.getElementById('join-group-submit').disabled = false;
+    this._pendingJoinCode = null;
+    modal.classList.remove('hidden');
+  },
+
+  async handleJoinGroupSubmit(e) {
+    e.preventDefault();
+    const code = (e.target.elements.code.value || '').trim();
+    if (!code) { this.toast('請貼上邀請碼'); return; }
+    await this._tryJoin(code);
+  },
+
+  async _tryJoin(code) {
+    const submitBtn = document.getElementById('join-group-submit');
+    const progress = document.getElementById('join-group-progress');
+    const banner = document.getElementById('join-group-permission-banner');
+    const stepText = document.getElementById('join-group-step');
+
+    submitBtn.disabled = true;
+    banner.classList.add('hidden');
+    progress.classList.remove('hidden');
+    stepText.textContent = '驗證邀請碼 + 嘗試讀取群組...';
+
+    try {
+      const newGroup = await Groups.joinByInvite(code);
+      // 加入成功！
+      progress.classList.add('hidden');
+      this.toast(`✅ 加入「${newGroup.name}」成功！`);
+
+      // 跳設定 display_name dialog（預設帶 Gmail 名）
+      const defaultName = Auth.user && Auth.user.name ? Auth.user.name : '';
+      this.openDisplayNameModal(newGroup, defaultName, async (name) => {
+        // 寫進 Members sheet（此時 active group 已是新群組）
+        try {
+          await API.appendRow('Members', [
+            Auth.user.email,
+            name,
+            new Date().toISOString(),
+          ]);
+        } catch (err) {
+          console.warn('Failed to write Members row:', err);
+        }
+        // 關 join modal、切換到主畫面
+        document.getElementById('modal-join-group').classList.add('hidden');
+        const noGroupScreen = document.getElementById('no-group-screen');
+        if (noGroupScreen && !noGroupScreen.classList.contains('hidden')) {
+          noGroupScreen.classList.add('hidden');
+          await this.showMainApp();
+        } else {
+          // 設定 tab 加入時，問用戶是否切過去
+          setTimeout(() => {
+            if (confirm(`已加入「${newGroup.name}」，要切到該群組嗎？（會 reload）`)) {
+              location.reload();
+            }
+          }, 300);
+        }
+      });
+    } catch (err) {
+      progress.classList.add('hidden');
+      submitBtn.disabled = false;
+
+      if (err.code === 'PERMISSION_DENIED') {
+        // 自動開 Drive folder 觸發 Google 的 request access UI
+        const driveUrl = `https://drive.google.com/drive/folders/${err.folderId}`;
+        window.open(driveUrl, '_blank');
+        // 顯示說明 banner
+        document.getElementById('join-owner-email').textContent = err.ownerEmail || '（不明）';
+        banner.classList.remove('hidden');
+        // 暫存邀請碼供重試
+        this._pendingJoinCode = code;
+        return;
+      }
+      this.toast('加入失敗：' + (err.message || '未知錯誤'));
+      console.error('Join error:', err);
+    }
+  },
+
+  // 設定 display_name modal（建立群組 + 加入後 + 設定 tab 都用同一個）
+  openDisplayNameModal(group, defaultName, onConfirm) {
+    const modal = document.getElementById('modal-display-name');
+    if (!modal) return;
+    document.getElementById('display-name-group').textContent = group.name;
+    const input = modal.querySelector('input[name="name"]');
+    input.value = defaultName || '';
+    const form = document.getElementById('display-name-form');
+    // 移除舊的 listener（避免重複觸發）
+    const newForm = form.cloneNode(true);
+    form.parentNode.replaceChild(newForm, form);
+    newForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const name = (e.target.elements.name.value || '').trim();
+      if (!name) { this.toast('名稱不能空白'); return; }
+      modal.classList.add('hidden');
+      try { await onConfirm(name); } catch (err) {
+        console.error(err);
+        this.toast('儲存失敗：' + (err.message || '未知錯誤'));
+      }
+    });
+    // re-bind cancel
+    newForm.querySelectorAll('.modal-close, .btn-cancel').forEach(btn => {
+      btn.addEventListener('click', () => modal.classList.add('hidden'));
+    });
+    modal.classList.remove('hidden');
+    input.focus();
+    input.select();
+  },
+
+  // 我在當前群組的 display_name（從 Members sheet 讀，沒有就用 Gmail 名）
+  async getMyDisplayName() {
+    try {
+      const rows = await API.getSheet('Members');
+      const list = API.rowsToObjects(rows);
+      const me = list.find(m => m.email === Auth.user.email);
+      if (me && me.display_name) return me.display_name;
+    } catch (err) {
+      console.warn('getMyDisplayName failed:', err);
+    }
+    return Auth.user && Auth.user.name ? Auth.user.name : Auth.user.email.split('@')[0];
+  },
+
+  // 改我在當前群組的 display_name
+  async setMyDisplayName(newName) {
+    const rows = await API.getSheet('Members');
+    const idx = rows.findIndex((r, i) => i > 0 && r[0] === Auth.user.email);
+    const row = [Auth.user.email, newName, new Date().toISOString()];
+    if (idx > 0) {
+      // 已存在 → updateRow（沿用現有的 updateRow API）
+      const range = `Members!A${idx + 1}:C${idx + 1}`;
+      await API.sheetsRequest(`/values/${encodeURIComponent(range)}?valueInputOption=RAW`, {
+        method: 'PUT',
+        body: JSON.stringify({ values: [row] }),
+      });
+    } else {
+      await API.appendRow('Members', row);
+    }
+  },
+
   bindUI() {
     document.getElementById('login-btn').addEventListener('click', async () => {
       try {
         await Auth.login();
-        await this.showMainApp();
+        await this.afterLogin();
       } catch (err) {
         const msg = err.error_description || err.error || err.message || '請重試';
         this.toast('登入失敗：' + msg);
         console.error('Login error:', err);
       }
     });
+
+    // Phase 2: 無群組畫面的建立按鈕
+    const createGroupBtn = document.getElementById('create-group-btn');
+    if (createGroupBtn) {
+      createGroupBtn.addEventListener('click', () => this.openCreateGroupModal());
+    }
+    const noGroupLogout = document.getElementById('no-group-logout');
+    if (noGroupLogout) {
+      noGroupLogout.addEventListener('click', (e) => {
+        e.preventDefault();
+        if (confirm('登出？')) { Auth.logout(); location.reload(); }
+      });
+    }
+
+    // 設定 tab 的建立群組 / 顯示邀請碼按鈕
+    const settingsCreateBtn = document.getElementById('settings-create-group-btn');
+    if (settingsCreateBtn) {
+      settingsCreateBtn.addEventListener('click', () => this.openCreateGroupModal());
+    }
+    const settingsInviteBtn = document.getElementById('settings-show-invite-btn');
+    if (settingsInviteBtn) {
+      settingsInviteBtn.addEventListener('click', () => {
+        const g = Groups.active();
+        if (g) this.showInviteCodeModal(g);
+      });
+    }
+
+    // 建立群組表單
+    const createGroupForm = document.getElementById('create-group-form');
+    if (createGroupForm) {
+      createGroupForm.addEventListener('submit', (e) => this.handleCreateGroupSubmit(e));
+    }
+
+    // M3: 加入群組（無群組畫面 + 設定 tab 都用同一個 handler）
+    const joinGroupBtn = document.getElementById('join-group-btn');
+    if (joinGroupBtn) {
+      joinGroupBtn.addEventListener('click', () => this.openJoinGroupModal());
+    }
+    const settingsJoinBtn = document.getElementById('settings-join-group-btn');
+    if (settingsJoinBtn) {
+      settingsJoinBtn.addEventListener('click', () => this.openJoinGroupModal());
+    }
+    const joinForm = document.getElementById('join-group-form');
+    if (joinForm) {
+      joinForm.addEventListener('submit', (e) => this.handleJoinGroupSubmit(e));
+    }
+    // 「我已經有權限了 → 重試」按鈕
+    const joinRetryBtn = document.getElementById('join-retry-btn');
+    if (joinRetryBtn) {
+      joinRetryBtn.addEventListener('click', async () => {
+        if (this._pendingJoinCode) {
+          await this._tryJoin(this._pendingJoinCode);
+        }
+      });
+    }
+    // 再開一次 Drive
+    const openDriveBtn = document.getElementById('join-open-drive-btn');
+    if (openDriveBtn) {
+      openDriveBtn.addEventListener('click', () => {
+        if (this._pendingJoinCode) {
+          const data = Groups.decodeInvite(this._pendingJoinCode);
+          if (data && data.folderId) {
+            window.open(`https://drive.google.com/drive/folders/${data.folderId}`, '_blank');
+          }
+        }
+      });
+    }
+    // M3: 改我在此群組的顯示名稱
+    const editDispBtn = document.getElementById('settings-edit-displayname-btn');
+    if (editDispBtn) {
+      editDispBtn.addEventListener('click', async () => {
+        const g = Groups.active();
+        if (!g) return;
+        const currentName = await this.getMyDisplayName();
+        this.openDisplayNameModal(g, currentName, async (name) => {
+          await this.setMyDisplayName(name);
+          this.toast(`✅ 已改為「${name}」`);
+          this.updateGroupInfo();
+        });
+      });
+    }
+
+    // 重新命名當前群組
+    const renameGroupBtn = document.getElementById('settings-rename-group-btn');
+    if (renameGroupBtn) {
+      renameGroupBtn.addEventListener('click', async () => {
+        const g = Groups.active();
+        if (!g) return;
+        const newName = prompt(`重新命名群組\n當前：${g.name}\n\n輸入新名稱：`, g.name);
+        if (newName === null) return;  // 取消
+        const trimmed = (newName || '').trim();
+        if (!trimmed) { this.toast('名稱不能空白'); return; }
+        if (trimmed === g.name) return;
+        try {
+          this.toast('改名中...');
+          await Groups.rename(g.groupId, trimmed);
+          this.toast(`✅ 已改名為「${trimmed}」`);
+          this.updateGroupInfo();
+        } catch (err) {
+          this.toast('改名失敗：' + (err.message || '未知錯誤'));
+          console.error('Rename error:', err);
+        }
+      });
+    }
+
+    // 複製邀請碼按鈕
+    const copyInviteBtn = document.getElementById('copy-invite-btn');
+    if (copyInviteBtn) {
+      copyInviteBtn.addEventListener('click', () => {
+        const ta = document.getElementById('invite-code-text');
+        ta.select();
+        try {
+          document.execCommand('copy');
+          this.toast('✅ 邀請碼已複製');
+        } catch (err) {
+          // Modern API fallback
+          navigator.clipboard.writeText(ta.value).then(
+            () => this.toast('✅ 邀請碼已複製'),
+            () => this.toast('複製失敗，請手動選取複製')
+          );
+        }
+      });
+    }
 
     document.getElementById('logout-btn').addEventListener('click', () => {
       if (confirm('登出？')) { Auth.logout(); location.reload(); }
@@ -629,7 +993,22 @@ const App = {
         el.textContent = `BroTrip ${CONFIG.VERSION} | cache: ${cur}`;
       });
     }
+    this.updateGroupInfo();
     this.updateDebugInfo();
+  },
+
+  // Phase 2: 設定 tab 顯示當前群組名 + 角色 + 我的 display_name
+  updateGroupInfo() {
+    const nameEl = document.getElementById('current-group-name');
+    const roleEl = document.getElementById('current-group-role');
+    const dispEl = document.getElementById('my-display-name');
+    const g = Groups.active();
+    if (nameEl) nameEl.textContent = g ? g.name : '無';
+    if (roleEl) roleEl.textContent = g ? (g.role === 'owner' ? '👑 owner' : '👤 member') : '-';
+    // M3: async 抓 display name
+    if (dispEl && g) {
+      this.getMyDisplayName().then(name => { dispEl.textContent = name; });
+    }
   },
 
   async updateDebugInfo() {

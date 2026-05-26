@@ -1686,3 +1686,36 @@ summary {
   opacity: 0.6;
   cursor: not-allowed;
 }
+
+/* ===== Phase 2: 無群組畫面 + 群組管理 ===== */
+.no-group-text {
+  text-align: center;
+  margin: 16px 24px;
+  line-height: 1.6;
+  color: rgba(255, 255, 255, 0.85);
+}
+#no-group-screen .btn-primary,
+#no-group-screen .btn-secondary {
+  min-width: 220px;
+}
+.btn-secondary {
+  background: rgba(255, 255, 255, 0.15);
+  color: white;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 24px;
+  padding: 12px 24px;
+  font-size: 16px;
+  cursor: pointer;
+}
+.btn-secondary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.groups-section {
+  margin-top: 24px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border, #e5e5e5);
+}
+.groups-section h4 {
+  margin: 0 0 8px 0;
+}

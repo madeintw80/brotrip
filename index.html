@@ -18,7 +18,7 @@
       if (t) document.documentElement.dataset.theme = t;
     } catch (e) {}
   </script>
-  <link rel="stylesheet" href="styles.css?v=44">
+  <link rel="stylesheet" href="styles.css?v=46">
 </head>
 <body>
   <div id="pull-indicator" class="pull-indicator"></div>
@@ -35,6 +35,16 @@
     <p class="subtitle">和好友一起出遊、一起記錄 ✈️</p>
     <button id="login-btn" class="btn-primary">用 Google 登入</button>
     <p class="hint">用 Google 帳號登入開始</p>
+  </div>
+
+  <!-- 無群組畫面（登入後沒有加入任何群組時顯示）-->
+  <div id="no-group-screen" class="screen hidden">
+    <div class="logo">BroTrip</div>
+    <p class="subtitle">歡迎！👋</p>
+    <p class="no-group-text">你還沒加入任何群組<br>建立一個跟好友一起紀錄出遊，或用邀請碼加入朋友建好的群組</p>
+    <button id="create-group-btn" class="btn-primary" style="margin-top:24px;">➕ 建立新群組</button>
+    <button id="join-group-btn" class="btn-secondary" style="margin-top:12px;">📨 用邀請碼加入</button>
+    <p class="hint" style="margin-top:24px;"><a href="#" id="no-group-logout" style="color:rgba(255,255,255,0.7);">登出</a></p>
   </div>
 
   <!-- 主畫面 -->
@@ -127,6 +137,30 @@
           <button id="open-drive-btn" class="settings-btn" type="button">
             <span>📂 開啟 Drive 資料夾</span>
             <small>看照片 / 分享給朋友</small>
+          </button>
+        </div>
+        <div class="groups-section">
+          <h4>📁 群組管理</h4>
+          <p class="hint">當前群組：<strong id="current-group-name">-</strong>（角色：<span id="current-group-role">-</span>）</p>
+          <button id="settings-create-group-btn" class="settings-btn" type="button" style="margin-top:8px;">
+            <span>➕ 建立新群組</span>
+            <small>會在你 Drive 建 BroTrip/<群組名>/ 資料夾</small>
+          </button>
+          <button id="settings-show-invite-btn" class="settings-btn" type="button" style="margin-top:8px;">
+            <span>📨 顯示當前群組邀請碼</span>
+            <small>把碼分享給朋友，他們可以加入此群組（需 M3 上線）</small>
+          </button>
+          <button id="settings-rename-group-btn" class="settings-btn" type="button" style="margin-top:8px;">
+            <span>✏️ 重新命名當前群組</span>
+            <small>會同步改 Drive 資料夾名稱，不影響資料</small>
+          </button>
+          <button id="settings-join-group-btn" class="settings-btn" type="button" style="margin-top:8px;">
+            <span>📨 用邀請碼加入其他群組</span>
+            <small>你可以同時是多個群組成員（M3 dropdown 切換上線後可用）</small>
+          </button>
+          <button id="settings-edit-displayname-btn" class="settings-btn" type="button" style="margin-top:8px;">
+            <span>👤 我在此群組的顯示名稱</span>
+            <small>當前：<span id="my-display-name">-</span></small>
           </button>
         </div>
         <div class="nicknames-section">
@@ -270,6 +304,95 @@
     </div>
   </div>
 
+  <!-- Modal: 建立新群組 (M2) -->
+  <div id="modal-create-group" class="modal hidden">
+    <div class="modal-content">
+      <header class="modal-header">
+        <h2>建立新群組</h2>
+        <button class="modal-close" type="button">✕</button>
+      </header>
+      <form id="create-group-form">
+        <label>群組名稱
+          <input type="text" name="name" required placeholder="例：TGL、家人出遊、東京 trip" maxlength="40" autocomplete="off">
+        </label>
+        <p class="hint">會在你 Drive 建 <code>BroTrip/&lt;群組名&gt;/</code> 資料夾 + 一個 Sheet。建立者預設為 owner（資料存你 Drive）。</p>
+        <div id="create-group-progress" class="hidden" style="margin:12px 0; padding:12px; background:var(--bg-soft); border-radius:8px;">
+          <p style="margin:0;">⏳ <span id="create-group-step">準備中...</span></p>
+        </div>
+        <div class="modal-actions">
+          <button type="button" class="btn-cancel">取消</button>
+          <button type="submit" class="btn-primary" id="create-group-submit">建立</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal: 用邀請碼加入群組 (M3) -->
+  <div id="modal-join-group" class="modal hidden">
+    <div class="modal-content">
+      <header class="modal-header">
+        <h2>📨 用邀請碼加入群組</h2>
+        <button class="modal-close" type="button">✕</button>
+      </header>
+      <form id="join-group-form">
+        <label>貼上朋友給你的邀請碼
+          <textarea name="code" required rows="4" placeholder="貼上邀請碼（一長串字串）" style="font-family:monospace; font-size:12px; word-break:break-all;"></textarea>
+        </label>
+        <div id="join-group-permission-banner" class="hidden" style="margin:12px 0; padding:12px; background:rgba(251, 191, 36, 0.15); border:1px solid rgba(251, 191, 36, 0.5); border-radius:8px;">
+          <p style="margin:0 0 8px 0; font-weight:600;">⚠️ 你還沒有 Drive 存取權限</p>
+          <p style="margin:0 0 12px 0; font-size:14px;">已自動開 Drive 資料夾頁面到新分頁<br>請點 Google 跳出的「<strong>要求存取權</strong>」按鈕<br>群組擁有者 <span id="join-owner-email">-</span> 會收到 email，他核准後你就能進來了</p>
+          <button type="button" id="join-retry-btn" class="btn-primary" style="width:100%;">✅ 我已經有權限了，重試</button>
+          <button type="button" id="join-open-drive-btn" class="btn-secondary" style="width:100%; margin-top:8px;">🔗 再開一次 Drive 頁面</button>
+        </div>
+        <div id="join-group-progress" class="hidden" style="margin:12px 0; padding:12px; background:var(--bg-soft); border-radius:8px;">
+          <p style="margin:0;">⏳ <span id="join-group-step">驗證中...</span></p>
+        </div>
+        <div class="modal-actions">
+          <button type="button" class="btn-cancel">取消</button>
+          <button type="submit" class="btn-primary" id="join-group-submit">加入</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal: 設定顯示名稱 (M3) -->
+  <div id="modal-display-name" class="modal hidden">
+    <div class="modal-content">
+      <header class="modal-header">
+        <h2>👤 你的顯示名稱</h2>
+        <button class="modal-close" type="button">✕</button>
+      </header>
+      <form id="display-name-form">
+        <p class="hint">這是你在<strong id="display-name-group">此群組</strong>顯示的名字（其他成員看到的）。可隨時改。</p>
+        <label>顯示名稱
+          <input type="text" name="name" required maxlength="40" autocomplete="off">
+        </label>
+        <div class="modal-actions">
+          <button type="button" class="btn-cancel">取消</button>
+          <button type="submit" class="btn-primary">儲存</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal: 顯示邀請碼 (M2) -->
+  <div id="modal-invite-code" class="modal hidden">
+    <div class="modal-content">
+      <header class="modal-header">
+        <h2>📨 邀請碼</h2>
+        <button class="modal-close" type="button">✕</button>
+      </header>
+      <div style="padding:12px 0;">
+        <p>把這串邀請碼傳給朋友，他們之後可以用「📨 用邀請碼加入」進來：</p>
+        <textarea id="invite-code-text" readonly rows="4" style="width:100%; font-family:monospace; font-size:12px; padding:8px; background:var(--bg-soft); border:1px solid var(--border); border-radius:6px; resize:none; word-break:break-all;"></textarea>
+        <div class="modal-actions" style="margin-top:12px;">
+          <button type="button" class="btn-primary" id="copy-invite-btn">📋 複製邀請碼</button>
+        </div>
+        <p class="hint" style="margin-top:12px;">⚠️ 朋友還需要你把 Drive 群組資料夾分享給他們（編輯權），才能真的進入群組。<br>👉 點「📂 開啟 Drive 資料夾」→ 右鍵 → 共用 → 加他們 email</p>
+      </div>
+    </div>
+  </div>
+
   <!-- Modal: 新增 Trip -->
   <div id="modal-new-trip" class="modal hidden">
     <div class="modal-content">
@@ -361,20 +484,20 @@
 
   <!-- App 程式碼（順序很重要，後面的依賴前面的）
        Phase 2: groups.js 必須在 cache.js 之前載入，cache PREFIX 依賴 Groups.active() -->
-  <script src="js/config.js?v=44"></script>
-  <script src="js/groups.js?v=44"></script>
-  <script src="js/cache.js?v=44"></script>
-  <script src="js/auth.js?v=44"></script>
-  <script src="js/api.js?v=44"></script>
-  <script src="js/trips.js?v=44"></script>
-  <script src="js/expenses.js?v=44"></script>
-  <script src="js/diaries.js?v=44"></script>
-  <script src="js/nicknames.js?v=44"></script>
-  <script src="js/comments.js?v=44"></script>
-  <script src="js/notifications.js?v=44"></script>
-  <script src="js/itineraries.js?v=44"></script>
-  <script src="js/settlements.js?v=44"></script>
-  <script src="js/app.js?v=44"></script>
+  <script src="js/config.js?v=46"></script>
+  <script src="js/groups.js?v=46"></script>
+  <script src="js/cache.js?v=46"></script>
+  <script src="js/auth.js?v=46"></script>
+  <script src="js/api.js?v=46"></script>
+  <script src="js/trips.js?v=46"></script>
+  <script src="js/expenses.js?v=46"></script>
+  <script src="js/diaries.js?v=46"></script>
+  <script src="js/nicknames.js?v=46"></script>
+  <script src="js/comments.js?v=46"></script>
+  <script src="js/notifications.js?v=46"></script>
+  <script src="js/itineraries.js?v=46"></script>
+  <script src="js/settlements.js?v=46"></script>
+  <script src="js/app.js?v=46"></script>
 
   <!-- Service Worker + auto-update（偵測新版 SW 後通知用戶 reload） -->
   <script>
