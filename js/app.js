@@ -229,6 +229,120 @@ const App = {
     }
   },
 
+  // ===== M4.4: 退出 / 刪除 / 管理成員 =====
+
+  async openManageMembersModal() {
+    const g = Groups.active();
+    if (!g) return;
+    const modal = document.getElementById('modal-manage-members');
+    if (!modal) return;
+    document.getElementById('manage-members-group-name').textContent = g.name;
+    document.getElementById('manage-members-owner-note').textContent =
+      g.role === 'owner' ? '你是 owner，可以踢成員' : '只有 owner 能踢人，你只能看';
+
+    const listEl = document.getElementById('manage-members-list');
+    listEl.innerHTML = '<p class="hint">載入中...</p>';
+    modal.classList.remove('hidden');
+
+    // 確保最新成員資料
+    try {
+      await Members.loadAll();
+    } catch (err) {
+      console.warn(err);
+    }
+
+    const all = Members.all();
+    if (all.length === 0) {
+      listEl.innerHTML = '<p class="hint">（無成員資料）</p>';
+      return;
+    }
+
+    listEl.innerHTML = all.map(m => {
+      const isSelf = m.email === Auth.user.email;
+      const canKick = g.role === 'owner' && !isSelf;
+      const joined = m.joined_at ? new Date(m.joined_at).toLocaleDateString() : '';
+      return `
+        <div class="member-manage-row" style="display:flex; align-items:center; padding:10px; border:1px solid var(--border); border-radius:6px; margin-bottom:8px;">
+          <div style="flex:1; min-width:0;">
+            <div style="font-weight:600;">${this.escapeHtml(m.name)} ${isSelf ? '<span style="color:var(--text-muted); font-weight:normal;">(你)</span>' : ''}</div>
+            <div style="font-size:12px; color:var(--text-muted); overflow:hidden; text-overflow:ellipsis;">${this.escapeHtml(m.email)}</div>
+            ${joined ? `<div style="font-size:11px; color:var(--text-muted);">加入：${joined}</div>` : ''}
+          </div>
+          ${canKick ? `<button type="button" class="btn-kick-member" data-email="${this.escapeAttr(m.email)}" style="padding:6px 12px; background:transparent; border:1px solid #ef4444; color:#ef4444; border-radius:6px; cursor:pointer;">踢出</button>` : ''}
+        </div>
+      `;
+    }).join('');
+
+    // 綁定踢出按鈕
+    listEl.querySelectorAll('.btn-kick-member').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const email = btn.dataset.email;
+        const member = all.find(m => m.email === email);
+        if (!member) return;
+        if (!confirm(`確定要把「${member.name}」(${email}) 踢出群組嗎？\n\n會:\n1. 從 Members 名單移除\n2. 撤銷他/她的 Drive 存取權限\n\n他們的歷史紀錄（trip/支出/日記）會保留`)) return;
+        try {
+          btn.disabled = true;
+          btn.textContent = '處理中...';
+          await Groups.kickMember(g.groupId, email);
+          this.toast(`✅ 已踢出「${member.name}」`);
+          // Reload modal
+          await this.openManageMembersModal();
+        } catch (err) {
+          this.toast('踢出失敗：' + (err.message || '未知錯誤'));
+          btn.disabled = false;
+          btn.textContent = '踢出';
+        }
+      });
+    });
+  },
+
+  async handleLeaveGroup() {
+    const g = Groups.active();
+    if (!g) return;
+    if (g.role === 'owner') {
+      this.toast('你是 owner，請改用「💀 刪除整個群組」');
+      return;
+    }
+    if (!confirm(`確定退出「${g.name}」?\n\n會:\n1. 從你的 app 移除這個群組\n2. 從群組 Members 名單刪掉你的 row\n\n你之前的紀錄會留給其他人看（只是名字顯示成 email）`)) return;
+    try {
+      this.toast('退出中...');
+      await Groups.leave(g.groupId);
+      this.toast(`✅ 已退出「${g.name}」`);
+      // Reload 看當前狀態（其他群組存在 → 切過去；沒有 → no-group screen）
+      setTimeout(() => location.reload(), 800);
+    } catch (err) {
+      this.toast('退出失敗：' + (err.message || '未知錯誤'));
+      console.error(err);
+    }
+  },
+
+  async handleDeleteGroup() {
+    const g = Groups.active();
+    if (!g) return;
+    if (g.role !== 'owner') {
+      this.toast('只有 owner 可以刪除群組（你是 member，請用「🚪 退出此群組」）');
+      return;
+    }
+    if (!confirm(`⚠️ 第一次確認\n\n刪除「${g.name}」會:\n1. 刪掉整個 Drive 資料夾 BroTrip/${g.name}/\n2. 包含所有 Sheet 資料、照片、日記\n3. 所有成員都會看不到\n4. 不可復原！\n\n要繼續嗎？`)) return;
+
+    // 二次確認 + 要打字
+    const confirmText = prompt(`⚠️ 最後確認\n\n輸入「DELETE ${g.name}」確認刪除：`);
+    if (confirmText !== `DELETE ${g.name}`) {
+      this.toast('輸入不符，取消刪除');
+      return;
+    }
+
+    try {
+      this.toast('刪除中...');
+      await Groups.deleteGroup(g.groupId);
+      this.toast(`💀 已刪除「${g.name}」`);
+      setTimeout(() => location.reload(), 1000);
+    } catch (err) {
+      this.toast('刪除失敗：' + (err.message || '未知錯誤'));
+      console.error(err);
+    }
+  },
+
   // Phase 2: 顯示邀請連結 + 純邀請碼 modal (M4.3 升級：以連結為主)
   showInviteCodeModal(group) {
     const code = Groups.encodeInvite(group);
@@ -478,6 +592,24 @@ const App = {
           this.updateGroupInfo();
         });
       });
+    }
+
+    // M4.4: 管理成員 modal
+    const manageMembersBtn = document.getElementById('settings-manage-members-btn');
+    if (manageMembersBtn) {
+      manageMembersBtn.addEventListener('click', () => this.openManageMembersModal());
+    }
+
+    // M4.4: 退出此群組
+    const leaveGroupBtn = document.getElementById('settings-leave-group-btn');
+    if (leaveGroupBtn) {
+      leaveGroupBtn.addEventListener('click', () => this.handleLeaveGroup());
+    }
+
+    // M4.4: 刪除整個群組（owner only）
+    const deleteGroupBtn = document.getElementById('settings-delete-group-btn');
+    if (deleteGroupBtn) {
+      deleteGroupBtn.addEventListener('click', () => this.handleDeleteGroup());
     }
 
     // 重新命名當前群組

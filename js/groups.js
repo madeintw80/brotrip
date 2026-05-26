@@ -246,6 +246,101 @@ const Groups = {
     return group;
   },
 
+  // ===== M4.4: 退出 / 刪除 / 踢人 =====
+
+  // Member 退出群組（owner 不能用這個，要用 deleteGroup）
+  // 流程：
+  //   1. 從 Members sheet 刪自己的 row（其他成員看不到「離開的人」）
+  //   2. 從本地 Groups 移除
+  //   3. （Drive 權限要 owner 收回，這裡無法主動撤銷自己的權限）
+  // 歷史 trip / expense / diary 都保留（其他人的紀錄會引用到 email，nameOf 會 fallback 到 email prefix）
+  async leave(groupId) {
+    const group = this.list.find(g => g.groupId === groupId);
+    if (!group) throw new Error('找不到該群組');
+    if (group.role === 'owner') {
+      throw new Error('你是這個群組的擁有者，請改用「刪除群組」');
+    }
+
+    // 嘗試從 Members sheet 移除（失敗也繼續，至少本地能清掉）
+    if (group.sheetTabIds && group.sheetTabIds.Members !== undefined) {
+      try {
+        // 暫時把 active 切到要 leave 的群組（讓 API 認得 sheetId）
+        const prevActive = this.activeId;
+        this.activeId = groupId;
+        await API.deleteRow('Members', Auth.user.email);
+        this.activeId = prevActive;
+      } catch (err) {
+        console.warn('Failed to remove from Members sheet:', err);
+      }
+    }
+
+    // 從本地移除（同時 setActive 切到其他群組）
+    this.remove(groupId);
+    return true;
+  },
+
+  // Owner 踢成員出群組
+  // 流程：
+  //   1. Members sheet 刪該 email 的 row
+  //   2. Drive 撤銷該 email 的存取權限
+  //   3. 該 member 下次 reload 會 403 → M4.1 fix 自動把群組從他 localStorage 清掉
+  async kickMember(groupId, memberEmail) {
+    const group = this.list.find(g => g.groupId === groupId);
+    if (!group) throw new Error('找不到群組');
+    if (group.role !== 'owner') throw new Error('只有 owner 可以踢人');
+    if (memberEmail === Auth.user.email) {
+      throw new Error('不能踢自己（要刪整個群組請用「刪除群組」）');
+    }
+
+    // 1. 從 Members sheet 移除
+    const prevActive = this.activeId;
+    this.activeId = groupId;
+    try {
+      await API.deleteRow('Members', memberEmail);
+    } catch (err) {
+      console.warn('Failed to remove from Members sheet:', err);
+    } finally {
+      this.activeId = prevActive;
+    }
+
+    // 2. Drive 撤銷權限
+    if (group.folderId) {
+      try {
+        await API.revokeDrivePermission(group.folderId, memberEmail);
+      } catch (err) {
+        console.warn('Failed to revoke Drive permission:', err);
+        throw new Error('Drive 權限撤銷失敗：' + (err.message || '未知錯誤'));
+      }
+    }
+
+    return true;
+  },
+
+  // Owner 刪除整個群組
+  // 流程：
+  //   1. Drive 刪掉群組資料夾（連 Sheet + photos 一起刪，所有成員的 app 會 404 → 自動清 localStorage）
+  //   2. 本地 Groups 移除
+  // ⚠️ 不可復原！所有 trip / expense / diary / 照片全部消失
+  async deleteGroup(groupId) {
+    const group = this.list.find(g => g.groupId === groupId);
+    if (!group) throw new Error('找不到群組');
+    if (group.role !== 'owner') throw new Error('只有 owner 可以刪除群組');
+
+    // 1. 刪 Drive 整個資料夾
+    if (group.folderId) {
+      try {
+        await API.deleteDriveFile(group.folderId);
+      } catch (err) {
+        console.warn('Failed to delete Drive folder:', err);
+        throw new Error('Drive 資料夾刪除失敗：' + (err.message || '未知錯誤'));
+      }
+    }
+
+    // 2. 本地移除
+    this.remove(groupId);
+    return true;
+  },
+
   // ===== M2: 邀請碼編解碼 =====
   // 邀請碼 = base64(JSON({s:sheetId, f:folderId, p:photosFolderId, t:sheetTabIds, n:name, c:createdBy}))
   // 注意：邀請碼不算機密，沒 Drive 分享還是讀不到資料

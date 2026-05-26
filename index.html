@@ -18,7 +18,7 @@
       if (t) document.documentElement.dataset.theme = t;
     } catch (e) {}
   </script>
-  <link rel="stylesheet" href="styles.css?v=50">
+  <link rel="stylesheet" href="styles.css?v=51">
 </head>
 <body>
   <div id="pull-indicator" class="pull-indicator"></div>
@@ -161,6 +161,18 @@
           <button id="settings-edit-displayname-btn" class="settings-btn" type="button" style="margin-top:8px;">
             <span>👤 我在此群組的顯示名稱</span>
             <small>當前：<span id="my-display-name">-</span></small>
+          </button>
+          <button id="settings-manage-members-btn" class="settings-btn" type="button" style="margin-top:8px;">
+            <span>👥 管理成員</span>
+            <small id="manage-members-hint">看當前群組所有成員（owner 可踢人）</small>
+          </button>
+          <button id="settings-leave-group-btn" class="settings-btn" type="button" style="margin-top:8px; border-color:#f59e0b;">
+            <span style="color:#f59e0b;">🚪 退出此群組</span>
+            <small>只從你 app 移除 + Members sheet 刪你的 row（你的歷史紀錄保留給其他人看）</small>
+          </button>
+          <button id="settings-delete-group-btn" class="settings-btn" type="button" style="margin-top:8px; border-color:#ef4444;">
+            <span style="color:#ef4444;">💀 刪除整個群組</span>
+            <small>⚠️ 只有 owner 可用，會刪 Drive 資料夾 + Sheet + 照片，不可復原</small>
           </button>
         </div>
         <div class="nicknames-section">
@@ -355,6 +367,20 @@
     </div>
   </div>
 
+  <!-- Modal: 管理成員 (M4.4) -->
+  <div id="modal-manage-members" class="modal hidden">
+    <div class="modal-content">
+      <header class="modal-header">
+        <h2>👥 群組成員</h2>
+        <button class="modal-close" type="button">✕</button>
+      </header>
+      <div style="padding:8px 0;">
+        <p class="hint">當前群組：<strong id="manage-members-group-name">-</strong>。<span id="manage-members-owner-note"></span></p>
+        <div id="manage-members-list" style="margin-top:12px;"></div>
+      </div>
+    </div>
+  </div>
+
   <!-- Modal: 設定顯示名稱 (M3) -->
   <div id="modal-display-name" class="modal hidden">
     <div class="modal-content">
@@ -489,21 +515,21 @@
 
   <!-- App 程式碼（順序很重要，後面的依賴前面的）
        Phase 2: groups.js 必須在 cache.js 之前載入，cache PREFIX 依賴 Groups.active() -->
-  <script src="js/config.js?v=50"></script>
-  <script src="js/groups.js?v=50"></script>
-  <script src="js/cache.js?v=50"></script>
-  <script src="js/auth.js?v=50"></script>
-  <script src="js/api.js?v=50"></script>
-  <script src="js/trips.js?v=50"></script>
-  <script src="js/expenses.js?v=50"></script>
-  <script src="js/diaries.js?v=50"></script>
-  <script src="js/members.js?v=50"></script>
-  <script src="js/nicknames.js?v=50"></script>
-  <script src="js/comments.js?v=50"></script>
-  <script src="js/notifications.js?v=50"></script>
-  <script src="js/itineraries.js?v=50"></script>
-  <script src="js/settlements.js?v=50"></script>
-  <script src="js/app.js?v=50"></script>
+  <script src="js/config.js?v=51"></script>
+  <script src="js/groups.js?v=51"></script>
+  <script src="js/cache.js?v=51"></script>
+  <script src="js/auth.js?v=51"></script>
+  <script src="js/api.js?v=51"></script>
+  <script src="js/trips.js?v=51"></script>
+  <script src="js/expenses.js?v=51"></script>
+  <script src="js/diaries.js?v=51"></script>
+  <script src="js/members.js?v=51"></script>
+  <script src="js/nicknames.js?v=51"></script>
+  <script src="js/comments.js?v=51"></script>
+  <script src="js/notifications.js?v=51"></script>
+  <script src="js/itineraries.js?v=51"></script>
+  <script src="js/settlements.js?v=51"></script>
+  <script src="js/app.js?v=51"></script>
 
   <!-- Service Worker + auto-update（偵測新版 SW 後通知用戶 reload） -->
   <script>

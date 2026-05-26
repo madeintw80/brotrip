@@ -311,6 +311,59 @@ const API = {
     return map;
   },
 
+  // ===== M4.4: Drive 權限管理（踢人 + 刪群組用）=====
+
+  // 列出某檔案/資料夾的所有 permissions（owner / editor / viewer 等）
+  async listDrivePermissions(fileId) {
+    const token = await Auth.ensureToken();
+    const resp = await fetch(
+      `https://www.googleapis.com/drive/v3/files/${fileId}/permissions?fields=permissions(id,emailAddress,role,type,displayName)`,
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+    if (!resp.ok) {
+      const err = await resp.text();
+      throw new Error(`List permissions failed: ${resp.status} ${err.slice(0, 200)}`);
+    }
+    const data = await resp.json();
+    return data.permissions || [];
+  },
+
+  // 撤銷某 email 對檔案/資料夾的存取權（owner 踢人用）
+  // 自動找到該 email 對應的 permission ID 然後刪除
+  async revokeDrivePermission(fileId, userEmail) {
+    const perms = await this.listDrivePermissions(fileId);
+    const perm = perms.find(p => (p.emailAddress || '').toLowerCase() === userEmail.toLowerCase());
+    if (!perm) {
+      console.warn(`No permission found for ${userEmail} on ${fileId}`);
+      return false;  // 已經沒有了，視為成功
+    }
+    const token = await Auth.ensureToken();
+    const resp = await fetch(
+      `https://www.googleapis.com/drive/v3/files/${fileId}/permissions/${perm.id}`,
+      { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } }
+    );
+    if (!resp.ok) {
+      const err = await resp.text();
+      throw new Error(`Revoke permission failed: ${resp.status} ${err.slice(0, 200)}`);
+    }
+    return true;
+  },
+
+  // 刪除 Drive 檔案/資料夾（移到垃圾桶）
+  // owner 刪整個群組用
+  async deleteDriveFile(fileId) {
+    const token = await Auth.ensureToken();
+    const resp = await fetch(
+      `https://www.googleapis.com/drive/v3/files/${fileId}`,
+      { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } }
+    );
+    if (!resp.ok) {
+      const err = await resp.text();
+      throw new Error(`Delete file failed: ${resp.status} ${err.slice(0, 200)}`);
+    }
+    return true;
+  },
+
   // 改 Drive 檔案/資料夾名稱（用於重新命名群組資料夾）
   async renameDriveFile(fileId, newName) {
     const token = await Auth.ensureToken();

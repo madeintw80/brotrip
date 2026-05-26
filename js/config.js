@@ -1,7 +1,7 @@
 // BroTrip 設定檔
 // CLIENT_ID 是 public（OAuth 本來就公開），可 commit 到 GitHub
 const CONFIG = {
-  VERSION: '3.0.0-M4.3',
+  VERSION: '3.0.0-M4.4',
   CLIENT_ID: '38081255296-ojiesn8jsdlkrsa5snlue0s3tprro3rq.apps.googleusercontent.com',
   // SHEET_ID / ROOT_FOLDER_ID / PHOTOS_FOLDER_ID 留著供 Phase 1 → Phase 2 auto-migration 用
   // M4.2: 不再被任何 UI / auth 直接讀，純粹給 groups.js 啟動時 migrate 一次
