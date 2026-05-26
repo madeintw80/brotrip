@@ -65,6 +65,9 @@ const App = {
     const savedTheme = localStorage.getItem('brotrip_theme');
     if (savedTheme) document.documentElement.dataset.theme = savedTheme;
 
+    // M4.3: 偵測 invite 連結 ?invite=...（要在 Auth.init 之前，避免 reload 後 URL 已被清掉）
+    this._checkInviteFromUrl();
+
     await Auth.init();
     this.bindUI();
     this.initPullToRefresh();
@@ -105,8 +108,45 @@ const App = {
     document.getElementById('login-screen').classList.remove('hidden');
   },
 
+  // M4.3: 從 URL 偵測 ?invite=xxx，存到 localStorage 後 reload 也能用
+  _checkInviteFromUrl() {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const inviteCode = params.get('invite');
+      if (inviteCode) {
+        localStorage.setItem('brotrip_pending_invite', inviteCode);
+        // 清掉 URL 參數避免 reload 重複觸發
+        const url = new URL(window.location.href);
+        url.searchParams.delete('invite');
+        window.history.replaceState({}, '', url.toString());
+      }
+    } catch (err) {
+      console.warn('Invite URL check failed:', err);
+    }
+  },
+
   // Phase 2: 登入完成後依群組狀態分流
   async afterLogin() {
+    // M4.3: 處理 pending invite（從連結來的）— 優先級最高
+    const pendingInvite = localStorage.getItem('brotrip_pending_invite');
+    if (pendingInvite) {
+      localStorage.removeItem('brotrip_pending_invite');
+      // 先決定底層畫面（有群組 → 主畫面；無 → 無群組畫面）
+      if (Groups.active()) {
+        await this.showMainApp();
+      } else {
+        this.showNoGroupScreen();
+      }
+      // 然後彈出 join modal 預填邀請碼
+      setTimeout(() => {
+        this.openJoinGroupModal();
+        const input = document.querySelector('#join-group-form textarea[name="code"]');
+        if (input) input.value = pendingInvite;
+        this.toast('🎉 偵測到邀請連結！按「加入」即可');
+      }, 300);
+      return;
+    }
+
     // 無群組（新用戶 / TGL legacy 被刪光）→ 顯示無群組畫面
     if (!Groups.active()) {
       this.showNoGroupScreen();
@@ -189,12 +229,15 @@ const App = {
     }
   },
 
-  // Phase 2: 顯示邀請碼 modal
+  // Phase 2: 顯示邀請連結 + 純邀請碼 modal (M4.3 升級：以連結為主)
   showInviteCodeModal(group) {
     const code = Groups.encodeInvite(group);
+    const link = Groups.buildInviteLink(group);
+    const codeEl = document.getElementById('invite-code-text');
+    const linkEl = document.getElementById('invite-link-text');
+    if (codeEl) codeEl.value = code;
+    if (linkEl) linkEl.value = link;
     const modal = document.getElementById('modal-invite-code');
-    const ta = document.getElementById('invite-code-text');
-    if (ta) ta.value = code;
     if (modal) modal.classList.remove('hidden');
   },
 
@@ -460,7 +503,26 @@ const App = {
       });
     }
 
-    // 複製邀請碼按鈕
+    // 複製邀請連結（M4.3 主要按鈕）
+    const copyInviteLinkBtn = document.getElementById('copy-invite-link-btn');
+    if (copyInviteLinkBtn) {
+      copyInviteLinkBtn.addEventListener('click', () => {
+        const ta = document.getElementById('invite-link-text');
+        if (!ta) return;
+        ta.select();
+        try {
+          document.execCommand('copy');
+          this.toast('✅ 邀請連結已複製，直接貼到 LINE！');
+        } catch (err) {
+          navigator.clipboard.writeText(ta.value).then(
+            () => this.toast('✅ 邀請連結已複製，直接貼到 LINE！'),
+            () => this.toast('複製失敗，請手動選取複製')
+          );
+        }
+      });
+    }
+
+    // 複製純邀請碼（M4.3 次要按鈕，藏在 details 內）
     const copyInviteBtn = document.getElementById('copy-invite-btn');
     if (copyInviteBtn) {
       copyInviteBtn.addEventListener('click', () => {
@@ -470,7 +532,6 @@ const App = {
           document.execCommand('copy');
           this.toast('✅ 邀請碼已複製');
         } catch (err) {
-          // Modern API fallback
           navigator.clipboard.writeText(ta.value).then(
             () => this.toast('✅ 邀請碼已複製'),
             () => this.toast('複製失敗，請手動選取複製')
@@ -1587,6 +1648,8 @@ const App = {
 
     // Phase 2: 背景同步
     try {
+      // M4.3: 清掉舊的 _lastError（避免上次 session 的 stale error 留在 debug）
+      this._lastError = null;
       await this.ensureMemberRegistered();
       // M4.2: 平行載入 Trips + Members
       //   Members 一定要在 openNewTripModal 之前載入，否則新 trip 成員 checkbox 會空白
@@ -1728,6 +1791,8 @@ const App = {
 
   async refreshAll() {
     if (!Trips.current) return;
+    // M4.3: 清掉舊的 _lastError
+    this._lastError = null;
     await Promise.all([
       Members.loadAll(),
       Expenses.loadAll(), Diaries.loadAll(),

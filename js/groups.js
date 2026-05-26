@@ -250,6 +250,19 @@ const Groups = {
   // 邀請碼 = base64(JSON({s:sheetId, f:folderId, p:photosFolderId, t:sheetTabIds, n:name, c:createdBy}))
   // 注意：邀請碼不算機密，沒 Drive 分享還是讀不到資料
 
+  // ===== M4.3: 邀請連結（取代純邀請碼）=====
+  // 產一個朋友點開就能用的 URL
+  // 格式：<current origin + path>?invite=<encoded>
+  buildInviteLink(group) {
+    const code = this.encodeInvite(group);
+    if (!code) return '';
+    const url = new URL(window.location.href);
+    url.search = '';   // 清掉現有 query params
+    url.hash = '';
+    url.searchParams.set('invite', code);
+    return url.toString();
+  },
+
   encodeInvite(group) {
     if (!group) return '';
     const payload = {

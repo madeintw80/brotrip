@@ -18,7 +18,7 @@
       if (t) document.documentElement.dataset.theme = t;
     } catch (e) {}
   </script>
-  <link rel="stylesheet" href="styles.css?v=49">
+  <link rel="stylesheet" href="styles.css?v=50">
 </head>
 <body>
   <div id="pull-indicator" class="pull-indicator"></div>
@@ -156,7 +156,7 @@
           </button>
           <button id="settings-join-group-btn" class="settings-btn" type="button" style="margin-top:8px;">
             <span>📨 用邀請碼加入其他群組</span>
-            <small>你可以同時是多個群組成員（M3 dropdown 切換上線後可用）</small>
+            <small>貼邀請碼加入朋友的群組，加入後會 reload 切過去（之後會加 dropdown 直接切換）</small>
           </button>
           <button id="settings-edit-displayname-btn" class="settings-btn" type="button" style="margin-top:8px;">
             <span>👤 我在此群組的顯示名稱</span>
@@ -375,20 +375,25 @@
     </div>
   </div>
 
-  <!-- Modal: 顯示邀請碼 (M2) -->
+  <!-- Modal: 顯示邀請連結 (M4.3 升級版) -->
   <div id="modal-invite-code" class="modal hidden">
     <div class="modal-content">
       <header class="modal-header">
-        <h2>📨 邀請碼</h2>
+        <h2>📨 邀請朋友加入</h2>
         <button class="modal-close" type="button">✕</button>
       </header>
       <div style="padding:12px 0;">
-        <p>把這串邀請碼傳給朋友，他們之後可以用「📨 用邀請碼加入」進來：</p>
-        <textarea id="invite-code-text" readonly rows="4" style="width:100%; font-family:monospace; font-size:12px; padding:8px; background:var(--bg-soft); border:1px solid var(--border); border-radius:6px; resize:none; word-break:break-all;"></textarea>
+        <p>把這個<strong>連結</strong>傳給朋友（LINE / iMessage / 任何聊天 app），他們點開就會自動偵測邀請碼：</p>
+        <textarea id="invite-link-text" readonly rows="3" style="width:100%; font-family:monospace; font-size:13px; padding:10px; background:var(--bg-soft); border:1px solid var(--border); border-radius:6px; resize:none; word-break:break-all;"></textarea>
         <div class="modal-actions" style="margin-top:12px;">
-          <button type="button" class="btn-primary" id="copy-invite-btn">📋 複製邀請碼</button>
+          <button type="button" class="btn-primary" id="copy-invite-link-btn" style="flex:1;">🔗 複製邀請連結</button>
         </div>
-        <p class="hint" style="margin-top:12px;">⚠️ 朋友還需要你把 Drive 群組資料夾分享給他們（編輯權），才能真的進入群組。<br>👉 點「📂 開啟 Drive 資料夾」→ 右鍵 → 共用 → 加他們 email</p>
+        <details style="margin-top:16px; padding:8px 0; border-top:1px solid var(--border);">
+          <summary style="cursor:pointer; color:var(--text-muted); font-size:13px;">進階：純邀請碼（朋友手動貼也行）</summary>
+          <textarea id="invite-code-text" readonly rows="4" style="width:100%; margin-top:8px; font-family:monospace; font-size:11px; padding:8px; background:var(--bg-soft); border:1px solid var(--border); border-radius:6px; resize:none; word-break:break-all;"></textarea>
+          <button type="button" class="btn-secondary" id="copy-invite-btn" style="width:100%; margin-top:8px;">📋 複製純邀請碼</button>
+        </details>
+        <p class="hint" style="margin-top:12px;">📌 朋友第一次按連結會跳到登入頁，登入後會自動跳「加入群組」對話框（已預填邀請碼）<br>📌 如果他們沒有 Drive 存取權，會自動觸發 Google「要求存取權」流程，你 email 一鍵核准就好</p>
       </div>
     </div>
   </div>
@@ -484,21 +489,21 @@
 
   <!-- App 程式碼（順序很重要，後面的依賴前面的）
        Phase 2: groups.js 必須在 cache.js 之前載入，cache PREFIX 依賴 Groups.active() -->
-  <script src="js/config.js?v=49"></script>
-  <script src="js/groups.js?v=49"></script>
-  <script src="js/cache.js?v=49"></script>
-  <script src="js/auth.js?v=49"></script>
-  <script src="js/api.js?v=49"></script>
-  <script src="js/trips.js?v=49"></script>
-  <script src="js/expenses.js?v=49"></script>
-  <script src="js/diaries.js?v=49"></script>
-  <script src="js/members.js?v=49"></script>
-  <script src="js/nicknames.js?v=49"></script>
-  <script src="js/comments.js?v=49"></script>
-  <script src="js/notifications.js?v=49"></script>
-  <script src="js/itineraries.js?v=49"></script>
-  <script src="js/settlements.js?v=49"></script>
-  <script src="js/app.js?v=49"></script>
+  <script src="js/config.js?v=50"></script>
+  <script src="js/groups.js?v=50"></script>
+  <script src="js/cache.js?v=50"></script>
+  <script src="js/auth.js?v=50"></script>
+  <script src="js/api.js?v=50"></script>
+  <script src="js/trips.js?v=50"></script>
+  <script src="js/expenses.js?v=50"></script>
+  <script src="js/diaries.js?v=50"></script>
+  <script src="js/members.js?v=50"></script>
+  <script src="js/nicknames.js?v=50"></script>
+  <script src="js/comments.js?v=50"></script>
+  <script src="js/notifications.js?v=50"></script>
+  <script src="js/itineraries.js?v=50"></script>
+  <script src="js/settlements.js?v=50"></script>
+  <script src="js/app.js?v=50"></script>
 
   <!-- Service Worker + auto-update（偵測新版 SW 後通知用戶 reload） -->
   <script>
