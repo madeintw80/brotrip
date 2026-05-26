@@ -1588,7 +1588,9 @@ const App = {
     // Phase 2: 背景同步
     try {
       await this.ensureMemberRegistered();
-      await Trips.loadAll();
+      // M4.2: 平行載入 Trips + Members
+      //   Members 一定要在 openNewTripModal 之前載入，否則新 trip 成員 checkbox 會空白
+      await Promise.all([Trips.loadAll(), Members.loadAll()]);
       if (Trips.list.length === 0) {
         this.toast('還沒有任何 trip，先建一個吧');
         this.openNewTripModal();
@@ -1950,7 +1952,7 @@ const App = {
       const nick = Nicknames.get(email);
       if (nick) return nick;
     }
-    // M4: Members.getName 內建 ALLOWED_MEMBERS fallback（給 legacy TGL 用）
+    // M4.2: Members.getName 內建 Auth.user 自我 fallback（沒寫死名單了）
     const memberName = Members.getName(email);
     if (memberName) return memberName;
     if (Auth.user && email === Auth.user.email) return '我';

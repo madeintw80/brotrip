@@ -1,9 +1,10 @@
-// Members 模組 — M4: 取代 CONFIG.ALLOWED_MEMBERS 寫死的成員清單
+// Members 模組 — M4.2: 完全動態，不再 fallback 到任何寫死名單
 // 每個群組各自的 Members sheet 存：email | display_name | joined_at
-// 群組擁有者建立時自動寫入自己，新成員 join 時透過 dialog 寫入
+//   - M2 建立群組時自動寫入 owner
+//   - M3 加入時 dialog 確認 display_name 後寫入
 //
-// Backward compat: 若 Members sheet 是空的（legacy TGL 場景），
-// 自動 fallback 到 CONFIG.ALLOWED_MEMBERS，讓舊群組無痛升級
+// Fallback 邏輯：當 Members.list 為空（例如新群組剛建好還沒 loadAll），
+// 至少包含「當前用戶自己」（Auth.user），避免完全沒人可選
 
 const Members = {
   list: [],  // 當前 active group 的 Members rows（[{email, display_name, joined_at}, ...]）
@@ -29,28 +30,42 @@ const Members = {
     return this.list;
   },
 
-  // ===== 讀取方法（都含 legacy ALLOWED_MEMBERS fallback）=====
+  // ===== 讀取方法（自我 fallback：list 空時至少回當前用戶）=====
+
+  // 取得當前用戶的 "Members row 物件"（給 fallback 用）
+  _selfMember() {
+    if (typeof Auth !== 'undefined' && Auth.user) {
+      return {
+        email: Auth.user.email,
+        display_name: Auth.user.name || Auth.user.email.split('@')[0],
+        joined_at: '',
+      };
+    }
+    return null;
+  },
 
   // 用 email 找 member 物件
   getByEmail(email) {
     return this.list.find(m => m.email === email) || null;
   },
 
-  // 用 email 取 display_name；沒有就 fallback 到 ALLOWED_MEMBERS（legacy TGL）
+  // 用 email 取 display_name
+  // 1. Members sheet 有 → 用 display_name
+  // 2. 是當前用戶自己 → 用 Gmail 名（即使 sheet 沒寫）
+  // 3. 都沒有 → 回空字串（呼叫者用 email prefix fallback）
   getName(email) {
     const m = this.getByEmail(email);
     if (m && m.display_name) return m.display_name;
-    if (typeof CONFIG !== 'undefined' && CONFIG.ALLOWED_MEMBERS) {
-      const am = CONFIG.ALLOWED_MEMBERS.find(x => x.email === email);
-      if (am) return am.name;
+    if (typeof Auth !== 'undefined' && Auth.user && email === Auth.user.email) {
+      return Auth.user.name || '';
     }
     return '';
   },
 
   // 取所有 members（給設定 tab / mention 等列表 UI 用）
   // 格式：[{email, name, joined_at}]
+  // list 空時至少回當前用戶（避免「新群組第一次開沒任何成員可選」的尷尬）
   all() {
-    // 優先用 Members.list（新群組正確的成員）
     if (this.list.length > 0) {
       return this.list.map(m => ({
         email: m.email,
@@ -58,13 +73,14 @@ const Members = {
         joined_at: m.joined_at || '',
       }));
     }
-    // Fallback: legacy TGL 用 ALLOWED_MEMBERS（Members sheet 沒寫的舊群組）
-    if (typeof CONFIG !== 'undefined' && CONFIG.ALLOWED_MEMBERS) {
-      return CONFIG.ALLOWED_MEMBERS.map(m => ({
-        email: m.email,
-        name: m.name,
-        joined_at: '',
-      }));
+    // Fallback: 至少包含當前用戶自己
+    const self = this._selfMember();
+    if (self) {
+      return [{
+        email: self.email,
+        name: self.display_name,
+        joined_at: self.joined_at,
+      }];
     }
     return [];
   },
@@ -75,10 +91,13 @@ const Members = {
       x.display_name === name || x.email.split('@')[0] === name
     );
     if (m) return { email: m.email, name: m.display_name || m.email.split('@')[0] };
-    // Fallback ALLOWED_MEMBERS
-    if (typeof CONFIG !== 'undefined' && CONFIG.ALLOWED_MEMBERS) {
-      const am = CONFIG.ALLOWED_MEMBERS.find(x => x.name === name);
-      if (am) return { email: am.email, name: am.name };
+    // Self fallback
+    if (typeof Auth !== 'undefined' && Auth.user) {
+      const selfName = Auth.user.name;
+      const selfPrefix = Auth.user.email.split('@')[0];
+      if (selfName === name || selfPrefix === name) {
+        return { email: Auth.user.email, name: selfName || selfPrefix };
+      }
     }
     return null;
   },
