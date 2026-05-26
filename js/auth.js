@@ -1,7 +1,7 @@
 // Google Identity Services (GIS) OAuth 封裝
 // 用 popup mode 拿 access token，不需要 redirect URI
 // localStorage 存 access_token + user，下次開 app 1 小時內不用重登
-// v1.3.0：加白名單，限 CONFIG.ALLOWED_MEMBERS 5 人
+// v3.0.0-M4：移除白名單，任何 Google 帳號可登入（資料隔離靠 Drive ACL + 群組系統）
 
 const Auth = {
   user: null,
@@ -28,24 +28,12 @@ const Auth = {
     });
   },
 
-  // 檢查 email 是否在白名單
-  isAllowed(email) {
-    return CONFIG.ALLOWED_MEMBERS && CONFIG.ALLOWED_MEMBERS.some(m => m.email === email);
-  },
-
   restoreSession() {
     try {
       const savedUser = localStorage.getItem('brotrip_user');
       if (savedUser) {
-        const u = JSON.parse(savedUser);
-        if (this.isAllowed(u.email)) {
-          this.user = u;
-        } else {
-          // 不在白名單，清掉 session
-          localStorage.removeItem('brotrip_user');
-          localStorage.removeItem('brotrip_token');
-          return false;
-        }
+        // M4: 不再做白名單檢查，任何登入過的帳號都可恢復 session
+        this.user = JSON.parse(savedUser);
       }
       const savedToken = localStorage.getItem('brotrip_token');
       if (savedToken) {
@@ -85,15 +73,8 @@ const Auth = {
         this.saveToken();
         try {
           const userInfo = await this.fetchUserInfo();
-          // 白名單檢查
-          if (!this.isAllowed(userInfo.email)) {
-            try { google.accounts.oauth2.revoke(this.accessToken, () => {}); } catch {}
-            this.accessToken = null;
-            this.expiresAt = 0;
-            localStorage.removeItem('brotrip_token');
-            reject(new Error(`此 app 只限 5 位指定成員使用，你的 email (${userInfo.email}) 不在名單`));
-            return;
-          }
+          // M4: 不再做白名單檢查，任何 Google 帳號都可登入
+          // 資料保護靠 Drive ACL（路人登入只能看到自己 Drive）+ 群組系統
           this.user = userInfo;
           localStorage.setItem('brotrip_user', JSON.stringify(this.user));
           resolve(this.user);

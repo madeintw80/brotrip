@@ -720,8 +720,7 @@ const App = {
       if (!btn) return;
       const email = btn.dataset.email;
       const current = Nicknames.get(email);
-      const member = CONFIG.ALLOWED_MEMBERS.find(m => m.email === email);
-      const targetName = member ? member.name : email;
+      const targetName = Members.getName(email) || email;
       const newNick = prompt(`給 ${targetName} 取暱稱（清空 = 移除）：`, current);
       if (newNick === null) return;
       try {
@@ -1547,6 +1546,7 @@ const App = {
     else img.style.display = 'none';
     const hasCache = Trips.loadFromCache();
     if (hasCache && Trips.current) {
+      Members.loadFromCache();
       Nicknames.loadFromCache();
       Expenses.loadFromCache();
       Diaries.loadFromCache();
@@ -1570,6 +1570,7 @@ const App = {
     // Phase 1: cache 瞬間渲染
     const hasCache = Trips.loadFromCache();
     if (hasCache && Trips.current) {
+      Members.loadFromCache();
       Nicknames.loadFromCache();
       Expenses.loadFromCache();
       Diaries.loadFromCache();
@@ -1701,6 +1702,7 @@ const App = {
   async refreshAll() {
     if (!Trips.current) return;
     await Promise.all([
+      Members.loadAll(),
       Expenses.loadAll(), Diaries.loadAll(),
       Nicknames.loadAll(), Comments.loadAll(),
       Notifications.loadAll(),
@@ -1923,10 +1925,9 @@ const App = {
       const nick = Nicknames.get(email);
       if (nick) return nick;
     }
-    if (CONFIG.ALLOWED_MEMBERS) {
-      const m = CONFIG.ALLOWED_MEMBERS.find(x => x.email === email);
-      if (m) return m.name;
-    }
+    // M4: Members.getName 內建 ALLOWED_MEMBERS fallback（給 legacy TGL 用）
+    const memberName = Members.getName(email);
+    if (memberName) return memberName;
     if (Auth.user && email === Auth.user.email) return '我';
     return email.split('@')[0];
   },
@@ -2138,7 +2139,7 @@ const App = {
   renderNicknamesUI() {
     const el = document.getElementById('nicknames-list');
     if (!el || typeof Nicknames === 'undefined') return;
-    el.innerHTML = CONFIG.ALLOWED_MEMBERS.map((m) => {
+    el.innerHTML = Members.all().map((m) => {
       const entry = Nicknames.getEntry(m.email);
       const nick = entry ? entry.nickname : '';
       const byInfo = (entry && entry.updated_by && entry.updated_by !== m.email)
@@ -2165,7 +2166,7 @@ const App = {
     const tokens = content.match(/@([^\s@,。，！？!?]+)/g) || [];
     tokens.forEach(token => {
       const name = token.slice(1);
-      const m = CONFIG.ALLOWED_MEMBERS.find(x => x.name === name);
+      const m = Members.findByName(name);
       if (m) { emails.add(m.email); return; }
       if (typeof Nicknames !== 'undefined') {
         for (const email in Nicknames.map) {
@@ -2184,7 +2185,7 @@ const App = {
     return escaped.replace(/@([^\s@,。，！？!?]+)/g, (m, name) => {
       // 先找出對應 email
       let email = null;
-      const member = CONFIG.ALLOWED_MEMBERS.find(x => x.name === name);
+      const member = Members.findByName(name);
       if (member) email = member.email;
       if (!email && typeof Nicknames !== 'undefined') {
         for (const e in Nicknames.map) {
@@ -2192,7 +2193,7 @@ const App = {
         }
       }
       if (email) {
-        // 顯示用 nameOf：暱稱 > ALLOWED_MEMBERS 名字
+        // 顯示用 nameOf：暱稱 > Members.display_name > Gmail 名
         const display = this.nameOf(email);
         return `<span class="mention">@${this.escapeHtml(display)}</span>`;
       }
@@ -2230,10 +2231,10 @@ const App = {
     if (!dropdown) return;
 
     const lowerQ = (query || '').toLowerCase();
-    const matches = CONFIG.ALLOWED_MEMBERS.filter(m => {
+    const matches = Members.all().filter(m => {
       if (!lowerQ) return true;
       const display = this.nameOf(m.email).toLowerCase();
-      return display.includes(lowerQ) || m.name.toLowerCase().includes(lowerQ);
+      return display.includes(lowerQ) || (m.name || '').toLowerCase().includes(lowerQ);
     });
     if (matches.length === 0) { this.closeMentionDropdown(); return; }
 
@@ -2618,7 +2619,7 @@ const App = {
   renderTripMemberCheckboxes(existingMembers) {
     const el = document.getElementById('new-trip-members');
     if (!el) return;
-    el.innerHTML = CONFIG.ALLOWED_MEMBERS.map((m, i) => {
+    el.innerHTML = Members.all().map((m, i) => {
       const checked = (existingMembers.length === 0 || existingMembers.includes(m.email)) ? 'checked' : '';
       return `
         <div class="member-check-row">
