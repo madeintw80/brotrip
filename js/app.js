@@ -147,6 +147,19 @@ const App = {
       return;
     }
 
+    // M4.5: 如果本地沒群組，先掃 Drive 看有沒有 owner 自己的群組（跨裝置同步）
+    if (Groups.list.length === 0 && Auth.user) {
+      try {
+        this.toast('偵測你的群組中...');
+        const detected = await Groups.autoDetectOwnedGroups();
+        if (detected.length > 0) {
+          this.toast(`✨ 偵測到 ${detected.length} 個你的群組`);
+        }
+      } catch (err) {
+        console.warn('Auto-detect failed:', err);
+      }
+    }
+
     // 無群組（新用戶 / TGL legacy 被刪光）→ 顯示無群組畫面
     if (!Groups.active()) {
       this.showNoGroupScreen();
@@ -1290,6 +1303,14 @@ const App = {
   },
 
   async softRefresh(indicator) {
+    // M4.5: 沒群組時 pull-to-refresh 直接顯示提示，不要去打 Sheets API（會炸）
+    if (!Groups.active()) {
+      if (indicator) {
+        indicator.textContent = '請先建立或加入群組';
+        setTimeout(() => indicator.classList.remove('show'), 1500);
+      }
+      return;
+    }
     try {
       if (!Trips.current) await Trips.loadAll();
       else await this.refreshAll();

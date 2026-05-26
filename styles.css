@@ -75,7 +75,7 @@ button {
 
 .hidden { display: none !important; }
 
-#login-screen, #loading {
+#login-screen, #loading, #no-group-screen {
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -92,7 +92,9 @@ button {
   letter-spacing: -1px;
 }
 
-#login-screen .subtitle, #loading .subtitle, #login-screen .hint {
+#login-screen .subtitle, #loading .subtitle, #login-screen .hint,
+#no-group-screen .subtitle, #no-group-screen .hint, #no-group-screen .no-group-text,
+#no-group-screen a {
   color: rgba(255,255,255,0.9);
 }
 
@@ -1692,7 +1694,7 @@ summary {
   text-align: center;
   margin: 16px 24px;
   line-height: 1.6;
-  color: rgba(255, 255, 255, 0.85);
+  /* M4.5: 不再寫死白色，靠 #no-group-screen 的 color: white 繼承 */
 }
 #no-group-screen .btn-primary,
 #no-group-screen .btn-secondary {

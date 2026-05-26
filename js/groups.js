@@ -246,6 +246,57 @@ const Groups = {
     return group;
   },
 
+  // ===== M4.5: 從 Drive 自動偵測 owner 的群組（跨裝置同步）=====
+  // 流程：
+  //   1. 找 Drive 根目錄的 BroTrip/ 資料夾
+  //   2. 列出所有子資料夾 = 候選群組
+  //   3. 每個子資料夾找 BroTrip-Data Sheet + photos/
+  //   4. 有齊全 → 視為群組，加進 Groups.list（role = owner）
+  // 回傳：detected groups array
+  async autoDetectOwnedGroups() {
+    const broTripFolder = await API.findFolderByName('BroTrip', 'root');
+    if (!broTripFolder) return [];
+
+    const subFolders = await API.listSubFolders(broTripFolder.id);
+    if (subFolders.length === 0) return [];
+
+    const detected = [];
+    for (const folder of subFolders) {
+      // 已經在 list 裡？跳過（避免重複）
+      if (this.list.find(g => g.folderId === folder.id)) continue;
+
+      try {
+        const sheet = await API.findFileByName('BroTrip-Data', folder.id);
+        if (!sheet) continue;  // 不是 BroTrip 群組資料夾
+
+        const photosFolder = await API.findFolderByName('photos', folder.id);
+        const sheetTabIds = await API.getSpreadsheetTabIds(sheet.id);
+
+        const newGroup = {
+          groupId: 'detected_' + folder.id,
+          name: folder.name,
+          sheetId: sheet.id,
+          folderId: folder.id,
+          photosFolderId: photosFolder ? photosFolder.id : '',
+          sheetTabIds,
+          role: 'owner',
+          detectedAt: new Date().toISOString(),
+        };
+        this.add(newGroup);
+        detected.push(newGroup);
+      } catch (err) {
+        console.warn(`Auto-detect failed for folder "${folder.name}":`, err);
+      }
+    }
+
+    // 如果有新偵測到 + 還沒有 active group → 設第一個為 active
+    if (detected.length > 0 && !this.activeId) {
+      this.setActive(detected[0].groupId);
+    }
+
+    return detected;
+  },
+
   // ===== M4.4: 退出 / 刪除 / 踢人 =====
 
   // Member 退出群組（owner 不能用這個，要用 deleteGroup）

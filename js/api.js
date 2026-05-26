@@ -311,6 +311,64 @@ const API = {
     return map;
   },
 
+  // ===== M4.5: Drive 掃描（auto-detect owned groups）=====
+
+  // 找指定 parent 下的同名資料夾（回第一個，沒有回 null）
+  async findFolderByName(name, parentId = 'root') {
+    const token = await Auth.ensureToken();
+    const q = `name='${name.replace(/'/g, "\\'")}' and '${parentId}' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false`;
+    const resp = await fetch(
+      `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(q)}&fields=files(id,name)`,
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+    if (!resp.ok) return null;
+    const data = await resp.json();
+    return (data.files && data.files.length > 0) ? data.files[0] : null;
+  },
+
+  // 列出某資料夾下的所有子資料夾
+  async listSubFolders(parentId) {
+    const token = await Auth.ensureToken();
+    const q = `'${parentId}' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false`;
+    const resp = await fetch(
+      `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(q)}&fields=files(id,name)&pageSize=100`,
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+    if (!resp.ok) return [];
+    const data = await resp.json();
+    return data.files || [];
+  },
+
+  // 找指定 parent 下的同名檔案（用於找 BroTrip-Data Sheet）
+  async findFileByName(name, parentId) {
+    const token = await Auth.ensureToken();
+    const q = `name='${name.replace(/'/g, "\\'")}' and '${parentId}' in parents and trashed=false`;
+    const resp = await fetch(
+      `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(q)}&fields=files(id,name,mimeType)`,
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+    if (!resp.ok) return null;
+    const data = await resp.json();
+    return (data.files && data.files.length > 0) ? data.files[0] : null;
+  },
+
+  // 取 spreadsheet 的所有 tab IDs（建群組偵測用）
+  async getSpreadsheetTabIds(spreadsheetId) {
+    const token = await Auth.ensureToken();
+    const resp = await fetch(
+      `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}?fields=sheets.properties(sheetId,title)`,
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+    if (!resp.ok) return {};
+    const data = await resp.json();
+    if (!data.sheets) return {};
+    const map = {};
+    data.sheets.forEach(s => {
+      map[s.properties.title] = s.properties.sheetId;
+    });
+    return map;
+  },
+
   // ===== M4.4: Drive 權限管理（踢人 + 刪群組用）=====
 
   // 列出某檔案/資料夾的所有 permissions（owner / editor / viewer 等）
