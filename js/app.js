@@ -292,12 +292,21 @@ const App = {
         const email = btn.dataset.email;
         const member = all.find(m => m.email === email);
         if (!member) return;
-        if (!confirm(`確定要把「${member.name}」(${email}) 踢出群組嗎？\n\n會:\n1. 從 Members 名單移除\n2. 撤銷他/她的 Drive 存取權限\n\n他們的歷史紀錄（trip/支出/日記）會保留`)) return;
+        if (!confirm(`確定要把「${member.name}」(${email}) 踢出群組嗎？\n\n會:\n1. 從 Members 名單移除\n2. 撤銷 Drive 權限（資料夾 + Sheet + photos 全部）\n\n他們的歷史紀錄（trip/支出/日記）會保留`)) return;
         try {
           btn.disabled = true;
           btn.textContent = '處理中...';
-          await Groups.kickMember(g.groupId, email);
-          this.toast(`✅ 已踢出「${member.name}」`);
+          const result = await Groups.kickMember(g.groupId, email);
+          // M4.6: 詳細回報 Drive 撤銷結果
+          const failedDrive = result.driveResults.filter(r => !r.ok);
+          if (failedDrive.length > 0) {
+            this.toast(`⚠️ 成員名單已移除，但 ${failedDrive.length} 個 Drive 權限撤銷失敗`, 5000);
+            console.warn('Drive revoke failures:', failedDrive);
+            alert(`部分 Drive 權限撤銷失敗：\n${failedDrive.map(f => `- ${f.name}：${f.err}`).join('\n')}\n\n請開 Drive 手動移除 ${member.name} 的權限。\n或聯絡管理員 (你自己)。`);
+          } else {
+            const revoked = result.driveResults.filter(r => r.found).length;
+            this.toast(`✅ 已踢出「${member.name}」（Drive 撤銷 ${revoked} 個權限）`);
+          }
           // Reload modal
           await this.openManageMembersModal();
         } catch (err) {
@@ -316,13 +325,20 @@ const App = {
       this.toast('你是 owner，請改用「💀 刪除整個群組」');
       return;
     }
-    if (!confirm(`確定退出「${g.name}」?\n\n會:\n1. 從你的 app 移除這個群組\n2. 從群組 Members 名單刪掉你的 row\n\n你之前的紀錄會留給其他人看（只是名字顯示成 email）`)) return;
+    if (!confirm(`確定退出「${g.name}」?\n\n會:\n1. 從群組 Members 名單刪掉你的 row\n2. 撤銷你自己的 Drive 存取權限（不再看得到群組資料夾）\n3. 從你的 app 移除這個群組\n\n你之前的紀錄會留給其他人看（只是名字顯示成 email）`)) return;
     try {
       this.toast('退出中...');
-      await Groups.leave(g.groupId);
-      this.toast(`✅ 已退出「${g.name}」`);
-      // Reload 看當前狀態（其他群組存在 → 切過去；沒有 → no-group screen）
-      setTimeout(() => location.reload(), 800);
+      const result = await Groups.leave(g.groupId);
+      const failedDrive = result.driveResults.filter(r => !r.ok);
+      if (failedDrive.length > 0) {
+        // 退出成功但 Drive 撤銷失敗 — 提示用戶
+        this.toast(`⚠️ 已退出，但 Drive 還看得到資料夾，請手動「移除我」`, 5000);
+        console.warn('Drive self-revoke failures:', failedDrive);
+        alert(`已退出，但部分 Drive 權限撤銷失敗：\n${failedDrive.map(f => `- ${f.name}：${f.err}`).join('\n')}\n\n你可以：\n1. 開 Drive 對 BroTrip/${g.name}/ 點「共用 → 移除我」\n2. 或請 owner 把你從共用名單踢掉`);
+      } else {
+        this.toast(`✅ 已退出「${g.name}」（Drive 權限也撤銷了）`);
+      }
+      setTimeout(() => location.reload(), 1200);
     } catch (err) {
       this.toast('退出失敗：' + (err.message || '未知錯誤'));
       console.error(err);

@@ -302,9 +302,10 @@ const Groups = {
   // Member 退出群組（owner 不能用這個，要用 deleteGroup）
   // 流程：
   //   1. 從 Members sheet 刪自己的 row（其他成員看不到「離開的人」）
-  //   2. 從本地 Groups 移除
-  //   3. （Drive 權限要 owner 收回，這裡無法主動撤銷自己的權限）
-  // 歷史 trip / expense / diary 都保留（其他人的紀錄會引用到 email，nameOf 會 fallback 到 email prefix）
+  //   2. M4.6: 自我撤銷 Drive 權限（folder + sheet + photos 都試，Drive 允許自我移除）
+  //   3. 從本地 Groups 移除
+  // 歷史 trip / expense / diary 都保留
+  // 回傳 { sheetOk, driveResults: [{name, ok, err?}] }
   async leave(groupId) {
     const group = this.list.find(g => g.groupId === groupId);
     if (!group) throw new Error('找不到該群組');
@@ -312,29 +313,57 @@ const Groups = {
       throw new Error('你是這個群組的擁有者，請改用「刪除群組」');
     }
 
-    // 嘗試從 Members sheet 移除（失敗也繼續，至少本地能清掉）
+    // 1. 從 Members sheet 移除
+    let sheetOk = false;
     if (group.sheetTabIds && group.sheetTabIds.Members !== undefined) {
+      const prevActive = this.activeId;
+      this.activeId = groupId;
       try {
-        // 暫時把 active 切到要 leave 的群組（讓 API 認得 sheetId）
-        const prevActive = this.activeId;
-        this.activeId = groupId;
         await API.deleteRow('Members', Auth.user.email);
-        this.activeId = prevActive;
+        sheetOk = true;
       } catch (err) {
         console.warn('Failed to remove from Members sheet:', err);
+      } finally {
+        this.activeId = prevActive;
       }
     }
 
-    // 從本地移除（同時 setActive 切到其他群組）
+    // 2. M4.6: 自我撤銷 Drive 權限（3 個 target 都試一遍）
+    const driveResults = await this._revokeUserFromGroupFiles(group, Auth.user.email);
+
+    // 3. 本地移除
     this.remove(groupId);
-    return true;
+    return { sheetOk, driveResults };
+  },
+
+  // 內部方法：對某 group 的 folder + sheet + photos 全部撤銷某 email 的權限
+  async _revokeUserFromGroupFiles(group, userEmail) {
+    const targets = [
+      { id: group.folderId, name: '群組資料夾' },
+      { id: group.sheetId, name: 'Sheet' },
+      { id: group.photosFolderId, name: 'photos 資料夾' },
+    ].filter(t => t.id);
+
+    const results = [];
+    for (const t of targets) {
+      try {
+        const found = await API.revokeDrivePermission(t.id, userEmail);
+        results.push({ name: t.name, ok: true, found });
+      } catch (err) {
+        console.warn(`Failed to revoke ${userEmail} from ${t.name}:`, err);
+        results.push({ name: t.name, ok: false, err: err.message || String(err) });
+      }
+    }
+    return results;
   },
 
   // Owner 踢成員出群組
   // 流程：
   //   1. Members sheet 刪該 email 的 row
-  //   2. Drive 撤銷該 email 的存取權限
+  //   2. M4.6: Drive 撤銷該 email 的權限 (folder + sheet + photos folder 都試)
+  //      因為如果之前有手動單獨分享 Sheet 給某人，光撤 folder 不夠
   //   3. 該 member 下次 reload 會 403 → M4.1 fix 自動把群組從他 localStorage 清掉
+  // 回傳 { sheetOk, driveResults: [{name, ok, err?}] }
   async kickMember(groupId, memberEmail) {
     const group = this.list.find(g => g.groupId === groupId);
     if (!group) throw new Error('找不到群組');
@@ -344,27 +373,22 @@ const Groups = {
     }
 
     // 1. 從 Members sheet 移除
+    let sheetOk = false;
     const prevActive = this.activeId;
     this.activeId = groupId;
     try {
       await API.deleteRow('Members', memberEmail);
+      sheetOk = true;
     } catch (err) {
       console.warn('Failed to remove from Members sheet:', err);
     } finally {
       this.activeId = prevActive;
     }
 
-    // 2. Drive 撤銷權限
-    if (group.folderId) {
-      try {
-        await API.revokeDrivePermission(group.folderId, memberEmail);
-      } catch (err) {
-        console.warn('Failed to revoke Drive permission:', err);
-        throw new Error('Drive 權限撤銷失敗：' + (err.message || '未知錯誤'));
-      }
-    }
+    // 2. M4.6: Drive 撤銷權限（folder + sheet + photos 三層）
+    const driveResults = await this._revokeUserFromGroupFiles(group, memberEmail);
 
-    return true;
+    return { sheetOk, driveResults };
   },
 
   // Owner 刪除整個群組
