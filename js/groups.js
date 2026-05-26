@@ -28,7 +28,9 @@ const Groups = {
 
     // 🔄 自動 migration：第一次跑 Phase 2 且有 CONFIG.SHEET_ID
     //   → 把現有資料夾包成 TGL 群組（5 男好友無感升級）
-    if (this.list.length === 0 && typeof CONFIG !== 'undefined' && CONFIG.SHEET_ID) {
+    // M4: 加 migration_done 旗標，避免「用戶手動刪除 legacy 群組後 → reload 又被加回來」的 loop
+    const migrationDone = localStorage.getItem('brotrip_legacy_migrated');
+    if (this.list.length === 0 && !migrationDone && typeof CONFIG !== 'undefined' && CONFIG.SHEET_ID) {
       this.add({
         groupId: 'tgl_legacy',
         name: 'TGL',
@@ -39,6 +41,7 @@ const Groups = {
         role: 'member',
       });
       this.setActive('tgl_legacy');
+      localStorage.setItem('brotrip_legacy_migrated', '1');
       console.log('[Groups] Auto-migrated Phase 1 → Phase 2: created TGL group');
     }
   },

@@ -121,6 +121,9 @@ const App = {
     document.getElementById('login-screen').classList.add('hidden');
     document.getElementById('app').classList.add('hidden');
     document.getElementById('no-group-screen').classList.remove('hidden');
+    // 清掉殘留的 error banner（避免上次 404 提示停在最上面）
+    const banner = document.getElementById('global-error-banner');
+    if (banner) banner.classList.add('hidden');
   },
 
   // Phase 2: 打開建立群組 modal
@@ -1596,11 +1599,33 @@ const App = {
       console.error('showMainApp Phase 2 failed:', err);
       const msg = err.message || '未知錯誤';
       this._lastError = msg;
-      if (msg.includes('403') || msg.includes('Forbidden') || msg.includes('permission')) {
-        this.showErrorBanner(`⚠️ 你的帳號（${Auth.user ? Auth.user.email : '?'}）沒有 Sheet 讀取權限。請聯絡管理員 madeintw80@gmail.com`);
-      } else if (msg.includes('404')) {
-        this.showErrorBanner('⚠️ 找不到 BroTrip-Data Sheet。請聯絡管理員');
-      } else if (msg.includes('401') || msg.includes('Unauthorized')) {
+
+      // M4 fix: 404 (sheet 不存在) / 403 (沒權限) 都代表「群組壞掉了」
+      //   → 把壞掉的群組移除，回到無群組畫面讓用戶重建/重加入
+      const isBrokenGroup =
+        msg.includes('404') ||
+        msg.includes('not found') ||
+        msg.includes('Requested entity was not found') ||
+        msg.includes('403') ||
+        msg.includes('Forbidden') ||
+        msg.includes('permission');
+
+      if (isBrokenGroup && Groups.active()) {
+        const broken = Groups.active();
+        console.warn(`Group "${broken.name}" inaccessible, removing from list`);
+        Groups.remove(broken.groupId);
+        // 切到下一個群組（如果還有的話）reload；否則進無群組畫面
+        if (Groups.list.length > 0) {
+          this.toast(`群組「${broken.name}」無法存取（Drive 被刪 或 無權限），切到下一個群組`);
+          setTimeout(() => location.reload(), 1500);
+        } else {
+          this.toast(`群組「${broken.name}」無法存取，請重新建立或加入新群組`);
+          this.showNoGroupScreen();
+        }
+        return;
+      }
+
+      if (msg.includes('401') || msg.includes('Unauthorized')) {
         // ⭐ v2.0.2 不再叫用戶重置，改用輕量續登 banner
         this.showReauthBanner();
       } else {
