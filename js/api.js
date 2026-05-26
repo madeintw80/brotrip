@@ -6,7 +6,10 @@ const API = {
 
   async sheetsRequest(path, options = {}) {
     const token = await Auth.ensureToken();
-    const url = `https://sheets.googleapis.com/v4/spreadsheets/${CONFIG.SHEET_ID}${path}`;
+    // Phase 2: sheet ID 從當前 active group 取（不再從 CONFIG）
+    const group = Groups.active();
+    if (!group) throw new Error('No active group — please join or create one');
+    const url = `https://sheets.googleapis.com/v4/spreadsheets/${group.sheetId}${path}`;
     const resp = await fetch(url, {
       ...options,
       headers: {

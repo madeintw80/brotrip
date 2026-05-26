@@ -377,10 +377,13 @@ const App = {
     // Settings
     document.getElementById('check-update-btn').addEventListener('click', () => this.checkUpdate());
     document.getElementById('open-sheet-btn').addEventListener('click', () => {
-      window.open(`https://docs.google.com/spreadsheets/d/${CONFIG.SHEET_ID}/`, '_blank');
+      // Phase 2: 從 active group 取 sheet/folder ID
+      const g = Groups.active();
+      if (g) window.open(`https://docs.google.com/spreadsheets/d/${g.sheetId}/`, '_blank');
     });
     document.getElementById('open-drive-btn').addEventListener('click', () => {
-      window.open(`https://drive.google.com/drive/folders/${CONFIG.ROOT_FOLDER_ID}`, '_blank');
+      const g = Groups.active();
+      if (g) window.open(`https://drive.google.com/drive/folders/${g.folderId}`, '_blank');
     });
 
     // Trip ID auto slug
@@ -1117,7 +1120,8 @@ const App = {
     // 同步開 placeholder tab 避免 popup blocker（await 後再 window.open 會被擋）
     const w = window.open('about:blank', '_blank');
     try {
-      const tripFolderId = await API.ensureFolder(d.trip_id, CONFIG.PHOTOS_FOLDER_ID);
+      // Phase 2: photos folder 從 active group 取
+      const tripFolderId = await API.ensureFolder(d.trip_id, Groups.active().photosFolderId);
       const url = `https://drive.google.com/drive/folders/${tripFolderId}`;
       if (w) w.location = url;
       else window.location.href = url; // 用戶擋彈出視窗 → 直接跳當前頁

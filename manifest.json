@@ -1,7 +1,7 @@
 {
   "name": "BroTrip",
   "short_name": "BroTrip",
-  "description": "五人出遊紀錄",
+  "description": "和好友的出遊紀錄",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",

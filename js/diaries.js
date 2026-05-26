@@ -47,7 +47,8 @@ const Diaries = {
     const photoIds = [];
     let driveFolderUrl = '';
     if (data.photos && data.photos.length > 0) {
-      const tripFolderId = await API.ensureFolder(Trips.current.trip_id, CONFIG.PHOTOS_FOLDER_ID);
+      // Phase 2: photos folder 從 active group 取
+      const tripFolderId = await API.ensureFolder(Trips.current.trip_id, Groups.active().photosFolderId);
       const diaryFolderName = `${data.date}-${id}`;
       const diaryFolderId = await API.ensureFolder(diaryFolderName, tripFolderId);
       driveFolderUrl = `https://drive.google.com/drive/folders/${diaryFolderId}`;

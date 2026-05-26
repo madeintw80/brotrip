@@ -4,12 +4,19 @@
 // 啟動時清舊版本 cache（CACHE.VERSION 改變時自動清除）
 
 const Cache = {
-  VERSION: '3',  // 每次 sheet schema 改變要 bump（清除舊 cache）
+  VERSION: '4',  // v4: Phase 2 per-group key（每個群組獨立 cache 避免切換時混淆）
 
-  get PREFIX() { return `brotrip_cache_v${this.VERSION}_`; },
+  // PREFIX 加入 groupId 隔離，避免切群組看到別組資料
+  // 例：brotrip_cache_v4_tgl_legacy_nicknames
+  get PREFIX() {
+    const gid = (typeof Groups !== 'undefined' && Groups.active())
+      ? Groups.active().groupId
+      : 'nogroup';
+    return `brotrip_cache_v${this.VERSION}_${gid}_`;
+  },
 
   init() {
-    // 清掉舊版本 cache（其他版本的 prefix）
+    // 清掉舊版本 cache（不同版本 + Phase 1 沒 groupId 的 cache）
     try {
       Object.keys(localStorage).forEach(k => {
         if (k.startsWith('brotrip_cache_') && !k.startsWith(this.PREFIX)) {
