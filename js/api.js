@@ -369,6 +369,36 @@ const API = {
     return map;
   },
 
+  // v3.1.0: 搜尋「分享給我」的同名檔案（用於 detect 被邀請加入的群組）
+  // 朋友建群組時 share Drive folder 給我 → 我 Drive 的「Shared with me」會出現該 folder 內的檔案
+  // 我們搜全 sharedWithMe 中 name='BroTrip-Data' 的 Sheet，反查 parent folder 就能還原群組
+  async searchSharedWithMeFiles(name) {
+    const token = await Auth.ensureToken();
+    const q = `sharedWithMe = true and name = '${name.replace(/'/g, "\\'")}' and trashed = false`;
+    const resp = await fetch(
+      `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(q)}&fields=files(id,name,parents,mimeType,owners)&pageSize=100`,
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+    if (!resp.ok) {
+      console.warn(`[Drive] searchSharedWithMeFiles failed: ${resp.status}`);
+      return [];
+    }
+    const data = await resp.json();
+    return data.files || [];
+  },
+
+  // v3.1.0: 取單一檔案/資料夾的 metadata（含 parents 和 name）
+  // 用於 sharedWithMe 偵測時反查 group folder 名稱
+  async getFileMetadata(fileId) {
+    const token = await Auth.ensureToken();
+    const resp = await fetch(
+      `https://www.googleapis.com/drive/v3/files/${fileId}?fields=id,name,parents,mimeType`,
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+    if (!resp.ok) return null;
+    return await resp.json();
+  },
+
   // ===== M4.4: Drive 權限管理（踢人 + 刪群組用）=====
 
   // 列出某檔案/資料夾的所有 permissions（owner / editor / viewer 等）

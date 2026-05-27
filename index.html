@@ -35,6 +35,11 @@
     <p class="subtitle">和好友一起出遊、一起記錄 ✈️</p>
     <button id="login-btn" class="btn-primary">用 Google 登入</button>
     <p class="hint">用 Google 帳號登入開始</p>
+    <!-- v3.1.0: PWA standalone 模式才顯示，由 app.js _updatePwaLoginHint() 控制 -->
+    <div id="pwa-first-login-hint" class="hidden" style="margin-top:20px; padding:12px 16px; background:rgba(255,255,255,0.12); border-radius:10px; max-width:320px; text-align:left; font-size:13px; line-height:1.5;">
+      <div style="font-weight:600; margin-bottom:4px;">📱 PWA 第一次開啟需要重登</div>
+      <div style="opacity:0.92;">瀏覽器版和 PWA 是兩個獨立空間，登入後我會自動從 Google Drive 找回你所有群組（包含被邀請加入的），不用再貼邀請碼。</div>
+    </div>
   </div>
 
   <!-- 無群組畫面（登入後沒有加入任何群組時顯示）-->

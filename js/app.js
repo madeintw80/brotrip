@@ -106,6 +106,29 @@ const App = {
 
     document.getElementById('loading').classList.add('hidden');
     document.getElementById('login-screen').classList.remove('hidden');
+    // v3.1.0: PWA 模式下顯示「第一次需要重登」hint，告知會自動找回群組
+    this._updatePwaLoginHint();
+  },
+
+  // v3.1.0: 偵測是否以 PWA standalone 模式執行
+  _isPWA() {
+    try {
+      if (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) return true;
+      // iOS Safari 的 PWA 特例（navigator.standalone）
+      if (window.navigator && window.navigator.standalone === true) return true;
+    } catch {}
+    return false;
+  },
+
+  // v3.1.0: PWA 模式下 show login screen 的 hint（解釋 PWA storage 獨立、會自動找回群組）
+  _updatePwaLoginHint() {
+    const hint = document.getElementById('pwa-first-login-hint');
+    if (!hint) return;
+    if (this._isPWA()) {
+      hint.classList.remove('hidden');
+    } else {
+      hint.classList.add('hidden');
+    }
   },
 
   // M4.3: 從 URL 偵測 ?invite=xxx，存到 localStorage 後 reload 也能用
@@ -147,13 +170,23 @@ const App = {
       return;
     }
 
-    // M4.5: 如果本地沒群組，先掃 Drive 看有沒有 owner 自己的群組（跨裝置同步）
+    // M4.5 + v3.1.0: 本地沒群組 → 掃 Drive 找 (a) 自己建的 + (b) 被邀請加入的
+    // 這是 PWA 第一次開啟 / 換裝置登入時的「自動找回群組」入口，
+    // 包含 sharedWithMe 偵測 → 朋友從瀏覽器加入後，PWA 不用再貼一次邀請碼
     if (Groups.list.length === 0 && Auth.user) {
       try {
-        this.toast('偵測你的群組中...');
-        const detected = await Groups.autoDetectOwnedGroups();
+        this.toast('🔍 從 Google Drive 找你的群組...');
+        const detected = await Groups.autoDetectGroups();
         if (detected.length > 0) {
-          this.toast(`✨ 偵測到 ${detected.length} 個你的群組`);
+          const ownerCount = detected.filter(g => g.role === 'owner').length;
+          const memberCount = detected.filter(g => g.role === 'member').length;
+          let msg = `✨ 找回 ${detected.length} 個群組`;
+          if (ownerCount && memberCount) {
+            msg += `（你建的 ${ownerCount}、被邀請 ${memberCount}）`;
+          } else if (memberCount) {
+            msg += '（被邀請加入的）';
+          }
+          this.toast(msg);
         }
       } catch (err) {
         console.warn('Auto-detect failed:', err);
@@ -2109,8 +2142,13 @@ const App = {
     banner.id = 'reauth-banner';
     banner.className = 'reauth-banner';
     const name = Auth.user ? (Auth.user.name || Auth.user.email.split('@')[0]) : '你';
+    // v3.1.0: 加一句安心提示 — PWA 第一次登入或 session 過期時不會丟失群組
+    const isPwa = this._isPWA && this._isPWA();
+    const extraHint = isPwa
+      ? '<div style="font-size:12px; opacity:0.9; margin-top:4px;">續登後會自動同步你所有群組（含被邀請的）</div>'
+      : '';
     banner.innerHTML = `
-      <div>👋 歡迎回來 <strong>${this.escapeHtml(name)}</strong>，session 過期了，續登才能存取最新資料</div>
+      <div>👋 歡迎回來 <strong>${this.escapeHtml(name)}</strong>，session 過期了，續登才能存取最新資料${extraHint}</div>
       <button type="button" id="reauth-btn">續登</button>
     `;
     document.body.insertBefore(banner, document.body.firstChild);

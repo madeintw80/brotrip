@@ -266,14 +266,54 @@ const Groups = {
     return group;
   },
 
-  // ===== M4.5: 從 Drive 自動偵測 owner 的群組（跨裝置同步）=====
-  // 流程：
-  //   1. 找 Drive 根目錄的 BroTrip/ 資料夾
-  //   2. 列出所有子資料夾 = 候選群組
-  //   3. 每個子資料夾找 BroTrip-Data Sheet + photos/
-  //   4. 有齊全 → 視為群組，加進 Groups.list（role = owner）
-  // 回傳：detected groups array
+  // ===== M4.5 + v3.1.0: 從 Drive 自動偵測群組（跨裝置/跨 PWA 同步）=====
+  //
+  // 兩種來源都會掃：
+  //   (A) Owner 群組：自己 Drive 根目錄 BroTrip/<group>/ 下的群組
+  //   (B) Shared 群組（v3.1.0 新增）：被朋友邀請加入、share 給我的群組
+  //                                  → 修復「PWA 開要重新加入群組」的痛點
+  //
+  // 為什麼這很重要：
+  //   - 朋友在瀏覽器版貼邀請碼加入 → 群組存在「瀏覽器」的 localStorage
+  //   - 改用 PWA 開（iOS / Android 部分情境）→ 是另一個 storage sandbox → 看不到群組
+  //   - 但「BroTrip-Data Sheet 已被 share 給朋友」這事 Drive 端記得很清楚
+  //   - 所以 PWA 重登後我們掃 sharedWithMe 就能自動還原 → 完全不用再貼一次邀請碼
+  //
+  // 回傳：detected groups array（owner + shared 合併）
+  async autoDetectGroups() {
+    const detected = [];
+
+    // Part A: owner 群組
+    try {
+      const owned = await this._detectOwnedGroups();
+      detected.push(...owned);
+    } catch (err) {
+      console.warn('[Groups] detect owned failed:', err);
+    }
+
+    // Part B: shared 群組（被邀請加入的）
+    try {
+      const shared = await this._detectSharedGroups();
+      detected.push(...shared);
+    } catch (err) {
+      console.warn('[Groups] detect shared failed:', err);
+    }
+
+    // 如果有新偵測到 + 還沒有 active group → 設第一個為 active
+    if (detected.length > 0 && !this.activeId) {
+      this.setActive(detected[0].groupId);
+    }
+
+    return detected;
+  },
+
+  // 向後相容 alias（可能有舊呼叫端依賴此名）
   async autoDetectOwnedGroups() {
+    return this.autoDetectGroups();
+  },
+
+  // 內部：掃自己 Drive 根目錄 BroTrip/ 下的群組（role = owner）
+  async _detectOwnedGroups() {
     const broTripFolder = await API.findFolderByName('BroTrip', 'root');
     if (!broTripFolder) return [];
 
@@ -305,15 +345,66 @@ const Groups = {
         this.add(newGroup);
         detected.push(newGroup);
       } catch (err) {
-        console.warn(`Auto-detect failed for folder "${folder.name}":`, err);
+        console.warn(`[Groups] Auto-detect owned failed for "${folder.name}":`, err);
       }
     }
+    return detected;
+  },
 
-    // 如果有新偵測到 + 還沒有 active group → 設第一個為 active
-    if (detected.length > 0 && !this.activeId) {
-      this.setActive(detected[0].groupId);
+  // v3.1.0 內部：掃「分享給我」的 BroTrip-Data Sheet → 還原成群組（role = member）
+  // 用 Drive search `sharedWithMe = true and name = 'BroTrip-Data'`，
+  // 對每個 Sheet 反查 parent folder 取得群組名稱與 photos/ 資料夾。
+  async _detectSharedGroups() {
+    const sharedSheets = await API.searchSharedWithMeFiles('BroTrip-Data');
+    if (sharedSheets.length === 0) return [];
+
+    const detected = [];
+    for (const sheet of sharedSheets) {
+      // 確保是 Google Sheet（避免抓到同名的其他檔案）
+      if (sheet.mimeType !== 'application/vnd.google-apps.spreadsheet') continue;
+      // 已加入跳過（用 sheetId 比對，比 folderId 可靠 — shared 場景下 folderId 可能拿不到）
+      if (this.list.find(g => g.sheetId === sheet.id)) continue;
+
+      try {
+        // 反查 parent folder 取群組名稱
+        const parentFolderId = (sheet.parents && sheet.parents[0]) ? sheet.parents[0] : '';
+        let groupName = sheet.name;  // fallback
+        let photosFolderId = '';
+
+        if (parentFolderId) {
+          const parentMeta = await API.getFileMetadata(parentFolderId);
+          if (parentMeta && parentMeta.name) {
+            groupName = parentMeta.name;
+            // 試找該群組底下的 photos/ 子資料夾
+            try {
+              const photosFolder = await API.findFolderByName('photos', parentFolderId);
+              if (photosFolder) photosFolderId = photosFolder.id;
+            } catch (e) { /* photos 找不到也沒關係，能用 */ }
+          }
+        }
+
+        const sheetTabIds = await API.getSpreadsheetTabIds(sheet.id);
+
+        // ownerEmail：從 sheet.owners 抓第一個（建群組的人）
+        const ownerEmail = (sheet.owners && sheet.owners[0] && sheet.owners[0].emailAddress) || '';
+
+        const newGroup = {
+          groupId: 'detected_' + sheet.id,
+          name: groupName,
+          sheetId: sheet.id,
+          folderId: parentFolderId,
+          photosFolderId,
+          sheetTabIds,
+          role: 'member',
+          detectedAt: new Date().toISOString(),
+          ownerEmail,
+        };
+        this.add(newGroup);
+        detected.push(newGroup);
+      } catch (err) {
+        console.warn(`[Groups] Auto-detect shared failed for "${sheet.name}":`, err);
+      }
     }
-
     return detected;
   },
 
