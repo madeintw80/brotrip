@@ -610,13 +610,10 @@ const App = {
       // 跳設定 display_name dialog（預設帶 Gmail 名）
       const defaultName = Auth.user && Auth.user.name ? Auth.user.name : '';
       this.openDisplayNameModal(newGroup, defaultName, async (name) => {
-        // 寫進 Members sheet（此時 active group 已是新群組）
+        // v3.1.0: 改用 setMyDisplayName（內含「存在 → update / 不存在 → append」邏輯）
+        // 修復 bug：之前無條件 appendRow，朋友在瀏覽器加入後又用 PWA 加入 → Members row 重複
         try {
-          await API.appendRow('Members', [
-            Auth.user.email,
-            name,
-            new Date().toISOString(),
-          ]);
+          await this.setMyDisplayName(name);
         } catch (err) {
           console.warn('Failed to write Members row:', err);
         }

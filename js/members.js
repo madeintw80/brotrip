@@ -65,13 +65,22 @@ const Members = {
   // 取所有 members（給設定 tab / mention 等列表 UI 用）
   // 格式：[{email, name, joined_at}]
   // list 空時至少回當前用戶（避免「新群組第一次開沒任何成員可選」的尷尬）
+  // v3.1.0: 按 email 去重（保留第一筆有 display_name 的）
+  //         修復 bug：早期版本 _tryJoin 沒檢查重複，朋友在不同裝置加入時 Members sheet 會有重複 row
   all() {
     if (this.list.length > 0) {
-      return this.list.map(m => ({
-        email: m.email,
-        name: m.display_name || m.email.split('@')[0],
-        joined_at: m.joined_at || '',
-      }));
+      const seen = new Set();
+      const result = [];
+      for (const m of this.list) {
+        if (!m.email || seen.has(m.email)) continue;
+        seen.add(m.email);
+        result.push({
+          email: m.email,
+          name: m.display_name || m.email.split('@')[0],
+          joined_at: m.joined_at || '',
+        });
+      }
+      return result;
     }
     // Fallback: 至少包含當前用戶自己
     const self = this._selfMember();
