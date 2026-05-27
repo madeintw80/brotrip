@@ -18,7 +18,7 @@
       if (t) document.documentElement.dataset.theme = t;
     } catch (e) {}
   </script>
-  <link rel="stylesheet" href="styles.css?v=54">
+  <link rel="stylesheet" href="styles.css?v=55">
 </head>
 <body>
   <div id="pull-indicator" class="pull-indicator"></div>
@@ -51,6 +51,7 @@
   <div id="app" class="screen hidden">
     <header class="app-header">
       <div class="trip-info">
+        <button id="group-switch" class="group-name-pill" type="button" title="切換群組">🏠 載入中... ▾</button>
         <button id="trip-switch" class="trip-name">📍 載入中...</button>
         <small id="trip-dates"></small>
       </div>
@@ -170,11 +171,38 @@
             <span style="color:#f59e0b;">🚪 退出此群組</span>
             <small>只從你 app 移除 + Members sheet 刪你的 row（你的歷史紀錄保留給其他人看）</small>
           </button>
+          <button id="settings-archive-group-btn" class="settings-btn" type="button" style="margin-top:8px;">
+            <span>📦 <span id="archive-toggle-label">封存此群組</span></span>
+            <small>從切換 dropdown 隱藏（不刪資料，可隨時取消封存）</small>
+          </button>
           <button id="settings-delete-group-btn" class="settings-btn" type="button" style="margin-top:8px; border-color:#ef4444;">
             <span style="color:#ef4444;">💀 刪除整個群組</span>
             <small>⚠️ 只有 owner 可用，會刪 Drive 資料夾 + Sheet + 照片，不可復原</small>
           </button>
         </div>
+        <div class="groups-stats-section" style="margin-top:24px;">
+          <h4>📊 群組統計</h4>
+          <p class="hint">所有人累積數據</p>
+          <div id="group-stats" style="display:grid; grid-template-columns:repeat(2,1fr); gap:10px; margin-top:10px;">
+            <div class="stat-card" style="padding:12px; background:var(--bg-soft, rgba(99,102,241,0.05)); border-radius:8px;">
+              <div style="font-size:12px; color:var(--text-light);">總 Trips</div>
+              <div id="stat-trips" style="font-size:22px; font-weight:700;">-</div>
+            </div>
+            <div class="stat-card" style="padding:12px; background:var(--bg-soft, rgba(16,185,129,0.05)); border-radius:8px;">
+              <div style="font-size:12px; color:var(--text-light);">總成員</div>
+              <div id="stat-members" style="font-size:22px; font-weight:700;">-</div>
+            </div>
+            <div class="stat-card" style="padding:12px; background:var(--bg-soft, rgba(245,158,11,0.05)); border-radius:8px;">
+              <div style="font-size:12px; color:var(--text-light);">總花費</div>
+              <div id="stat-expenses" style="font-size:18px; font-weight:700;">-</div>
+            </div>
+            <div class="stat-card" style="padding:12px; background:var(--bg-soft, rgba(239,68,68,0.05)); border-radius:8px;">
+              <div style="font-size:12px; color:var(--text-light);">總日記</div>
+              <div id="stat-diaries" style="font-size:22px; font-weight:700;">-</div>
+            </div>
+          </div>
+        </div>
+
         <div class="nicknames-section">
           <h4>💬 暱稱設定</h4>
           <p class="hint">每人可以給任何人取暱稱，所有人都看得到。誰最後改算數（Meta Messenger 風格）</p>
@@ -367,6 +395,29 @@
     </div>
   </div>
 
+  <!-- Modal: 切換群組 (M5.0) -->
+  <div id="modal-group-switcher" class="modal hidden">
+    <div class="modal-content">
+      <header class="modal-header">
+        <h2>📁 切換群組</h2>
+        <button class="modal-close" type="button">✕</button>
+      </header>
+      <div style="padding:8px 0;">
+        <div id="group-switcher-list"></div>
+        <div style="margin-top:16px; padding-top:12px; border-top:1px solid var(--border);">
+          <button type="button" id="switcher-create-btn" class="settings-btn">
+            <span>➕ 建立新群組</span>
+            <small>會在你 Drive 建 BroTrip/&lt;群組名&gt;/ 資料夾</small>
+          </button>
+          <button type="button" id="switcher-join-btn" class="settings-btn" style="margin-top:8px;">
+            <span>📨 用邀請碼加入</span>
+            <small>貼朋友給你的邀請連結 / 邀請碼</small>
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- Modal: 管理成員 (M4.4) -->
   <div id="modal-manage-members" class="modal hidden">
     <div class="modal-content">
@@ -515,21 +566,21 @@
 
   <!-- App 程式碼（順序很重要，後面的依賴前面的）
        Phase 2: groups.js 必須在 cache.js 之前載入，cache PREFIX 依賴 Groups.active() -->
-  <script src="js/config.js?v=54"></script>
-  <script src="js/groups.js?v=54"></script>
-  <script src="js/cache.js?v=54"></script>
-  <script src="js/auth.js?v=54"></script>
-  <script src="js/api.js?v=54"></script>
-  <script src="js/trips.js?v=54"></script>
-  <script src="js/expenses.js?v=54"></script>
-  <script src="js/diaries.js?v=54"></script>
-  <script src="js/members.js?v=54"></script>
-  <script src="js/nicknames.js?v=54"></script>
-  <script src="js/comments.js?v=54"></script>
-  <script src="js/notifications.js?v=54"></script>
-  <script src="js/itineraries.js?v=54"></script>
-  <script src="js/settlements.js?v=54"></script>
-  <script src="js/app.js?v=54"></script>
+  <script src="js/config.js?v=55"></script>
+  <script src="js/groups.js?v=55"></script>
+  <script src="js/cache.js?v=55"></script>
+  <script src="js/auth.js?v=55"></script>
+  <script src="js/api.js?v=55"></script>
+  <script src="js/trips.js?v=55"></script>
+  <script src="js/expenses.js?v=55"></script>
+  <script src="js/diaries.js?v=55"></script>
+  <script src="js/members.js?v=55"></script>
+  <script src="js/nicknames.js?v=55"></script>
+  <script src="js/comments.js?v=55"></script>
+  <script src="js/notifications.js?v=55"></script>
+  <script src="js/itineraries.js?v=55"></script>
+  <script src="js/settlements.js?v=55"></script>
+  <script src="js/app.js?v=55"></script>
 
   <!-- Service Worker + auto-update（偵測新版 SW 後通知用戶 reload） -->
   <script>

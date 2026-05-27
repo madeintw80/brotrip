@@ -121,9 +121,29 @@ const Groups = {
     return true;
   },
 
-  // 取得所有群組
+  // 取得所有群組（含已封存）
   all() {
     return [...this.list];
+  },
+
+  // 取得啟用中的群組（過濾掉封存的，給 dropdown / 主畫面用）
+  active_list() {
+    return this.list.filter(g => !g.archived);
+  },
+
+  // M5.1: 切換群組封存狀態
+  setArchived(groupId, archived) {
+    const group = this.list.find(g => g.groupId === groupId);
+    if (!group) return false;
+    group.archived = !!archived;
+    this._save();
+    // 如果封存當前 active，自動切到下一個未封存的群組
+    if (archived && this.activeId === groupId) {
+      const next = this.active_list()[0];
+      this.activeId = next ? next.groupId : null;
+      this._save();
+    }
+    return true;
   },
 
   // ===== M2: 建立新群組 =====

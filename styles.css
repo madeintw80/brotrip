@@ -1721,3 +1721,62 @@ summary {
 .groups-section h4 {
   margin: 0 0 8px 0;
 }
+
+/* ===== M5.0: 群組切換 pill + dropdown ===== */
+.group-name-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 13px;
+  font-weight: 500;
+  padding: 4px 10px;
+  margin-bottom: 4px;
+  background: rgba(99, 102, 241, 0.1);
+  color: var(--accent, #6366f1);
+  border-radius: 12px;
+  border: 1px solid rgba(99, 102, 241, 0.25);
+  cursor: pointer;
+  transition: background 0.15s;
+  align-self: flex-start;
+}
+.group-name-pill:hover { background: rgba(99, 102, 241, 0.18); }
+[data-theme="dark"] .group-name-pill {
+  background: rgba(99, 102, 241, 0.2);
+  color: #a5b4fc;
+}
+
+.group-switcher-row {
+  display: flex;
+  align-items: center;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  margin-bottom: 8px;
+  gap: 12px;
+}
+.group-switcher-row.current {
+  background: rgba(16, 185, 129, 0.08);
+  border-color: rgba(16, 185, 129, 0.4);
+}
+.group-switcher-info { flex: 1; min-width: 0; }
+.group-switcher-info .group-name {
+  font-weight: 600;
+  font-size: 15px;
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.group-switcher-info small { color: var(--text-light); font-size: 12px; }
+.group-switcher-row button {
+  padding: 6px 14px;
+  border-radius: 6px;
+  border: 1px solid var(--accent, #6366f1);
+  background: transparent;
+  color: var(--accent, #6366f1);
+  cursor: pointer;
+  font-size: 13px;
+}
+.group-switcher-row.current button {
+  border-color: var(--text-light);
+  color: var(--text-light);
+}

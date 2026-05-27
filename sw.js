@@ -1,26 +1,26 @@
 // 改版時記得升 version，下次載入會清舊 cache
-const CACHE = 'brotrip-v54';
+const CACHE = 'brotrip-v55';
 const ASSETS = [
   './',
   './index.html',
-  './styles.css?v=54',
+  './styles.css?v=55',
   './manifest.json',
   './icons/icon.svg',
-  './js/config.js?v=54',
-  './js/groups.js?v=54',
-  './js/cache.js?v=54',
-  './js/auth.js?v=54',
-  './js/api.js?v=54',
-  './js/trips.js?v=54',
-  './js/expenses.js?v=54',
-  './js/diaries.js?v=54',
-  './js/members.js?v=54',
-  './js/nicknames.js?v=54',
-  './js/comments.js?v=54',
-  './js/notifications.js?v=54',
-  './js/itineraries.js?v=54',
-  './js/settlements.js?v=54',
-  './js/app.js?v=54',
+  './js/config.js?v=55',
+  './js/groups.js?v=55',
+  './js/cache.js?v=55',
+  './js/auth.js?v=55',
+  './js/api.js?v=55',
+  './js/trips.js?v=55',
+  './js/expenses.js?v=55',
+  './js/diaries.js?v=55',
+  './js/members.js?v=55',
+  './js/nicknames.js?v=55',
+  './js/comments.js?v=55',
+  './js/notifications.js?v=55',
+  './js/itineraries.js?v=55',
+  './js/settlements.js?v=55',
+  './js/app.js?v=55',
 ];
 
 self.addEventListener('install', e => {

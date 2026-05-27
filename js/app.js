@@ -242,6 +242,131 @@ const App = {
     }
   },
 
+  // ===== M5.1: 群組封存 toggle =====
+  handleToggleArchive() {
+    const g = Groups.active();
+    if (!g) return;
+    const next = !g.archived;
+    const verb = next ? '封存' : '取消封存';
+    if (!confirm(`確定要${verb}「${g.name}」?\n\n${next ? '封存後會從切換 dropdown 隱藏，可隨時取消封存復原。資料不會刪除。' : '取消封存會讓群組回到 dropdown 顯示。'}`)) return;
+    Groups.setArchived(g.groupId, next);
+    this.toast(`✅ 已${verb}「${g.name}」`);
+    if (next) {
+      // 封存後自動切到下一個 active（在 Groups.setArchived 內已做）
+      setTimeout(() => location.reload(), 800);
+    } else {
+      this.updateGroupInfo();
+    }
+  },
+
+  // ===== M5.0: 群組切換 dropdown =====
+  openGroupSwitcher() {
+    const modal = document.getElementById('modal-group-switcher');
+    if (!modal) return;
+    const listEl = document.getElementById('group-switcher-list');
+    if (!listEl) return;
+
+    const allGroups = Groups.all();
+    const activeGroups = allGroups.filter(g => !g.archived);
+    const archivedGroups = allGroups.filter(g => g.archived);
+    const activeId = Groups.activeId;
+
+    const renderRow = (g) => {
+      const isCurrent = g.groupId === activeId;
+      const roleLabel = g.role === 'owner' ? '👑 owner' : '👤 member';
+      const archivedLabel = g.archived ? ' · 已封存' : '';
+      return `
+        <div class="group-switcher-row ${isCurrent ? 'current' : ''}">
+          <div class="group-switcher-info">
+            <span class="group-name">${isCurrent ? '✅ ' : '📁 '}${this.escapeHtml(g.name)}</span>
+            <small>${isCurrent ? '當前' : '可切換'} · ${roleLabel}${archivedLabel}</small>
+          </div>
+          ${isCurrent
+            ? `<button type="button" disabled>當前</button>`
+            : `<button type="button" data-group-id="${this.escapeAttr(g.groupId)}">→ 切換</button>`
+          }
+        </div>
+      `;
+    };
+
+    let html = '';
+    if (allGroups.length === 0) {
+      html = '<p class="hint" style="text-align:center; padding:20px;">還沒有任何群組<br>點下方按鈕建立或加入</p>';
+    } else {
+      html = activeGroups.map(renderRow).join('');
+      if (archivedGroups.length > 0) {
+        html += `
+          <details style="margin-top:12px;">
+            <summary style="cursor:pointer; color:var(--text-light); font-size:13px; padding:8px 0;">📦 已封存 (${archivedGroups.length})</summary>
+            <div style="margin-top:8px;">
+              ${archivedGroups.map(renderRow).join('')}
+            </div>
+          </details>
+        `;
+      }
+    }
+    listEl.innerHTML = html;
+
+    // 綁定切換 buttons
+    listEl.querySelectorAll('button[data-group-id]').forEach(btn => {
+      btn.addEventListener('click', () => this.switchToGroup(btn.dataset.groupId));
+    });
+
+    modal.classList.remove('hidden');
+  },
+
+  async switchToGroup(groupId) {
+    if (!groupId) return;
+    if (Groups.activeId === groupId) {
+      document.getElementById('modal-group-switcher').classList.add('hidden');
+      return;
+    }
+    const target = Groups.list.find(g => g.groupId === groupId);
+    if (!target) return;
+    Groups.setActive(groupId);
+    this.toast(`切換到「${target.name}」...`);
+    // 完整 reload 切換 — 確保所有 cache / state 重置乾淨
+    setTimeout(() => location.reload(), 400);
+  },
+
+  // ===== M5.0: 邀請連結 native Web Share =====
+  // 手機優先用 navigator.share（跳 native sheet），否則 fallback 到複製剪貼簿
+  async shareOrCopyText(text, opts = {}) {
+    const { shareTitle = 'BroTrip 群組邀請', shareText = '來加入我們的出遊群組', copyToast = '已複製' } = opts;
+    // 偵測 Web Share API（多數 mobile + 部分桌機 Safari 支援）
+    if (navigator.share && navigator.canShare && navigator.canShare({ url: text })) {
+      try {
+        await navigator.share({ title: shareTitle, text: shareText, url: text });
+        this.toast('✅ 已分享');
+        return;
+      } catch (err) {
+        if (err.name === 'AbortError') return;  // 用戶取消
+        console.warn('Web Share failed, fallback to clipboard:', err);
+      }
+    }
+    // Fallback: clipboard
+    try {
+      await navigator.clipboard.writeText(text);
+      this.toast('✅ ' + copyToast);
+    } catch (err) {
+      // 最後 fallback: execCommand
+      try {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+        this.toast('✅ ' + copyToast);
+      } catch (err2) {
+        this.toast('複製失敗，請手動選取');
+        console.error(err2);
+      }
+    }
+  },
+
   // ===== M4.4: 退出 / 刪除 / 管理成員 =====
 
   async openManageMembersModal() {
@@ -601,6 +726,27 @@ const App = {
       createGroupForm.addEventListener('submit', (e) => this.handleCreateGroupSubmit(e));
     }
 
+    // M5.0: Header 群組切換 pill
+    const groupSwitchBtn = document.getElementById('group-switch');
+    if (groupSwitchBtn) {
+      groupSwitchBtn.addEventListener('click', () => this.openGroupSwitcher());
+    }
+    // M5.0: 切換 modal 內的 entry buttons
+    const switcherCreateBtn = document.getElementById('switcher-create-btn');
+    if (switcherCreateBtn) {
+      switcherCreateBtn.addEventListener('click', () => {
+        document.getElementById('modal-group-switcher').classList.add('hidden');
+        this.openCreateGroupModal();
+      });
+    }
+    const switcherJoinBtn = document.getElementById('switcher-join-btn');
+    if (switcherJoinBtn) {
+      switcherJoinBtn.addEventListener('click', () => {
+        document.getElementById('modal-group-switcher').classList.add('hidden');
+        this.openJoinGroupModal();
+      });
+    }
+
     // M3: 加入群組（無群組畫面 + 設定 tab 都用同一個 handler）
     const joinGroupBtn = document.getElementById('join-group-btn');
     if (joinGroupBtn) {
@@ -662,6 +808,12 @@ const App = {
       leaveGroupBtn.addEventListener('click', () => this.handleLeaveGroup());
     }
 
+    // M5.1: 封存/取消封存當前群組
+    const archiveBtn = document.getElementById('settings-archive-group-btn');
+    if (archiveBtn) {
+      archiveBtn.addEventListener('click', () => this.handleToggleArchive());
+    }
+
     // M4.4: 刪除整個群組（owner only）
     const deleteGroupBtn = document.getElementById('settings-delete-group-btn');
     if (deleteGroupBtn) {
@@ -691,40 +843,36 @@ const App = {
       });
     }
 
-    // 複製邀請連結（M4.3 主要按鈕）
+    // 複製/分享邀請連結（M5.0: 用 native share or clipboard）
     const copyInviteLinkBtn = document.getElementById('copy-invite-link-btn');
     if (copyInviteLinkBtn) {
+      // 手機 hint 文案微調
+      if (navigator.share) {
+        copyInviteLinkBtn.innerHTML = '📤 分享邀請連結';
+      }
       copyInviteLinkBtn.addEventListener('click', () => {
         const ta = document.getElementById('invite-link-text');
-        if (!ta) return;
-        ta.select();
-        try {
-          document.execCommand('copy');
-          this.toast('✅ 邀請連結已複製，直接貼到 LINE！');
-        } catch (err) {
-          navigator.clipboard.writeText(ta.value).then(
-            () => this.toast('✅ 邀請連結已複製，直接貼到 LINE！'),
-            () => this.toast('複製失敗，請手動選取複製')
-          );
-        }
+        if (!ta || !ta.value) return;
+        const g = Groups.active();
+        this.shareOrCopyText(ta.value, {
+          shareTitle: g ? `加入「${g.name}」BroTrip 群組` : 'BroTrip 群組邀請',
+          shareText: g ? `來加入「${g.name}」一起記錄出遊` : '來加入我們的出遊群組',
+          copyToast: '邀請連結已複製，直接貼到 LINE！',
+        });
       });
     }
 
-    // 複製純邀請碼（M4.3 次要按鈕，藏在 details 內）
+    // 複製純邀請碼（次要按鈕，藏在 details 內，純文字 fallback）
     const copyInviteBtn = document.getElementById('copy-invite-btn');
     if (copyInviteBtn) {
       copyInviteBtn.addEventListener('click', () => {
         const ta = document.getElementById('invite-code-text');
-        ta.select();
-        try {
-          document.execCommand('copy');
-          this.toast('✅ 邀請碼已複製');
-        } catch (err) {
-          navigator.clipboard.writeText(ta.value).then(
-            () => this.toast('✅ 邀請碼已複製'),
-            () => this.toast('複製失敗，請手動選取複製')
-          );
-        }
+        if (!ta || !ta.value) return;
+        this.shareOrCopyText(ta.value, {
+          shareTitle: 'BroTrip 邀請碼',
+          shareText: '貼到 BroTrip app 加入群組',
+          copyToast: '邀請碼已複製',
+        });
       });
     }
 
@@ -1248,14 +1396,56 @@ const App = {
     this.updateDebugInfo();
   },
 
-  // Phase 2: 設定 tab 顯示當前群組名 + 角色 + 我的 display_name
+  // M5.1: 群組統計 dashboard
+  updateGroupStats() {
+    const tripsEl = document.getElementById('stat-trips');
+    const membersEl = document.getElementById('stat-members');
+    const expensesEl = document.getElementById('stat-expenses');
+    const diariesEl = document.getElementById('stat-diaries');
+    if (!tripsEl) return;  // 設定 tab 沒開時不算
+
+    const tripCount = (Trips.list || []).length;
+    const memberCount = Members.list.length || Members.all().length;
+    const diaryCount = (Diaries.allList || []).length;
+    // 總花費（所有 trip 的 expenses 加總，以 TWD 為主，其他幣別簡單相加示意）
+    const allExpenses = Expenses.allList || [];
+    const byCurrency = {};
+    allExpenses.forEach(e => {
+      const cur = e.currency || 'TWD';
+      const amt = parseFloat(e.amount) || 0;
+      byCurrency[cur] = (byCurrency[cur] || 0) + amt;
+    });
+    const expenseStr = Object.entries(byCurrency)
+      .map(([cur, amt]) => `${cur} ${amt.toLocaleString()}`)
+      .join(', ') || '0';
+
+    tripsEl.textContent = tripCount;
+    membersEl.textContent = memberCount;
+    expensesEl.textContent = expenseStr;
+    diariesEl.textContent = diaryCount;
+  },
+
+  // Phase 2: 設定 tab 顯示當前群組名 + 角色 + 我的 display_name + Header pill
   updateGroupInfo() {
     const nameEl = document.getElementById('current-group-name');
     const roleEl = document.getElementById('current-group-role');
     const dispEl = document.getElementById('my-display-name');
+    const headerPill = document.getElementById('group-switch');
     const g = Groups.active();
     if (nameEl) nameEl.textContent = g ? g.name : '無';
     if (roleEl) roleEl.textContent = g ? (g.role === 'owner' ? '👑 owner' : '👤 member') : '-';
+    // M5.0: Header 上的群組切換 pill
+    if (headerPill) {
+      // 計算未封存的群組數量（封存的不算進切換選項）
+      const activeCount = Groups.list.filter(x => !x.archived).length;
+      const indicator = activeCount > 1 ? '▾' : '';  // 只有 1 個群組時不顯示箭頭
+      headerPill.textContent = g ? `🏠 ${g.name} ${indicator}` : '🏠 -';
+    }
+    // M5.1: 封存按鈕 label 切換
+    const archiveLabel = document.getElementById('archive-toggle-label');
+    if (archiveLabel) {
+      archiveLabel.textContent = (g && g.archived) ? '取消封存此群組' : '封存此群組';
+    }
     // M3: async 抓 display name
     if (dispEl && g) {
       this.getMyDisplayName().then(name => { dispEl.textContent = name; });
@@ -2023,6 +2213,8 @@ const App = {
     document.getElementById('tab-settings').classList.toggle('hidden', tab !== 'settings');
     document.getElementById('fab').style.display = (tab === 'expenses' || tab === 'diaries') ? '' : 'none';
     if (tab === 'map') this.initOrRefreshMap();
+    // M5.1: 切到設定 tab 時更新群組統計
+    if (tab === 'settings') this.updateGroupStats();
   },
 
   // ===== Renders =====
