@@ -337,6 +337,8 @@ const Groups = {
   },
 
   // 內部方法：對某 group 的 folder + sheet + photos 全部撤銷某 email 的權限
+  // 回傳 [{name, status: 'deleted'|'not_found'|'error', err?}]
+  // M4.7: status 改 3 種狀態，讓 UI 區分「確定刪了」vs「找不到」vs「錯誤」
   async _revokeUserFromGroupFiles(group, userEmail) {
     const targets = [
       { id: group.folderId, name: '群組資料夾' },
@@ -347,11 +349,12 @@ const Groups = {
     const results = [];
     for (const t of targets) {
       try {
-        const found = await API.revokeDrivePermission(t.id, userEmail);
-        results.push({ name: t.name, ok: true, found });
+        const status = await API.revokeDrivePermission(t.id, userEmail);
+        // status = 'deleted' | 'not_found'
+        results.push({ name: t.name, status });
       } catch (err) {
         console.warn(`Failed to revoke ${userEmail} from ${t.name}:`, err);
-        results.push({ name: t.name, ok: false, err: err.message || String(err) });
+        results.push({ name: t.name, status: 'error', err: err.message || String(err) });
       }
     }
     return results;

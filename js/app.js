@@ -297,17 +297,27 @@ const App = {
           btn.disabled = true;
           btn.textContent = '處理中...';
           const result = await Groups.kickMember(g.groupId, email);
-          // M4.6: 詳細回報 Drive 撤銷結果
-          const failedDrive = result.driveResults.filter(r => !r.ok);
-          if (failedDrive.length > 0) {
-            this.toast(`⚠️ 成員名單已移除，但 ${failedDrive.length} 個 Drive 權限撤銷失敗`, 5000);
-            console.warn('Drive revoke failures:', failedDrive);
-            alert(`部分 Drive 權限撤銷失敗：\n${failedDrive.map(f => `- ${f.name}：${f.err}`).join('\n')}\n\n請開 Drive 手動移除 ${member.name} 的權限。\n或聯絡管理員 (你自己)。`);
-          } else {
-            const revoked = result.driveResults.filter(r => r.found).length;
-            this.toast(`✅ 已踢出「${member.name}」（Drive 撤銷 ${revoked} 個權限）`);
+          // M4.7: 詳細狀態
+          const deleted = result.driveResults.filter(r => r.status === 'deleted');
+          const notFound = result.driveResults.filter(r => r.status === 'not_found');
+          const errors = result.driveResults.filter(r => r.status === 'error');
+          const driveUrl = `https://drive.google.com/drive/folders/${g.folderId}`;
+
+          let msg = `✅ 已踢出「${member.name}」\n\n`;
+          if (deleted.length > 0) {
+            msg += `🔓 已撤銷 ${deleted.length} 個 Drive 權限：${deleted.map(r => r.name).join('、')}\n\n`;
           }
-          // Reload modal
+          if (errors.length > 0) {
+            msg += `❌ ${errors.length} 個撤銷失敗：\n${errors.map(r => `  • ${r.name}：${r.err}`).join('\n')}\n\n`;
+          }
+          if (notFound.length === result.driveResults.length && errors.length === 0) {
+            msg += `⚠️ Drive 找不到該 email 的權限（可能已被移除 / 或 API 沒回傳）\n建議手動驗證：\n\n`;
+          }
+          msg += `📂 請開 Drive 確認 ${member.name} 不在 BroTrip/${g.name}/ 共用名單：\n${driveUrl}\n\n如果還在 → 點該人旁邊 ✕ 手動移除`;
+
+          if (confirm(msg + '\n\n要直接開 Drive 確認嗎？')) {
+            window.open(driveUrl, '_blank');
+          }
           await this.openManageMembersModal();
         } catch (err) {
           this.toast('踢出失敗：' + (err.message || '未知錯誤'));
@@ -325,20 +335,37 @@ const App = {
       this.toast('你是 owner，請改用「💀 刪除整個群組」');
       return;
     }
-    if (!confirm(`確定退出「${g.name}」?\n\n會:\n1. 從群組 Members 名單刪掉你的 row\n2. 撤銷你自己的 Drive 存取權限（不再看得到群組資料夾）\n3. 從你的 app 移除這個群組\n\n你之前的紀錄會留給其他人看（只是名字顯示成 email）`)) return;
+    if (!confirm(`確定退出「${g.name}」?\n\n會:\n1. 從群組 Members 名單刪掉你的 row\n2. 嘗試撤銷你自己的 Drive 存取權限\n3. 從你的 app 移除這個群組\n\n你之前的紀錄會留給其他人看（只是名字顯示成 email）`)) return;
     try {
       this.toast('退出中...');
       const result = await Groups.leave(g.groupId);
-      const failedDrive = result.driveResults.filter(r => !r.ok);
-      if (failedDrive.length > 0) {
-        // 退出成功但 Drive 撤銷失敗 — 提示用戶
-        this.toast(`⚠️ 已退出，但 Drive 還看得到資料夾，請手動「移除我」`, 5000);
-        console.warn('Drive self-revoke failures:', failedDrive);
-        alert(`已退出，但部分 Drive 權限撤銷失敗：\n${failedDrive.map(f => `- ${f.name}：${f.err}`).join('\n')}\n\n你可以：\n1. 開 Drive 對 BroTrip/${g.name}/ 點「共用 → 移除我」\n2. 或請 owner 把你從共用名單踢掉`);
-      } else {
-        this.toast(`✅ 已退出「${g.name}」（Drive 權限也撤銷了）`);
+
+      // M4.7: 詳細狀態分類
+      const deleted = result.driveResults.filter(r => r.status === 'deleted');
+      const notFound = result.driveResults.filter(r => r.status === 'not_found');
+      const errors = result.driveResults.filter(r => r.status === 'error');
+      const folderId = g.folderId;
+      const driveUrl = `https://drive.google.com/drive/folders/${folderId}`;
+
+      // 一律顯示驗證 alert（不論成功失敗，因為 list API 對 member 可能不準）
+      let msg = `✅ 已退出「${g.name}」\n\n`;
+      if (deleted.length > 0) {
+        msg += `🔓 已撤銷 ${deleted.length} 個 Drive 權限：${deleted.map(r => r.name).join('、')}\n\n`;
       }
-      setTimeout(() => location.reload(), 1200);
+      if (errors.length > 0) {
+        msg += `❌ ${errors.length} 個撤銷失敗：\n${errors.map(r => `  • ${r.name}：${r.err}`).join('\n')}\n\n`;
+      }
+      if (notFound.length === result.driveResults.length && errors.length === 0) {
+        // 全部找不到 → 可能 API 限制看不到自己的 perm
+        msg += `⚠️ Drive API 沒回傳你的權限（member 自我查詢限制）\n所以「自動撤銷」做不到，請手動移除：\n\n`;
+      }
+      msg += `📂 請開 Drive 確認 BroTrip/${g.name}/ 不在你共用名單：\n${driveUrl}\n\n如果還在 → 點該資料夾右上角 ⋮ → 「移除我」`;
+
+      // 用 confirm 讓用戶選擇要不要直接開 Drive
+      if (confirm(msg + '\n\n要直接開 Drive 確認嗎？')) {
+        window.open(driveUrl, '_blank');
+      }
+      setTimeout(() => location.reload(), 800);
     } catch (err) {
       this.toast('退出失敗：' + (err.message || '未知錯誤'));
       console.error(err);

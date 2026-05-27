@@ -372,10 +372,11 @@ const API = {
   // ===== M4.4: Drive 權限管理（踢人 + 刪群組用）=====
 
   // 列出某檔案/資料夾的所有 permissions（owner / editor / viewer 等）
+  // 注意：member（非 owner）呼叫時可能只看到部分權限（Drive API 限制）
   async listDrivePermissions(fileId) {
     const token = await Auth.ensureToken();
     const resp = await fetch(
-      `https://www.googleapis.com/drive/v3/files/${fileId}/permissions?fields=permissions(id,emailAddress,role,type,displayName)`,
+      `https://www.googleapis.com/drive/v3/files/${fileId}/permissions?fields=permissions(id,emailAddress,role,type,displayName,deleted)&pageSize=100`,
       { headers: { Authorization: `Bearer ${token}` } }
     );
     if (!resp.ok) {
@@ -383,18 +384,22 @@ const API = {
       throw new Error(`List permissions failed: ${resp.status} ${err.slice(0, 200)}`);
     }
     const data = await resp.json();
-    return data.permissions || [];
+    const perms = data.permissions || [];
+    console.log(`[Drive] listPermissions(${fileId}) returned ${perms.length} perms:`, perms);
+    return perms;
   },
 
-  // 撤銷某 email 對檔案/資料夾的存取權（owner 踢人用）
-  // 自動找到該 email 對應的 permission ID 然後刪除
+  // 撤銷某 email 對檔案/資料夾的存取權
+  // 回傳：'deleted' | 'not_found' | throws on error
+  // M4.7: 不再把 not_found 偽裝成 success — 給呼叫者決定怎麼處理
   async revokeDrivePermission(fileId, userEmail) {
     const perms = await this.listDrivePermissions(fileId);
     const perm = perms.find(p => (p.emailAddress || '').toLowerCase() === userEmail.toLowerCase());
     if (!perm) {
-      console.warn(`No permission found for ${userEmail} on ${fileId}`);
-      return false;  // 已經沒有了，視為成功
+      console.warn(`[Drive] No permission found for ${userEmail} on ${fileId}. (Member 可能 list API 看不到自己的 perm)`);
+      return 'not_found';
     }
+    console.log(`[Drive] Found perm to delete:`, perm);
     const token = await Auth.ensureToken();
     const resp = await fetch(
       `https://www.googleapis.com/drive/v3/files/${fileId}/permissions/${perm.id}`,
@@ -404,7 +409,8 @@ const API = {
       const err = await resp.text();
       throw new Error(`Revoke permission failed: ${resp.status} ${err.slice(0, 200)}`);
     }
-    return true;
+    console.log(`[Drive] Deleted perm ${perm.id} for ${userEmail}`);
+    return 'deleted';
   },
 
   // 刪除 Drive 檔案/資料夾（移到垃圾桶）
