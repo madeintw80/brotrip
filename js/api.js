@@ -369,12 +369,19 @@ const API = {
     return map;
   },
 
-  // v3.1.0: 搜尋「分享給我」的同名檔案（用於 detect 被邀請加入的群組）
-  // 朋友建群組時 share Drive folder 給我 → 我 Drive 的「Shared with me」會出現該 folder 內的檔案
-  // 我們搜全 sharedWithMe 中 name='BroTrip-Data' 的 Sheet，反查 parent folder 就能還原群組
+  // v3.1.1: 搜尋「我能看到但不是我擁有」的同名檔案（用於 detect 被邀請加入的群組）
+  //
+  // 為什麼不用 `sharedWithMe = true`：
+  //   Google Drive 的 sharedWithMe 只標記「直接 share 給我的 root item」。
+  //   當 owner 是 share **整個資料夾**（BroTrip/<group>/），裡面的 BroTrip-Data Sheet
+  //   是 inherited access — query `sharedWithMe = true` **不會回**這些子檔案。
+  //   v3.1.0 用 sharedWithMe → 哩哩看不到群組（folder share）→ 等很久無結果 → 進無群組畫面。
+  //
+  // 改用 `not 'me' in owners`：搜尋「我能看到但不是我自己擁有」的檔案，
+  // Drive 預設搜尋範圍含 folder inherited，所以兩種 share 模式都涵蓋。
   async searchSharedWithMeFiles(name) {
     const token = await Auth.ensureToken();
-    const q = `sharedWithMe = true and name = '${name.replace(/'/g, "\\'")}' and trashed = false`;
+    const q = `name = '${name.replace(/'/g, "\\'")}' and not 'me' in owners and trashed = false`;
     const resp = await fetch(
       `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(q)}&fields=files(id,name,parents,mimeType,owners)&pageSize=100`,
       { headers: { Authorization: `Bearer ${token}` } }
