@@ -365,9 +365,14 @@ const App = {
   // ===== M5.0: 邀請連結 native Web Share =====
   // 手機優先用 navigator.share（跳 native sheet），否則 fallback 到複製剪貼簿
   async shareOrCopyText(text, opts = {}) {
-    const { shareTitle = 'BroTrip 群組邀請', shareText = '來加入我們的出遊群組', copyToast = '已複製' } = opts;
+    const { shareTitle = 'BroTrip 群組邀請', shareText = '來加入我們的出遊群組', copyToast = '已複製', noShareApi = false } = opts;
+    // v3.1.2: noShareApi=true 強制走 clipboard
+    //   原因：iOS Safari 的 navigator.share({url: <非 URL 字串>}) 會把字串當「相對路徑」
+    //         自動 prefix 當前 origin，導致純邀請碼 'eyJ...' 變 'https://.../brotrip/eyJ...'
+    //         接收端拿到這個畸形連結看起來像 URL 但點開沒效。
+    //   只有「真的是 URL」的場景（複製邀請連結）才可以走 Web Share API。
     // 偵測 Web Share API（多數 mobile + 部分桌機 Safari 支援）
-    if (navigator.share && navigator.canShare && navigator.canShare({ url: text })) {
+    if (!noShareApi && navigator.share && navigator.canShare && navigator.canShare({ url: text })) {
       try {
         await navigator.share({ title: shareTitle, text: shareText, url: text });
         this.toast('✅ 已分享');
@@ -893,15 +898,15 @@ const App = {
     }
 
     // 複製純邀請碼（次要按鈕，藏在 details 內，純文字 fallback）
+    // v3.1.2: noShareApi=true 強制走 clipboard，避免 iOS Web Share 把純字串當相對路徑包成 origin/eyJ...
     const copyInviteBtn = document.getElementById('copy-invite-btn');
     if (copyInviteBtn) {
       copyInviteBtn.addEventListener('click', () => {
         const ta = document.getElementById('invite-code-text');
         if (!ta || !ta.value) return;
         this.shareOrCopyText(ta.value, {
-          shareTitle: 'BroTrip 邀請碼',
-          shareText: '貼到 BroTrip app 加入群組',
           copyToast: '邀請碼已複製',
+          noShareApi: true,
         });
       });
     }
