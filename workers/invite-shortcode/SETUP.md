@@ -18,7 +18,8 @@
 KV 是 CF 提供的 key-value 儲存，免費 100k reads / 1k writes 每天。
 
 1. 登入 dashboard：https://dash.cloudflare.com
-2. 左側選單 → **Workers & Pages** → **KV**
+2. 左側選單 → **Storage & databases**（在 Compute 下面、Media 上面）→ 展開 → **KV**
+   - ⚠️ KV 不在 Compute 下！CF 2024 改版過，現在歸 Storage & databases 分類
 3. 按右上 **「Create a namespace」**
 4. Namespace name 輸入：`brotrip-invites`
 5. 按 Add，會看到清單多一筆 `brotrip-invites`，**複製它的 ID**（之後用得到）
