@@ -182,6 +182,10 @@
             <span>🔄 從 Drive 重新偵測群組</span>
             <small>會把 Drive 上你建的 / 被邀請加入的群組同步回來（換裝置 / 群組沒出現時用）</small>
           </button>
+          <button id="settings-geo-notify-btn" class="settings-btn" type="button" style="margin-top:8px;">
+            <span id="geo-notify-btn-label">🔔 附近 wish 推播</span>
+            <small id="geo-notify-btn-status">- (狀態未知)</small>
+          </button>
           <button id="settings-create-group-btn" class="settings-btn" type="button" style="margin-top:8px;">
             <span>➕ 建立新群組</span>
             <small>會在你 Drive 建 BroTrip/<群組名>/ 資料夾</small>
@@ -615,6 +619,30 @@
     </div>
   </div>
 
+  <!-- Modal: 附近 wishlist 推播 onboarding (v3.4.0 M6.3) -->
+  <div id="modal-geo-notify-onboarding" class="modal hidden">
+    <div class="modal-content">
+      <header class="modal-header">
+        <h2>🔔 開啟附近 wish 提醒</h2>
+        <button class="modal-close" type="button">✕</button>
+      </header>
+      <div style="font-size:14px; line-height:1.6; color:var(--text);">
+        <p style="margin:0 0 12px;">出國走在路上經過 wish 地點（500m 內）→ 自動推播提醒你「欸這附近有想去的」。</p>
+        <ul style="margin:0 0 12px; padding-left:20px; font-size:13px; color:var(--text-light);">
+          <li>需要定位 + 通知權限</li>
+          <li>App 開著或被切到背景都能收到</li>
+          <li>App 完全 kill (從 App Switcher 滑掉) 無法收到（PWA 限制）</li>
+          <li>同 wish 30 分鐘內只通知 1 次，避免煩</li>
+        </ul>
+        <p style="margin:0 0 8px; font-size:12px; color:var(--text-light);">⚙️ 之後想關 / 重開 → 設定 tab</p>
+      </div>
+      <div class="form-actions">
+        <button type="button" class="btn-cancel" id="geo-notify-decline-btn">先不要</button>
+        <button type="button" class="btn-primary" id="geo-notify-enable-btn">✅ 開啟</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Modal: Wishlist Promote → Itinerary (v3.3.0 M6.2) -->
   <div id="modal-wishlist-promote" class="modal hidden">
     <div class="modal-content">
@@ -694,11 +722,12 @@
   <script src="js/members.js?v=300"></script>
   <script src="js/nicknames.js?v=300"></script>
   <script src="js/comments.js?v=300"></script>
-  <script src="js/notifications.js?v=300"></script>
+  <script src="js/notifications.js?v=340"></script>
   <script src="js/itineraries.js?v=330"></script>
   <script src="js/settlements.js?v=300"></script>
-  <script src="js/wishlist.js?v=320"></script>
-  <script src="js/app.js?v=330"></script>
+  <script src="js/wishlist.js?v=340"></script>
+  <script src="js/geo_notify.js?v=340"></script>
+  <script src="js/app.js?v=340"></script>
 
   <!-- Service Worker + auto-update（偵測新版 SW 後通知用戶 reload） -->
   <script>

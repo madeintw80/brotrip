@@ -747,6 +747,45 @@ const App = {
       });
     }
 
+    // v3.4.0 M6.3.4: 設定 tab 的「附近 wish 推播」按鈕
+    const geoNotifyBtn = document.getElementById('settings-geo-notify-btn');
+    if (geoNotifyBtn) {
+      geoNotifyBtn.addEventListener('click', async () => {
+        if (typeof GeoNotify === 'undefined') return;
+        const pref = GeoNotify.getPref();
+        if (pref === 'unsupported') {
+          this.toast('你的瀏覽器/裝置不支援推播');
+          return;
+        }
+        if (pref === 'granted') {
+          // 已啟用 → 詢問是否關閉
+          if (confirm('附近推播已啟用。要關閉嗎？')) {
+            GeoNotify.stop();
+            GeoNotify.setPref('declined');
+            this.toast('已關閉推播');
+            this._updateGeoNotifyStatusUI();
+          }
+        } else {
+          // 未啟用 / declined → 重新請求 permission
+          geoNotifyBtn.disabled = true;
+          try {
+            const result = await GeoNotify.requestPermissions();
+            if (result === 'granted') {
+              GeoNotify.start();
+              this.toast('🔔 已啟用！');
+            } else {
+              this.toast('未授權（請到瀏覽器設定確認定位/通知權限）');
+            }
+            this._updateGeoNotifyStatusUI();
+          } catch (err) {
+            console.error(err);
+          } finally {
+            geoNotifyBtn.disabled = false;
+          }
+        }
+      });
+    }
+
     // v3.1.3: 設定 tab 的「從 Drive 重新偵測群組」按鈕
     // 用於：換裝置 / 在另一個 session 建了新群組 / 被新邀請加入時手動同步
     const settingsResyncBtn = document.getElementById('settings-resync-groups-btn');
@@ -991,6 +1030,66 @@ const App = {
         this.renderWishlistMarkers();
       });
     }
+
+    // v3.4.0 M6.3: GeoNotify onboarding modal
+    const geoEnableBtn = document.getElementById('geo-notify-enable-btn');
+    const geoDeclineBtn = document.getElementById('geo-notify-decline-btn');
+    const geoModal = document.getElementById('modal-geo-notify-onboarding');
+    if (geoEnableBtn) {
+      geoEnableBtn.addEventListener('click', async () => {
+        geoEnableBtn.disabled = true;
+        geoEnableBtn.textContent = '等待權限...';
+        try {
+          const result = await GeoNotify.requestPermissions();
+          if (result === 'granted') {
+            this.toast('🔔 已開啟！走在路上經過 wish 會推播');
+            GeoNotify.start();
+          } else if (result === 'unsupported') {
+            this.toast('你的瀏覽器不支援推播，已關閉');
+          } else {
+            this.toast('已拒絕。設定 tab 可以重新開啟');
+          }
+        } catch (err) {
+          console.error(err);
+          this.toast('開啟失敗：' + (err.message || err));
+        } finally {
+          geoEnableBtn.disabled = false;
+          geoEnableBtn.textContent = '✅ 開啟';
+          if (geoModal) geoModal.classList.add('hidden');
+        }
+      });
+    }
+    if (geoDeclineBtn) {
+      geoDeclineBtn.addEventListener('click', () => {
+        GeoNotify.setPref('declined');
+        if (geoModal) geoModal.classList.add('hidden');
+        this.toast('已關閉。設定 tab 可以再開');
+      });
+    }
+
+    // v3.4.0 M6.3: 接收 SW notification click 訊息 → 跳 wishlist tab + 高亮該 wish
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.addEventListener('message', (e) => {
+        const msg = e.data || {};
+        if (msg.type === 'wish-notify-click') {
+          this.switchTab('wishlist');
+          // 之後若有「scroll to + 高亮」需求可加 (target by wishId)
+          if (msg.wishId) this.toast(`📍 ${msg.wishId.slice(0, 8)}... 從通知跳過來的`);
+        }
+      });
+    }
+    // 處理「從 SW 開新窗，URL 帶 ?focus_wish」場景
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const focusWish = params.get('focus_wish');
+      if (focusWish) {
+        // 留待 afterLogin 完成後跳 tab；先存
+        this._pendingFocusWishId = focusWish;
+        params.delete('focus_wish');
+        const newSearch = params.toString();
+        history.replaceState({}, '', window.location.pathname + (newSearch ? '?' + newSearch : ''));
+      }
+    } catch {}
 
     // Photo lightbox
     const lightbox = document.getElementById('photo-lightbox');
@@ -1405,6 +1504,18 @@ const App = {
           const settleEl = document.getElementById('settlement-content');
           if (settleEl) settleEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
         }, 200);
+      }
+      // v3.4.0 M6.4: wishlist 通知 → 跳 wishlist tab，切到對應 trip
+      else if (type === 'wish-vote' || type === 'wish-rejected' || type === 'wish-force-restore') {
+        const wish = (typeof Wishlist !== 'undefined') ? Wishlist.allList.find(w => w.id === refId) : null;
+        if (wish && (!Trips.current || Trips.current.trip_id !== wish.trip_id)) {
+          Trips.setCurrent(wish.trip_id);
+          Expenses._filter();
+          Diaries._filter();
+          if (typeof Wishlist !== 'undefined') Wishlist._filter();
+          this.renderAll();
+        }
+        this.switchTab('wishlist');
       }
 
       // 背景拉最新資料（cache 可能過時），拿到後自動 re-render
@@ -2775,9 +2886,69 @@ const App = {
     document.getElementById('fab').style.display = (tab === 'expenses' || tab === 'diaries' || tab === 'wishlist') ? '' : 'none';
     if (tab === 'map') this.initOrRefreshMap();
     // v3.2.0: 切到 wishlist tab → load + render（lazy migration 在 loadAll 內處理）
-    if (tab === 'wishlist') this.loadAndRenderWishlist();
+    if (tab === 'wishlist') {
+      this.loadAndRenderWishlist();
+      // v3.4.0 M6.3: 第一次進 wishlist tab → 跳 onboarding 問附近推播
+      this._maybeShowGeoNotifyOnboarding();
+    }
+    // v3.4.0 M6.3: tab lifecycle 啟停 watchPosition（省電）
+    this._updateGeoNotifyForTab(tab);
     // M5.1: 切到設定 tab 時更新群組統計
-    if (tab === 'settings') this.updateGroupStats();
+    if (tab === 'settings') {
+      this.updateGroupStats();
+      this._updateGeoNotifyStatusUI();
+    }
+  },
+
+  // v3.4.0 M6.3: 切到 wishlist/map 啟動推播；切走停止
+  _updateGeoNotifyForTab(tab) {
+    if (typeof GeoNotify === 'undefined') return;
+    if (GeoNotify.getPref() !== 'granted') return;
+    const relevantTabs = ['wishlist', 'map', 'expenses', 'diaries'];
+    if (relevantTabs.includes(tab)) {
+      GeoNotify.start();
+    } else {
+      GeoNotify.stop();
+    }
+  },
+
+  // v3.4.0 M6.3: 設定 tab 推播 button 狀態顯示
+  _updateGeoNotifyStatusUI() {
+    const labelEl = document.getElementById('geo-notify-btn-label');
+    const statusEl = document.getElementById('geo-notify-btn-status');
+    if (!labelEl || !statusEl || typeof GeoNotify === 'undefined') return;
+    const pref = GeoNotify.getPref();
+    const running = GeoNotify.isRunning();
+    if (pref === 'unsupported') {
+      labelEl.textContent = '🔔 附近 wish 推播';
+      statusEl.textContent = '⚠️ 此裝置/瀏覽器不支援';
+      statusEl.style.color = 'var(--text-light)';
+    } else if (pref === 'granted') {
+      labelEl.textContent = '🔔 附近 wish 推播（已啟用）';
+      statusEl.textContent = running ? `✅ 運行中 · 走在 wish 500m 內會推` : '⏸ 已授權但暫停 (切到非 wish/地圖 tab 會自動暫停省電)';
+      statusEl.style.color = running ? '#10b981' : 'var(--text-light)';
+    } else if (pref === 'declined') {
+      labelEl.textContent = '🔔 附近 wish 推播（已關閉）';
+      statusEl.textContent = '點此重新開啟（會請求權限）';
+      statusEl.style.color = 'var(--text-light)';
+    } else {
+      labelEl.textContent = '🔔 開啟附近 wish 推播';
+      statusEl.textContent = '走在 wish 500m 內自動提醒';
+      statusEl.style.color = 'var(--text-light)';
+    }
+  },
+
+  // v3.4.0 M6.3: onboarding (只跳一次)
+  _maybeShowGeoNotifyOnboarding() {
+    if (typeof GeoNotify === 'undefined') return;
+    const pref = GeoNotify.getPref();
+    if (pref !== 'unset') return; // 已決定過（granted / declined / unsupported）
+    if (!GeoNotify.isSupported()) return;
+    // 至少要有 wishlist 才有意義
+    if (!Trips.current || !Wishlist.list || Wishlist.list.length === 0) return;
+    const modal = document.getElementById('modal-geo-notify-onboarding');
+    if (!modal) return;
+    modal.classList.remove('hidden');
   },
 
   // ===== Renders =====
@@ -4059,6 +4230,25 @@ const App = {
       else if (n.type === 'settlement-reject') {
         typeIcon = '⚠️';
         text = `<strong>${this.nameOf(n.from_email)}</strong> 回報「沒收到你說已付的款」，請確認後再試`;
+      }
+      // v3.4.0 M6.4: wishlist 投票相關通知
+      else if (n.type === 'wish-vote') {
+        typeIcon = '👎';
+        const wish = (typeof Wishlist !== 'undefined') ? Wishlist.allList.find(w => w.id === n.diary_id) : null;
+        const wishName = wish ? wish.name : '(找不到該 wish)';
+        text = `<strong>${this.nameOf(n.from_email)}</strong> 否決了你加的「${this.escapeHtml(wishName)}」`;
+      }
+      else if (n.type === 'wish-rejected') {
+        typeIcon = '🙈';
+        const wish = (typeof Wishlist !== 'undefined') ? Wishlist.allList.find(w => w.id === n.diary_id) : null;
+        const wishName = wish ? wish.name : '(找不到該 wish)';
+        text = `你加的「${this.escapeHtml(wishName)}」被否決達門檻 ⚠️ 點此查看（可強行恢復）`;
+      }
+      else if (n.type === 'wish-force-restore') {
+        typeIcon = '💪';
+        const wish = (typeof Wishlist !== 'undefined') ? Wishlist.allList.find(w => w.id === n.diary_id) : null;
+        const wishName = wish ? wish.name : '(找不到該 wish)';
+        text = `<strong>${this.nameOf(n.from_email)}</strong> 強行恢復了「${this.escapeHtml(wishName)}」（覆寫你的否決票）`;
       }
       else text = '通知';
       return `

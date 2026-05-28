@@ -209,13 +209,29 @@ const Wishlist = {
 
     // 達 threshold → 自動標 rejected
     let patches = { rejected_votes: JSON.stringify(voters) };
+    let becameRejected = false;
     if (typeof Members !== 'undefined') {
       const memberCount = Members.all().length || 1;
       if (voters.length >= this.rejectionThreshold(memberCount)) {
         patches.status = 'rejected';
+        becameRejected = true;
       }
     }
-    return await this._updateRow(id, patches);
+    const updated = await this._updateRow(id, patches);
+
+    // v3.4.0 M6.4: 通知 wish 的擁有者
+    if (typeof Notifications !== 'undefined' && existing.added_by) {
+      try {
+        await Notifications.createBatch([{
+          target_email: existing.added_by,
+          type: becameRejected ? 'wish-rejected' : 'wish-vote',
+          diary_id: existing.id,      // 重用欄位放 wish_id
+          comment_id: voterEmail,     // 重用欄位放投票者 email
+        }]);
+      } catch (e) { console.warn('vote notify failed:', e); }
+    }
+
+    return updated;
   },
 
   // 撤回否決票
@@ -236,10 +252,27 @@ const Wishlist = {
 
   // 加 wish 的人強行覆寫被 rejected 的決定
   async forceRestore(id) {
-    return await this._updateRow(id, {
+    const existing = this.allList.find(w => w.id === id);
+    const updated = await this._updateRow(id, {
       status: 'planned',
       rejected_votes: '[]',
     });
+
+    // v3.4.0 M6.4: 通知所有曾投票的人「你的否決被覆寫」
+    if (existing && typeof Notifications !== 'undefined') {
+      const voters = this.getVoters(existing);
+      if (voters.length > 0) {
+        try {
+          await Notifications.createBatch(voters.map(email => ({
+            target_email: email,
+            type: 'wish-force-restore',
+            diary_id: existing.id,
+          })));
+        } catch (e) { console.warn('forceRestore notify failed:', e); }
+      }
+    }
+
+    return updated;
   },
 
   // ===== 篩選 helper =====
