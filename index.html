@@ -18,7 +18,7 @@
       if (t) document.documentElement.dataset.theme = t;
     } catch (e) {}
   </script>
-  <link rel="stylesheet" href="styles.css?v=353">
+  <link rel="stylesheet" href="styles.css?v=354">
 </head>
 <body>
   <div id="pull-indicator" class="pull-indicator"></div>
@@ -129,8 +129,8 @@
       <!-- 願望 tab (v3.2.0 M6.1 → v3.5.0 加 filter/sort/距離分組) -->
       <section id="tab-wishlist" class="tab-content hidden">
         <div class="wishlist-header">
-          <h3 class="section-title" style="margin-bottom:8px;">💡 願望清單</h3>
-          <p class="hint" id="wishlist-trip-hint" style="margin:0 0 10px 0;">- (還沒選 trip)</p>
+          <h3 class="wishlist-title">💡 願望清單</h3>
+          <p class="hint" id="wishlist-trip-hint">- (還沒選 trip)</p>
           <!-- 類型 filter -->
           <div class="wishlist-type-filter" id="wishlist-type-filter">
             <button type="button" class="chip chip-active" data-type="all">全部</button>
@@ -142,16 +142,16 @@
             <button type="button" class="chip" data-type="other">📍 其他</button>
           </div>
           <!-- v3.5.0: added_by filter (動態 generate) -->
-          <div class="wishlist-addedby-filter" id="wishlist-addedby-filter" style="margin-top:4px;"></div>
+          <div class="wishlist-addedby-filter" id="wishlist-addedby-filter"></div>
           <!-- v3.5.0: 排序 dropdown -->
-          <div class="wishlist-sort-row" style="margin-top:6px; display:flex; align-items:center; gap:8px; font-size:12px;">
-            <span style="color:var(--text-light);">排序：</span>
-            <select id="wishlist-sort-select" style="padding:4px 8px; font-size:12px; border:1px solid var(--border); border-radius:6px; background:var(--card-bg,white); color:var(--text); cursor:pointer;">
+          <div class="wishlist-sort-row">
+            <span class="wishlist-sort-label">排序：</span>
+            <select id="wishlist-sort-select">
               <option value="recent">⏰ 最近加的</option>
               <option value="distance">📍 距離我最近</option>
               <option value="name">🔤 名稱 A→Z</option>
             </select>
-            <small id="wishlist-distance-hint" style="color:var(--text-light);"></small>
+            <small id="wishlist-distance-hint"></small>
           </div>
         </div>
         <div id="wishlist-list" class="wishlist-list"></div>

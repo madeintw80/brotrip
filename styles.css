@@ -1834,8 +1834,37 @@ summary {
   margin: 0;
 }
 
-/* Wishlist tab */
-.wishlist-header { padding: 12px 16px 0; }
+/* Wishlist tab — v3.5.4: 縮緊上方空白 */
+.wishlist-header { padding: 4px 12px 0; }
+.wishlist-title {
+  font-size: 17px;
+  font-weight: 700;
+  margin: 0 0 4px;     /* 移除 h3 預設 top margin */
+  color: var(--text);
+}
+.wishlist-header .hint {
+  margin: 0 0 8px 0;
+  font-size: 12px;
+}
+.wishlist-sort-row {
+  margin-top: 6px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  flex-wrap: wrap;
+}
+.wishlist-sort-label {
+  color: var(--text-light);
+  font-size: 12px;
+}
+#wishlist-distance-hint {
+  color: var(--text-light);
+  font-size: 11px;
+}
+.wishlist-addedby-filter {
+  margin-top: 4px;
+}
 .wishlist-type-filter {
   display: flex;
   flex-wrap: wrap;
@@ -2014,6 +2043,22 @@ summary {
   gap: 6px;
 }
 .wishlist-addedby-filter:empty { display: none; }
+
+/* v3.5.4: 排序 dropdown — 修 dark mode 隱形 bug (原 inline style 用不存在的 --card-bg) */
+#wishlist-sort-select {
+  padding: 4px 10px;
+  font-size: 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--card);        /* 正確 var (light=#fff / dark=#1e293b) */
+  color: var(--text);
+  cursor: pointer;
+  font-weight: 500;
+}
+#wishlist-sort-select option {
+  background: var(--card);
+  color: var(--text);
+}
 
 .wish-dist {
   font-size: 11px;
