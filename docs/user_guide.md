@@ -217,6 +217,20 @@ Wei 那邊可以：
 
 ---
 
-🐾 **BroTrip 是 Wei 自己開發的，沒有公司、不收費、不賣資料。資料都在你自己跟 Wei 的 Google Drive 內，BroTrip 不另存任何東西。**
+## 🔒 隱私 / 安全疑慮
 
-📅 最後更新：2026-05-28 / v3.8.3
+「BroTrip 要求全 Drive 權限，是不是會偷看我的個資？AI 會用我的資料嗎？」
+
+完全合理的擔心，看這份正式說明：
+👉 [PRIVACY.md — BroTrip 隱私說明](./PRIVACY.md)
+
+TL;DR：
+- 沒有 server、沒有後台、AI 看不到你的 Drive
+- 只動 `BroTrip/<群組>/` 資料夾，其他檔案動都不會動
+- 不放心隨時撤銷：https://myaccount.google.com/permissions
+
+---
+
+🐾 **BroTrip 是 Wei 自己開發的，沒有公司、不收費、不賣資料。資料都在你自己的 Google Drive 內，BroTrip 不另存任何東西。**
+
+📅 最後更新：2026-05-28 / v3.8.10
