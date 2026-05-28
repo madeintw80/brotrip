@@ -18,7 +18,7 @@
       if (t) document.documentElement.dataset.theme = t;
     } catch (e) {}
   </script>
-  <link rel="stylesheet" href="styles.css?v=362">
+  <link rel="stylesheet" href="styles.css?v=370">
 </head>
 <body>
   <div id="pull-indicator" class="pull-indicator"></div>
@@ -46,8 +46,22 @@
   <div id="no-group-screen" class="screen hidden">
     <div class="logo">BroTrip</div>
     <p class="subtitle">歡迎！👋</p>
-    <p class="no-group-text">你還沒加入任何群組<br>建立一個跟好友一起紀錄出遊，或用邀請碼加入朋友建好的群組</p>
-    <button id="create-group-btn" class="btn-primary" style="margin-top:24px;">➕ 建立新群組</button>
+    <p class="no-group-text">目前找不到你的群組</p>
+
+    <!-- v3.7.0: 「我曾被邀請過」醒目救急按鈕（最大、最顯眼） -->
+    <button id="no-group-research-btn" class="btn-primary" style="margin-top:24px; background:#10b981; color:white;">
+      🔄 重新搜尋我的群組
+    </button>
+    <p class="hint" style="margin-top:8px; font-size:12px; color:rgba(255,255,255,0.85);">如果你之前被邀請過，按這個</p>
+
+    <!-- 分隔線 -->
+    <div style="margin:24px 0 16px; display:flex; align-items:center; gap:8px; color:rgba(255,255,255,0.5); font-size:12px;">
+      <div style="flex:1; height:1px; background:rgba(255,255,255,0.2);"></div>
+      <span>或者首次使用</span>
+      <div style="flex:1; height:1px; background:rgba(255,255,255,0.2);"></div>
+    </div>
+
+    <button id="create-group-btn" class="btn-primary">➕ 建立新群組</button>
     <button id="join-group-btn" class="btn-secondary" style="margin-top:12px;">📨 用邀請碼加入</button>
     <p class="hint" style="margin-top:24px;"><a href="#" id="no-group-logout" style="color:rgba(255,255,255,0.7);">登出</a></p>
   </div>
@@ -760,23 +774,23 @@
 
   <!-- App 程式碼（順序很重要，後面的依賴前面的）
        Phase 2: groups.js 必須在 cache.js 之前載入，cache PREFIX 依賴 Groups.active() -->
-  <script src="js/config.js?v=362"></script>
-  <script src="js/groups.js?v=362"></script>
-  <script src="js/cache.js?v=362"></script>
-  <script src="js/auth.js?v=362"></script>
-  <script src="js/api.js?v=362"></script>
-  <script src="js/trips.js?v=362"></script>
-  <script src="js/expenses.js?v=362"></script>
-  <script src="js/diaries.js?v=362"></script>
-  <script src="js/members.js?v=362"></script>
-  <script src="js/nicknames.js?v=362"></script>
-  <script src="js/comments.js?v=362"></script>
-  <script src="js/notifications.js?v=362"></script>
-  <script src="js/itineraries.js?v=362"></script>
-  <script src="js/settlements.js?v=362"></script>
-  <script src="js/wishlist.js?v=362"></script>
-  <script src="js/geo_notify.js?v=362"></script>
-  <script src="js/app.js?v=362"></script>
+  <script src="js/config.js?v=370"></script>
+  <script src="js/groups.js?v=370"></script>
+  <script src="js/cache.js?v=370"></script>
+  <script src="js/auth.js?v=370"></script>
+  <script src="js/api.js?v=370"></script>
+  <script src="js/trips.js?v=370"></script>
+  <script src="js/expenses.js?v=370"></script>
+  <script src="js/diaries.js?v=370"></script>
+  <script src="js/members.js?v=370"></script>
+  <script src="js/nicknames.js?v=370"></script>
+  <script src="js/comments.js?v=370"></script>
+  <script src="js/notifications.js?v=370"></script>
+  <script src="js/itineraries.js?v=370"></script>
+  <script src="js/settlements.js?v=370"></script>
+  <script src="js/wishlist.js?v=370"></script>
+  <script src="js/geo_notify.js?v=370"></script>
+  <script src="js/app.js?v=370"></script>
 
   <!-- Service Worker + auto-update（偵測新版 SW 後通知用戶 reload） -->
   <script>

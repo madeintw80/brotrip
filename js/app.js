@@ -205,17 +205,25 @@ const App = {
       return;
     }
 
-    // M4.5 + v3.1.0 + v3.1.3: 每次 afterLogin 都跑 autoDetect 同步 Drive 群組
+    // M4.5 + v3.1.0 + v3.1.3 + v3.7.0: 每次 afterLogin 都跑 autoDetect 同步 Drive 群組
     //   - 自己建的（_detectOwnedGroups 掃 BroTrip/<group>/ 子資料夾）
     //   - 被邀請加入的（_detectSharedGroups 掃 not 'me' in owners 的 BroTrip-Data）
-    // 內部都有 dedupe（已在 list 跳過），所以可重複跑。
-    // v3.1.3 修：之前用 `Groups.list.length === 0` 條件 → 一旦 list 有東西就永遠不再 detect
-    //          → 換裝置/PWA/另一個 session 建的新群組無法自動同步
+    // v3.7.0: 第一次 autoDetect 若 0 結果 + 本地也是空 → 等 2 秒 retry 一次
+    //         原因：朋友剛被邀請完，Drive permission 可能還沒 propagate (race condition)
+    //         孟庭遇到的「登入後找不到群組」就是這個 bug
     if (Auth.user) {
       try {
         const before = Groups.list.length;
         if (before === 0) this.toast('🔍 從 Google Drive 找你的群組...');
-        const detected = await Groups.autoDetectGroups();
+        let detected = await Groups.autoDetectGroups();
+
+        // v3.7.0: race condition fix — 沒找到群組就再試一次
+        if (detected.length === 0 && before === 0) {
+          this.toast('⏳ 第一次有點慢，再試一次...');
+          await new Promise(r => setTimeout(r, 2500));
+          detected = await Groups.autoDetectGroups();
+        }
+
         if (detected.length > 0) {
           const ownerCount = detected.filter(g => g.role === 'owner').length;
           const memberCount = detected.filter(g => g.role === 'member').length;
@@ -233,7 +241,7 @@ const App = {
       }
     }
 
-    // 無群組（新用戶 / TGL legacy 被刪光）→ 顯示無群組畫面
+    // 無群組（新用戶 / TGL legacy 被刪光 / autoDetect 失敗）→ 顯示無群組畫面
     if (!Groups.active()) {
       this.showNoGroupScreen();
       return;
@@ -787,6 +795,38 @@ const App = {
     const createGroupBtn = document.getElementById('create-group-btn');
     if (createGroupBtn) {
       createGroupBtn.addEventListener('click', () => this.openCreateGroupModal());
+    }
+    // v3.7.0: 無群組畫面「重新搜尋」醒目按鈕 — 解決朋友登入後找不到群組的痛點
+    const noGroupResearchBtn = document.getElementById('no-group-research-btn');
+    if (noGroupResearchBtn) {
+      noGroupResearchBtn.addEventListener('click', async () => {
+        const btn = noGroupResearchBtn;
+        const orig = btn.textContent;
+        btn.disabled = true;
+        btn.textContent = '🔄 搜尋中...';
+        try {
+          this.toast('🔍 從 Google Drive 搜尋你的群組...');
+          const detected = await Groups.autoDetectGroups();
+          if (detected.length === 0) {
+            // 再試一次（race condition fix 同上）
+            await new Promise(r => setTimeout(r, 2500));
+            const detected2 = await Groups.autoDetectGroups();
+            if (detected2.length === 0) {
+              this.toast('🤔 還是沒找到。可能你沒被邀請過，請貼邀請碼或建群組');
+              btn.disabled = false;
+              btn.textContent = orig;
+              return;
+            }
+          }
+          this.toast(`✨ 找回 ${Groups.list.length} 個群組！正在進入...`);
+          setTimeout(() => location.reload(), 800);
+        } catch (err) {
+          console.error('research failed:', err);
+          this.toast('搜尋失敗：' + (err.message || '未知錯誤'));
+          btn.disabled = false;
+          btn.textContent = orig;
+        }
+      });
     }
     const noGroupLogout = document.getElementById('no-group-logout');
     if (noGroupLogout) {
