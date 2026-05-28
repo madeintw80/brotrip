@@ -586,13 +586,16 @@ const Groups = {
     return url.toString();
   },
 
+  // v3.6.0: 邀請碼 payload 砍掉 t (sheetTabIds) 跟 p (photosFolderId)
+  //   → 從 ~600 字 → ~150 字 (降 75%)，朋友看到不嚇人
+  //   → 接收端 joinByInvite 自己用 API 抓回來，整體 API call 一樣 (只是時機提前)
+  //   → 加 v:2 標記，decodeInvite 向後相容讀 v1 (舊邀請碼仍能用)
   encodeInvite(group) {
     if (!group) return '';
     const payload = {
+      v: 2,                                                // 版號 (v3.6.0 起)
       s: group.sheetId,
       f: group.folderId,
-      p: group.photosFolderId,
-      t: group.sheetTabIds,
       n: group.name,
       c: (typeof Auth !== 'undefined' && Auth.user) ? Auth.user.email : '',
     };
@@ -640,6 +643,28 @@ const Groups = {
       throw new Error(`存取群組失敗 (${resp.status})，請稍後再試`);
     }
 
+    // v3.6.0: v2 邀請碼不含 sheetTabIds/photosFolderId → 自己用 API 抓
+    //   (v1 legacy 邀請碼 payload 仍含這兩欄，省 API call 直接用)
+    let sheetTabIds = data.sheetTabIds;
+    let photosFolderId = data.photosFolderId;
+
+    if (!sheetTabIds || Object.keys(sheetTabIds).length === 0) {
+      try {
+        sheetTabIds = await API.getSpreadsheetTabIds(data.sheetId);
+      } catch (e) {
+        console.warn('joinByInvite: getSpreadsheetTabIds failed:', e);
+        sheetTabIds = {};
+      }
+    }
+    if (!photosFolderId) {
+      try {
+        const photosFolder = await API.findFolderByName('photos', data.folderId);
+        if (photosFolder) photosFolderId = photosFolder.id;
+      } catch (e) {
+        console.warn('joinByInvite: findFolderByName photos failed:', e);
+      }
+    }
+
     // 有權限 → 加進 list
     const groupId = 'g_' + Math.random().toString(36).slice(2, 11) + Date.now().toString(36);
     const newGroup = {
@@ -647,8 +672,8 @@ const Groups = {
       name: data.name,
       sheetId: data.sheetId,
       folderId: data.folderId,
-      photosFolderId: data.photosFolderId,
-      sheetTabIds: data.sheetTabIds || {},
+      photosFolderId: photosFolderId || '',
+      sheetTabIds: sheetTabIds || {},
       role: 'member',
       joinedAt: new Date().toISOString(),
       ownerEmail: data.createdBy || '',
@@ -658,6 +683,9 @@ const Groups = {
     return newGroup;
   },
 
+  // v3.6.0: 向後相容
+  //   v1 (legacy, 無 v 欄): payload 含 t/p → 直接用
+  //   v2 (v3.6.0+): payload 只有 v/s/f/n/c → joinByInvite 補抓 t/p
   decodeInvite(code) {
     if (!code) return null;
     try {
@@ -669,10 +697,11 @@ const Groups = {
       const data = JSON.parse(json);
       if (!data.s || !data.f || !data.n) return null;
       return {
+        version: data.v || 1,         // v3.6.0: 1=legacy 含 t/p, 2=lite 不含
         sheetId: data.s,
         folderId: data.f,
-        photosFolderId: data.p,
-        sheetTabIds: data.t || {},
+        photosFolderId: data.p || '', // v2 沒這欄 → joinByInvite 自己抓
+        sheetTabIds: data.t || {},     // v2 沒這欄 → joinByInvite 自己抓
         name: data.n,
         createdBy: data.c || '',
       };
