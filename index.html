@@ -18,7 +18,7 @@
       if (t) document.documentElement.dataset.theme = t;
     } catch (e) {}
   </script>
-  <link rel="stylesheet" href="styles.css?v=388">
+  <link rel="stylesheet" href="styles.css?v=389">
 </head>
 <body>
   <div id="pull-indicator" class="pull-indicator"></div>
@@ -480,20 +480,21 @@
         <label>貼上朋友給你的邀請碼
           <textarea name="code" required rows="4" placeholder="貼上邀請碼（一長串字串）" style="font-family:monospace; font-size:12px; word-break:break-all;"></textarea>
         </label>
-        <div id="join-group-permission-banner" class="hidden" style="margin:12px 0; padding:12px; background:rgba(251, 191, 36, 0.15); border:1px solid rgba(251, 191, 36, 0.5); border-radius:8px;">
-          <p style="margin:0 0 8px 0; font-weight:600;">⚠️ 你還沒有 Drive 存取權限</p>
+        <div id="join-group-permission-banner" class="hidden" style="margin:12px 0; padding:12px; background:rgba(251, 191, 36, 0.15); border:1px solid rgba(251, 191, 36, 0.5); border-radius:8px; color:#78350f;">
+          <p style="margin:0 0 8px 0; font-weight:600; color:#78350f;">⚠️ 你還沒有 Drive 存取權限</p>
 
-          <!-- v3.8.1: 顯示朋友當前登入 Gmail，幫她快速發現「登入用錯帳號」-->
-          <div style="margin:0 0 12px 0; padding:10px; background:rgba(255,255,255,0.6); border-radius:6px; font-size:13px; line-height:1.5;">
-            <div style="font-weight:600; margin-bottom:4px;">🔍 先檢查：你登入的 Gmail 對嗎？</div>
-            <div style="font-size:12px;">你現在用 <code style="background:#fef3c7; padding:2px 6px; border-radius:3px; font-weight:600;" id="join-current-email">-</code></div>
-            <div style="font-size:12px; margin-top:6px; color:#78350f;">群組擁有者 <strong id="join-owner-email">-</strong> 是否把這個 Gmail 加進 share？<br><strong>如果你登入用錯帳號，請按下方「換帳號重登」</strong></div>
+          <!-- v3.8.1 / v3.8.9: 顯示朋友當前登入 Gmail
+               v3.8.9 修：強制深褐色 (避免 dark mode 黃底淺字看不見) + word-break 防長 email -->
+          <div style="margin:0 0 12px 0; padding:10px; background:rgba(255,255,255,0.85); border-radius:6px; font-size:13px; line-height:1.5; color:#78350f;">
+            <div style="font-weight:600; margin-bottom:4px; color:#78350f;">🔍 先檢查：你登入的 Gmail 對嗎？</div>
+            <div style="font-size:13px; color:#78350f;">你現在用 <code id="join-current-email" style="background:#fde68a; color:#451a03; padding:3px 8px; border-radius:4px; font-weight:700; word-break:break-all; display:inline-block; font-family:monospace;">-</code></div>
+            <div style="font-size:12px; margin-top:6px; color:#78350f;">群組擁有者 <strong id="join-owner-email" style="color:#451a03;">-</strong> 是否把這個 Gmail 加進 share？<br><strong>如果你登入用錯帳號，請按下方「換帳號重登」</strong></div>
           </div>
 
-          <button type="button" id="join-switch-account-btn" class="btn-primary" style="width:100%; background:#dc2626;">🔄 換帳號重登</button>
+          <button type="button" id="join-switch-account-btn" class="btn-primary" style="width:100%; background:#dc2626; color:white;">🔄 換帳號重登</button>
           <p style="margin:6px 0 12px 0; font-size:12px; color:#78350f; text-align:center;">↑ 如果上面 Gmail 不是你常用的、或不是 owner share 的對象</p>
 
-          <p style="margin:12px 0 8px 0; font-size:13px; font-weight:600;">或是 owner 還沒 share 給你？</p>
+          <p style="margin:12px 0 8px 0; font-size:13px; font-weight:600; color:#78350f;">或是 owner 還沒 share 給你？</p>
           <button type="button" id="join-retry-btn" class="btn-primary" style="width:100%;">✅ 我已經有權限了，重試</button>
           <button type="button" id="join-open-drive-btn" class="btn-secondary" style="width:100%; margin-top:8px;">🔗 再開一次 Drive 頁面</button>
         </div>
@@ -841,23 +842,23 @@
 
   <!-- App 程式碼（順序很重要，後面的依賴前面的）
        Phase 2: groups.js 必須在 cache.js 之前載入，cache PREFIX 依賴 Groups.active() -->
-  <script src="js/config.js?v=388"></script>
-  <script src="js/groups.js?v=388"></script>
-  <script src="js/cache.js?v=388"></script>
-  <script src="js/auth.js?v=388"></script>
-  <script src="js/api.js?v=388"></script>
-  <script src="js/trips.js?v=388"></script>
-  <script src="js/expenses.js?v=388"></script>
-  <script src="js/diaries.js?v=388"></script>
-  <script src="js/members.js?v=388"></script>
-  <script src="js/nicknames.js?v=388"></script>
-  <script src="js/comments.js?v=388"></script>
-  <script src="js/notifications.js?v=388"></script>
-  <script src="js/itineraries.js?v=388"></script>
-  <script src="js/settlements.js?v=388"></script>
-  <script src="js/wishlist.js?v=388"></script>
-  <script src="js/geo_notify.js?v=388"></script>
-  <script src="js/app.js?v=388"></script>
+  <script src="js/config.js?v=389"></script>
+  <script src="js/groups.js?v=389"></script>
+  <script src="js/cache.js?v=389"></script>
+  <script src="js/auth.js?v=389"></script>
+  <script src="js/api.js?v=389"></script>
+  <script src="js/trips.js?v=389"></script>
+  <script src="js/expenses.js?v=389"></script>
+  <script src="js/diaries.js?v=389"></script>
+  <script src="js/members.js?v=389"></script>
+  <script src="js/nicknames.js?v=389"></script>
+  <script src="js/comments.js?v=389"></script>
+  <script src="js/notifications.js?v=389"></script>
+  <script src="js/itineraries.js?v=389"></script>
+  <script src="js/settlements.js?v=389"></script>
+  <script src="js/wishlist.js?v=389"></script>
+  <script src="js/geo_notify.js?v=389"></script>
+  <script src="js/app.js?v=389"></script>
 
   <!-- Service Worker + auto-update（偵測新版 SW 後通知用戶 reload） -->
   <script>

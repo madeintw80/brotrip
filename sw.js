@@ -1,29 +1,29 @@
 // 改版時記得升 version，下次載入會清舊 cache
 // v3.5.9 起所有 ?v=xxx query string 統一同版號 (sed 'i 's/?v=[0-9]\+/?v=NEW/g' index.html sw.js)
-const CACHE = 'brotrip-v388';
+const CACHE = 'brotrip-v389';
 const ASSETS = [
   './',
   './index.html',
-  './styles.css?v=388',
+  './styles.css?v=389',
   './manifest.json',
   './icons/icon.svg',
-  './js/config.js?v=388',
-  './js/groups.js?v=388',
-  './js/cache.js?v=388',
-  './js/auth.js?v=388',
-  './js/api.js?v=388',
-  './js/trips.js?v=388',
-  './js/expenses.js?v=388',
-  './js/diaries.js?v=388',
-  './js/members.js?v=388',
-  './js/nicknames.js?v=388',
-  './js/comments.js?v=388',
-  './js/notifications.js?v=388',
-  './js/itineraries.js?v=388',
-  './js/settlements.js?v=388',
-  './js/wishlist.js?v=388',
-  './js/geo_notify.js?v=388',
-  './js/app.js?v=388',
+  './js/config.js?v=389',
+  './js/groups.js?v=389',
+  './js/cache.js?v=389',
+  './js/auth.js?v=389',
+  './js/api.js?v=389',
+  './js/trips.js?v=389',
+  './js/expenses.js?v=389',
+  './js/diaries.js?v=389',
+  './js/members.js?v=389',
+  './js/nicknames.js?v=389',
+  './js/comments.js?v=389',
+  './js/notifications.js?v=389',
+  './js/itineraries.js?v=389',
+  './js/settlements.js?v=389',
+  './js/wishlist.js?v=389',
+  './js/geo_notify.js?v=389',
+  './js/app.js?v=389',
 ];
 
 self.addEventListener('install', e => {
