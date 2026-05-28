@@ -2972,6 +2972,8 @@ const App = {
       actions.push(`<button class="btn-small wish-action" data-action="force-restore" data-id="${w.id}">💪 強行恢復</button>`);
     }
     if (isMine) {
+      // v3.8.3: 改備註 — 自己加的可改（圍觀者也行）
+      actions.push(`<button class="btn-small wish-action" data-action="edit-note" data-id="${w.id}">✏️ 改備註</button>`);
       // 刪除自己加的：永遠允許 (圍觀者也能刪自己加的 wish)
       actions.push(`<button class="btn-small btn-danger wish-action" data-action="delete" data-id="${w.id}">🗑️ 刪除</button>`);
     }
@@ -3100,6 +3102,19 @@ const App = {
         await Wishlist.remove(id);
         this.toast(`🗑️ 已刪除「${wish.name}」`);
         break;
+      // v3.8.3: 改備註 (推薦來源、為什麼想去等)
+      case 'edit-note': {
+        const currentNote = wish.source_note || '';
+        const newNote = prompt(`改備註：「${wish.name}」\n\n(例：Paul 推薦 / IG @xxx / 米其林必比登 / 留空清除)`, currentNote);
+        if (newNote === null) return; // 用戶按取消
+        if (newNote.trim() === currentNote.trim()) {
+          this.toast('備註沒有改變');
+          return;
+        }
+        await Wishlist.updateNote(id, newNote);
+        this.toast(newNote.trim() ? `✏️ 備註已更新` : `✏️ 已清除備註`);
+        break;
+      }
       default:
         console.warn('unknown wish action:', action);
     }

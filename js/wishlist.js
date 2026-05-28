@@ -167,6 +167,19 @@ const Wishlist = {
     });
   },
 
+  // v3.8.3: 改備註 (source_note) — 任何成員加的 wish 自己可改
+  async updateNote(id, newNote) {
+    return await this._updateRow(id, {
+      source_note: (newNote || '').trim(),
+    });
+  },
+
+  // v3.8.3: 改類型 (type) — 同上自己加的可改
+  async updateType(id, newType) {
+    if (!Wishlist.TYPES.includes(newType)) newType = 'other';
+    return await this._updateRow(id, { type: newType });
+  },
+
   // 從 visited / rejected 改回 planned（誤標還原）
   async resetToPlanned(id) {
     return await this._updateRow(id, {
