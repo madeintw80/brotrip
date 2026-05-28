@@ -1,5 +1,5 @@
 // 改版時記得升 version，下次載入會清舊 cache
-const CACHE = 'brotrip-v351';
+const CACHE = 'brotrip-v352';
 const ASSETS = [
   './',
   './index.html',

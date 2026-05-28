@@ -1967,6 +1967,53 @@ summary {
   font-size: 11px;
 }
 
+/* v3.5.2: Wishlist 「在 Google Maps 開啟」按鈕 — 中性灰色 chip 風格 */
+.wish-gmaps-btn {
+  display: inline-flex;
+  align-items: center;
+  background: #f3f4f6;
+  color: #1f2937;
+  border: 1px solid #d1d5db;
+  text-decoration: none;
+  padding: 5px 10px;
+  font-size: 12px;
+  font-weight: 500;
+  border-radius: 6px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.wish-gmaps-btn:hover { background: #e5e7eb; }
+.wish-gmaps-btn:active { background: #d1d5db; }
+[data-theme="dark"] .wish-gmaps-btn {
+  background: #374151;
+  color: #e5e7eb;
+  border-color: #4b5563;
+}
+[data-theme="dark"] .wish-gmaps-btn:hover { background: #4b5563; }
+
+/* v3.5.2: dark mode 對比強化 (wishlist tab) */
+[data-theme="dark"] .wish-card {
+  /* 原本 #1f2937 太接近 page bg 對比弱 → 拉亮 */
+  background: #283342;
+  border-color: #3b4453;
+}
+[data-theme="dark"] .wish-name { color: #f3f4f6; }
+[data-theme="dark"] .wish-address,
+[data-theme="dark"] .wish-meta { color: #cbd5e1; }
+[data-theme="dark"] .wish-source { color: #93c5fd; }
+[data-theme="dark"] .wish-group-header {
+  background: #1e293b;
+  color: #f1f5f9;
+  border: 1px solid #334155;
+}
+/* Wishlist tab 標題 + hint */
+[data-theme="dark"] #wishlist-trip-hint,
+[data-theme="dark"] #wishlist-distance-hint { color: #cbd5e1; }
+
+/* Map InfoWindow — Google Maps 強制白底，content 已在 JS inline 強制深色，
+   這裡只負責 close 圖示色 (有時 dark mode 會繼承不到) */
+.gm-style-iw button img { filter: invert(20%); }
+
 /* v3.5.0: Wishlist filter / sort 增強 */
 .wishlist-addedby-filter {
   display: flex;

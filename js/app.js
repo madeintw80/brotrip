@@ -1814,12 +1814,13 @@ const App = {
         map: this._map,
         title: loc.name,
       });
+      // v3.5.2: InfoWindow 強制深色文字（白底）— 避免繼承 dark mode 變看不見
       const content = `
-        <div style="max-width:220px; font-family:inherit; cursor:pointer;" onclick="App.openDiaryFromMap('${loc.diary.id}')">
-          <div style="font-weight:600; font-size:14px;">${this.escapeHtml(loc.diary.mood || '')} ${this.escapeHtml(this.nameOf(loc.diary.author))}</div>
-          <div style="font-size:12px; color:#6b7280;">${loc.diary.date} · ${this.escapeHtml(loc.name)}</div>
-          <div style="margin-top:6px; font-size:13px; white-space:pre-wrap;">${this.escapeHtml((loc.diary.content || '').slice(0, 200))}${(loc.diary.content || '').length > 200 ? '...' : ''}</div>
-          <div style="margin-top:8px; color:#3b82f6; font-size:12px; font-weight:600;">點此查看完整日記 →</div>
+        <div style="max-width:240px; font-family:inherit; cursor:pointer; color:#1f2937; line-height:1.45;" onclick="App.openDiaryFromMap('${loc.diary.id}')">
+          <div style="font-weight:700; font-size:14px; color:#111827;">${this.escapeHtml(loc.diary.mood || '')} ${this.escapeHtml(this.nameOf(loc.diary.author))}</div>
+          <div style="font-size:12px; color:#4b5563; margin-top:2px;">${loc.diary.date} · ${this.escapeHtml(loc.name)}</div>
+          <div style="margin-top:6px; font-size:13px; white-space:pre-wrap; color:#1f2937;">${this.escapeHtml((loc.diary.content || '').slice(0, 200))}${(loc.diary.content || '').length > 200 ? '...' : ''}</div>
+          <div style="margin-top:8px; color:#1d4ed8; font-size:12px; font-weight:700;">點此查看完整日記 →</div>
         </div>
       `;
       const info = new google.maps.InfoWindow({ content });
@@ -1880,22 +1881,32 @@ const App = {
       const statusText = w.status === 'visited' ? '✓ 已去過' :
                          w.status === 'promoted' ? '📌 已排進行程' :
                          '🌱 候選中';
+      // v3.5.2: InfoWindow 強制白底深色，所有文字 explicit 設色 — 避免繼承 dark mode 變看不見
+      // 「在 Google Maps 開啟」按鈕用 place_id 優先、lat/lng fallback
+      const gmUrl = this._buildGoogleMapsUrl(w);
       const content = `
-        <div style="max-width:240px; font-family:inherit;">
-          <div style="font-weight:600; font-size:14px;">${typeLabel} ${this.escapeHtml(w.name)}</div>
-          ${w.address ? `<div style="font-size:12px; color:#6b7280; margin-top:2px;">${this.escapeHtml(w.address)}</div>` : ''}
-          ${w.source_note ? `<div style="font-size:12px; color:#3b82f6; margin-top:6px;">💬 ${this.escapeHtml(w.source_note)}</div>` : ''}
-          <div style="font-size:11px; color:#9ca3af; margin-top:6px;">${this.escapeHtml(addedBy)} 加的 · ${statusText}</div>
-          ${w.status === 'planned' ? `
-            <button onclick="App._wishMarkerAction('visited','${w.id}')"
-                    style="margin-top:8px; padding:5px 12px; background:#3b82f6; color:#fff; border:none; border-radius:6px; cursor:pointer; font-size:12px;">
-              ✓ 標已去過
-            </button>
-            <button onclick="App._wishMarkerAction('promote','${w.id}')"
-                    style="margin-top:8px; margin-left:4px; padding:5px 12px; background:#10b981; color:#fff; border:none; border-radius:6px; cursor:pointer; font-size:12px;">
-              ➕ 進行程
-            </button>
-          ` : ''}
+        <div style="max-width:260px; font-family:inherit; color:#1f2937; line-height:1.45;">
+          <div style="font-weight:700; font-size:14px; color:#111827;">${typeLabel} ${this.escapeHtml(w.name)}</div>
+          ${w.address ? `<div style="font-size:12px; color:#4b5563; margin-top:3px;">${this.escapeHtml(w.address)}</div>` : ''}
+          ${w.source_note ? `<div style="font-size:12px; color:#1d4ed8; margin-top:6px; font-weight:500;">💬 ${this.escapeHtml(w.source_note)}</div>` : ''}
+          <div style="font-size:11px; color:#6b7280; margin-top:6px;">${this.escapeHtml(addedBy)} 加的 · <span style="color:#374151; font-weight:500;">${statusText}</span></div>
+          <div style="margin-top:10px; display:flex; flex-wrap:wrap; gap:6px;">
+            ${gmUrl ? `
+              <a href="${gmUrl}" target="_blank" rel="noopener"
+                 style="padding:5px 10px; background:#f3f4f6; color:#1f2937; text-decoration:none; border:1px solid #d1d5db; border-radius:6px; cursor:pointer; font-size:12px; font-weight:500;">
+                🗺️ Google Maps
+              </a>` : ''}
+            ${w.status === 'planned' ? `
+              <button onclick="App._wishMarkerAction('visited','${w.id}')"
+                      style="padding:5px 10px; background:#3b82f6; color:#fff; border:none; border-radius:6px; cursor:pointer; font-size:12px; font-weight:500;">
+                ✓ 已去過
+              </button>
+              <button onclick="App._wishMarkerAction('promote','${w.id}')"
+                      style="padding:5px 10px; background:#10b981; color:#fff; border:none; border-radius:6px; cursor:pointer; font-size:12px; font-weight:500;">
+                ➕ 進行程
+              </button>
+            ` : ''}
+          </div>
         </div>
       `;
       const info = new google.maps.InfoWindow({ content });
@@ -2690,6 +2701,11 @@ const App = {
 
     // 操作按鈕：依狀態 + 是否我加的 顯示
     const actions = [];
+    // v3.5.2: 跳 Google Maps（永遠在最前面，最常用）
+    const gmUrl = this._buildGoogleMapsUrl(w);
+    if (gmUrl) {
+      actions.push(`<a class="btn-small wish-gmaps-btn" href="${gmUrl}" target="_blank" rel="noopener">🗺️ 地圖</a>`);
+    }
     if (!visited && !isRejectedView) {
       actions.push(`<button class="btn-small wish-action" data-action="promote" data-id="${w.id}">➕ 加進行程</button>`);
       actions.push(`<button class="btn-small wish-action" data-action="visited" data-id="${w.id}">✓ 已去過</button>`);
@@ -3073,6 +3089,25 @@ const App = {
     } else {
       GeoNotify.stop();
     }
+  },
+
+  // v3.5.2: 產 Google Maps deep link
+  //   優先 place_id (最精準)，沒 place_id 用 lat/lng，都沒 fallback 搜尋名稱
+  //   target=_blank 在 iOS PWA 會嘗試開 Google Maps app (有裝)，沒裝走 web
+  _buildGoogleMapsUrl(w) {
+    if (!w) return '';
+    if (w.place_id) {
+      // search?api=1 with query + query_place_id 是 Google 官方建議格式
+      const q = encodeURIComponent(w.name || '');
+      return `https://www.google.com/maps/search/?api=1&query=${q}&query_place_id=${encodeURIComponent(w.place_id)}`;
+    }
+    if (w.lat && w.lng) {
+      return `https://www.google.com/maps?q=${w.lat},${w.lng}`;
+    }
+    if (w.name) {
+      return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(w.name + (w.address ? ' ' + w.address : ''))}`;
+    }
+    return '';
   },
 
   // v3.4.0 M6.3: 設定 tab 推播 button 狀態顯示
