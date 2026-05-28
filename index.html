@@ -18,7 +18,7 @@
       if (t) document.documentElement.dataset.theme = t;
     } catch (e) {}
   </script>
-  <link rel="stylesheet" href="styles.css?v=354">
+  <link rel="stylesheet" href="styles.css?v=355">
 </head>
 <body>
   <div id="pull-indicator" class="pull-indicator"></div>
@@ -108,11 +108,9 @@
 
       <!-- 地圖 tab -->
       <section id="tab-map" class="tab-content hidden">
-        <div class="map-controls">
-          <label class="map-toggle">
-            <input type="checkbox" id="toggle-wish-markers" checked>
-            <span>💡 顯示願望清單地點</span>
-          </label>
+        <div class="map-controls" style="display:flex; flex-direction:row; align-items:center; justify-content:flex-end; gap:6px; padding:2px 12px; min-height:22px; background:transparent;">
+          <input type="checkbox" id="toggle-wish-markers" checked style="width:14px; height:14px; margin:0; cursor:pointer;">
+          <label for="toggle-wish-markers" style="font-size:11px; color:#94a3b8; cursor:pointer; white-space:nowrap; line-height:1; user-select:none;">💡 顯示願望清單地點</label>
         </div>
         <div id="trip-map"></div>
         <div id="trip-map-empty" class="list-empty hidden">還沒有日記/行程有座標 — 新增日記時用「地點」自動推薦選地點，或下方按 +規劃預計行程。</div>

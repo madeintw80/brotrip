@@ -1806,33 +1806,9 @@ summary {
   .nav-btn .nav-label { font-size: 10px; }
 }
 
-/* v3.5.3: 地圖 toggle 回到 banner 但壓扁成一排（不再 floating chip） */
-.map-controls {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  padding: 4px 12px;
-  min-height: 28px;
-  background: transparent;       /* 跟 page bg 融合，不再深色塊 */
-  flex-shrink: 0;                /* 不被 flex 壓縮 */
-}
-.map-toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  font-size: 12px;
-  color: var(--text-light);
-  cursor: pointer;
-  user-select: none;
-  line-height: 1.2;
-  white-space: nowrap;
-}
-.map-toggle input[type="checkbox"] {
-  width: 14px;
-  height: 14px;
-  cursor: pointer;
-  margin: 0;
-}
+/* v3.5.5: 地圖 toggle 改用 inline style 雙保險 (避免 SW cache 過時)
+   HTML 內已 inline 設好 flex-direction:row 強制水平單行，min-height:22px */
+.map-controls { flex-shrink: 0; }
 
 /* Wishlist tab — v3.5.4: 縮緊上方空白 */
 .wishlist-header { padding: 4px 12px 0; }
