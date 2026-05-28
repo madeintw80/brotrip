@@ -18,7 +18,7 @@
       if (t) document.documentElement.dataset.theme = t;
     } catch (e) {}
   </script>
-  <link rel="stylesheet" href="styles.css?v=385">
+  <link rel="stylesheet" href="styles.css?v=386">
 </head>
 <body>
   <div id="pull-indicator" class="pull-indicator"></div>
@@ -684,6 +684,23 @@
     </div>
   </div>
 
+  <!-- Modal: 日記從願望清單搜尋 (v3.8.6) -->
+  <div id="modal-diary-wishlist-search" class="modal hidden">
+    <div class="modal-content" style="max-height:80vh; display:flex; flex-direction:column;">
+      <header class="modal-header">
+        <h2>💡 從願望清單選地點</h2>
+        <button class="modal-close" type="button">✕</button>
+      </header>
+      <div style="padding:8px 0 12px;">
+        <input type="search" id="diary-wish-search-input" placeholder="🔍 搜尋名稱 / 地址 / 備註..." style="width:100%; padding:10px 12px; border:1px solid var(--border); border-radius:8px; font-size:14px; background:var(--card); color:var(--text);">
+      </div>
+      <div id="diary-wish-search-list" style="overflow-y:auto; flex:1; padding-right:4px; max-height:50vh;"></div>
+      <div class="form-actions" style="margin-top:12px;">
+        <button type="button" class="btn-cancel modal-close" style="width:100%;">取消</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Modal: OAuth scope 沒勾警告 (v3.8.4) -->
   <div id="modal-missing-scope" class="modal hidden">
     <div class="modal-content">
@@ -824,23 +841,23 @@
 
   <!-- App 程式碼（順序很重要，後面的依賴前面的）
        Phase 2: groups.js 必須在 cache.js 之前載入，cache PREFIX 依賴 Groups.active() -->
-  <script src="js/config.js?v=385"></script>
-  <script src="js/groups.js?v=385"></script>
-  <script src="js/cache.js?v=385"></script>
-  <script src="js/auth.js?v=385"></script>
-  <script src="js/api.js?v=385"></script>
-  <script src="js/trips.js?v=385"></script>
-  <script src="js/expenses.js?v=385"></script>
-  <script src="js/diaries.js?v=385"></script>
-  <script src="js/members.js?v=385"></script>
-  <script src="js/nicknames.js?v=385"></script>
-  <script src="js/comments.js?v=385"></script>
-  <script src="js/notifications.js?v=385"></script>
-  <script src="js/itineraries.js?v=385"></script>
-  <script src="js/settlements.js?v=385"></script>
-  <script src="js/wishlist.js?v=385"></script>
-  <script src="js/geo_notify.js?v=385"></script>
-  <script src="js/app.js?v=385"></script>
+  <script src="js/config.js?v=386"></script>
+  <script src="js/groups.js?v=386"></script>
+  <script src="js/cache.js?v=386"></script>
+  <script src="js/auth.js?v=386"></script>
+  <script src="js/api.js?v=386"></script>
+  <script src="js/trips.js?v=386"></script>
+  <script src="js/expenses.js?v=386"></script>
+  <script src="js/diaries.js?v=386"></script>
+  <script src="js/members.js?v=386"></script>
+  <script src="js/nicknames.js?v=386"></script>
+  <script src="js/comments.js?v=386"></script>
+  <script src="js/notifications.js?v=386"></script>
+  <script src="js/itineraries.js?v=386"></script>
+  <script src="js/settlements.js?v=386"></script>
+  <script src="js/wishlist.js?v=386"></script>
+  <script src="js/geo_notify.js?v=386"></script>
+  <script src="js/app.js?v=386"></script>
 
   <!-- Service Worker + auto-update（偵測新版 SW 後通知用戶 reload） -->
   <script>

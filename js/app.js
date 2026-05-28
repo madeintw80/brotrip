@@ -3214,6 +3214,9 @@ const App = {
   },
 
   // v3.3.0 M6.2.3: 在日記 modal 內渲染當前 trip 的 wishlist chips
+  // v3.8.6: 限制 5 個 chips + 加搜尋按鈕 (避免 wish 多時爆畫面)
+  //   - 預設顯示「最近加的 5 個」
+  //   - 超過 5 個 → 加「🔍 搜尋全部 N 個」按鈕跳搜尋 modal
   _renderDiaryWishlistChips() {
     const wrap = document.getElementById('diary-wishlist-chips');
     const listEl = document.getElementById('diary-wishlist-chips-list');
@@ -3222,46 +3225,119 @@ const App = {
       wrap.style.display = 'none';
       return;
     }
-    // 只列 planned / promoted（未去過）
-    const candidates = Wishlist.list.filter(w => w.status === 'planned' || w.status === 'promoted');
+    // 只列 planned / promoted（未去過），按 created_at desc 排序
+    const candidates = Wishlist.list
+      .filter(w => w.status === 'planned' || w.status === 'promoted')
+      .sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''));
     if (candidates.length === 0) {
       wrap.style.display = 'none';
       return;
     }
     wrap.style.display = '';
-    listEl.innerHTML = candidates.map(w => {
+
+    const LIMIT = 5;
+    const limited = candidates.slice(0, LIMIT);
+    const hasMore = candidates.length > LIMIT;
+
+    let html = limited.map(w => {
       const typeIcon = (Wishlist.TYPE_LABEL && Wishlist.TYPE_LABEL[w.type]) || '📍';
-      const shortType = typeIcon.split(' ')[0]; // 只取 emoji
+      const shortType = typeIcon.split(' ')[0];
       return `<button type="button" class="chip diary-wish-chip" data-wish-id="${this.escapeHtml(w.id)}">${shortType} ${this.escapeHtml(w.name)}</button>`;
     }).join('');
 
-    // 綁點擊
+    // 搜尋按鈕 (永遠顯示，讓用戶知道完整數量；超過 5 個強調搜尋)
+    if (hasMore) {
+      html += `<button type="button" id="diary-wish-search-btn" class="chip" style="background:var(--primary); color:white; font-weight:600;">🔍 搜尋全部 ${candidates.length} 個</button>`;
+    } else if (candidates.length > 0) {
+      html += `<button type="button" id="diary-wish-search-btn" class="chip" style="border-style:dashed;">🔍 在 ${candidates.length} 個內搜尋</button>`;
+    }
+
+    listEl.innerHTML = html;
+
+    // 綁點擊 chips
     listEl.querySelectorAll('.diary-wish-chip').forEach(btn => {
-      btn.addEventListener('click', () => {
-        const wid = btn.dataset.wishId;
-        const wish = Wishlist.list.find(w => w.id === wid);
-        if (!wish) return;
-        const form = document.getElementById('diary-form');
-        const locInput = form.elements['location'];
-        // 帶 location 文字（地址優先 + 名稱）
-        locInput.value = wish.address ? `${wish.name}（${wish.address}）` : wish.name;
-        // _selectedPlace 帶座標讓地圖能定位
-        if (wish.lat && wish.lng) {
-          this._selectedPlace = {
-            place_id: wish.place_id || '',
-            name: wish.name,
-            address: wish.address || '',
-            lat: parseFloat(wish.lat),
-            lng: parseFloat(wish.lng),
-          };
-        }
-        this._pendingDiaryWishId = wish.id;
-        // 視覺反饋：highlight chosen chip
-        listEl.querySelectorAll('.diary-wish-chip').forEach(c => c.classList.remove('chip-active'));
-        btn.classList.add('chip-active');
-        this.toast(`💡 已帶入「${wish.name}」，存日記後會自動標已去過`);
-      });
+      btn.addEventListener('click', () => this._pickDiaryWish(btn.dataset.wishId));
     });
+    // 綁搜尋按鈕
+    const searchBtn = document.getElementById('diary-wish-search-btn');
+    if (searchBtn) searchBtn.addEventListener('click', () => this._openDiaryWishlistSearch());
+  },
+
+  // v3.8.6: 點 chip 或 modal 內選一個 → 帶入 diary location
+  _pickDiaryWish(wid) {
+    const wish = Wishlist.list.find(w => w.id === wid);
+    if (!wish) return;
+    const form = document.getElementById('diary-form');
+    const locInput = form.elements['location'];
+    locInput.value = wish.address ? `${wish.name}（${wish.address}）` : wish.name;
+    if (wish.lat && wish.lng) {
+      this._selectedPlace = {
+        place_id: wish.place_id || '',
+        name: wish.name,
+        address: wish.address || '',
+        lat: parseFloat(wish.lat),
+        lng: parseFloat(wish.lng),
+      };
+    }
+    this._pendingDiaryWishId = wish.id;
+    // 視覺反饋：highlight chosen chip (僅針對外層 chips, modal 內選不需要)
+    document.querySelectorAll('.diary-wish-chip').forEach(c => c.classList.remove('chip-active'));
+    const chosenChip = document.querySelector(`.diary-wish-chip[data-wish-id="${wid.replace(/"/g, '\\"')}"]`);
+    if (chosenChip) chosenChip.classList.add('chip-active');
+    this.toast(`💡 已帶入「${wish.name}」，存日記後會自動標已去過`);
+  },
+
+  // v3.8.6: 開搜尋 modal 列出全部 candidates
+  _openDiaryWishlistSearch() {
+    if (typeof Wishlist === 'undefined') return;
+    const modal = document.getElementById('modal-diary-wishlist-search');
+    const listEl = document.getElementById('diary-wish-search-list');
+    const searchInput = document.getElementById('diary-wish-search-input');
+    if (!modal || !listEl || !searchInput) return;
+
+    const candidates = Wishlist.list
+      .filter(w => w.status === 'planned' || w.status === 'promoted')
+      .sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''));
+
+    const render = (filtered) => {
+      if (filtered.length === 0) {
+        listEl.innerHTML = '<div style="text-align:center; padding:20px; color:var(--text-light);">沒有符合的 wish</div>';
+        return;
+      }
+      listEl.innerHTML = filtered.map(w => {
+        const typeIcon = (Wishlist.TYPE_LABEL && Wishlist.TYPE_LABEL[w.type]) || '📍';
+        const addedBy = this.nameOf(w.added_by) || (w.added_by || '').split('@')[0];
+        return `
+          <button type="button" class="diary-wish-search-item" data-wish-id="${this.escapeAttr(w.id)}" style="display:flex; flex-direction:column; align-items:flex-start; width:100%; padding:10px 12px; background:var(--card); border:1px solid var(--border); border-radius:8px; margin-bottom:6px; text-align:left; cursor:pointer;">
+            <div style="font-size:14px; font-weight:600; color:var(--text);">${typeIcon} ${this.escapeHtml(w.name)}</div>
+            ${w.address ? `<div style="font-size:11px; color:var(--text-light); margin-top:2px;">📍 ${this.escapeHtml(w.address)}</div>` : ''}
+            <div style="font-size:11px; color:var(--text-light); margin-top:2px;">${this.escapeHtml(addedBy)} 加的${w.source_note ? ` · 💬 ${this.escapeHtml(w.source_note)}` : ''}</div>
+          </button>
+        `;
+      }).join('');
+      listEl.querySelectorAll('.diary-wish-search-item').forEach(btn => {
+        btn.addEventListener('click', () => {
+          this._pickDiaryWish(btn.dataset.wishId);
+          modal.classList.add('hidden');
+        });
+      });
+    };
+
+    // input filter
+    searchInput.value = '';
+    render(candidates);
+    searchInput.oninput = () => {
+      const q = searchInput.value.trim().toLowerCase();
+      if (!q) { render(candidates); return; }
+      const filtered = candidates.filter(w => {
+        const haystack = `${w.name} ${w.address || ''} ${w.source_note || ''}`.toLowerCase();
+        return haystack.includes(q);
+      });
+      render(filtered);
+    };
+
+    modal.classList.remove('hidden');
+    setTimeout(() => searchInput.focus(), 100);
   },
 
   // v3.3.0 M6.2.2: Wishlist → Itinerary promote modal
