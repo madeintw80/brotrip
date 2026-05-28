@@ -110,6 +110,12 @@ const App = {
     this._updatePwaLoginHint();
     // v3.5.7: 偵測 in-app browser → 跳提示 modal (避免 Google OAuth 報 origin parameter 錯)
     this._maybeShowInAppBrowserModal();
+    // v3.8.1: ?switch=1 表示從「換帳號重登」來的，提示用戶按登入會跳帳戶選擇器
+    try {
+      if (new URLSearchParams(location.search).get('switch') === '1') {
+        setTimeout(() => this.toast('🔄 請按下方登入，Google 會跳出帳戶選擇器讓你選正確 Gmail'), 500);
+      }
+    } catch {}
   },
 
   // v3.5.7: 偵測 in-app browser (LINE/FB/IG/Messenger/WebView 等)
@@ -726,6 +732,11 @@ const App = {
         window.open(driveUrl, '_blank');
         // 顯示說明 banner
         document.getElementById('join-owner-email').textContent = err.ownerEmail || '（不明）';
+        // v3.8.1: 顯示朋友當前登入 Gmail，幫她判斷是否登入用錯帳號
+        const currentEmailEl = document.getElementById('join-current-email');
+        if (currentEmailEl) {
+          currentEmailEl.textContent = (Auth.user && Auth.user.email) || '(未知)';
+        }
         banner.classList.remove('hidden');
         // 暫存邀請碼供重試
         this._pendingJoinCode = code;
@@ -799,7 +810,9 @@ const App = {
   bindUI() {
     document.getElementById('login-btn').addEventListener('click', async () => {
       try {
-        await Auth.login();
+        // v3.8.1: URL 帶 ?switch=1 表示用戶剛從「換帳號重登」過來 → 強制 Google 帳戶選擇器
+        const forceSelectAccount = new URLSearchParams(window.location.search).get('switch') === '1';
+        await Auth.login({ forceSelectAccount });
         await this.afterLogin();
       } catch (err) {
         const msg = err.error_description || err.error || err.message || '請重試';
@@ -980,6 +993,25 @@ const App = {
       joinRetryBtn.addEventListener('click', async () => {
         if (this._pendingJoinCode) {
           await this._tryJoin(this._pendingJoinCode);
+        }
+      });
+    }
+    // v3.8.1: 「換帳號重登」按鈕 — 朋友登入用錯 Gmail 時一鍵登出 + 強制 prompt='select_account'
+    const switchAccountBtn = document.getElementById('join-switch-account-btn');
+    if (switchAccountBtn) {
+      switchAccountBtn.addEventListener('click', async () => {
+        const inviteCode = this._pendingJoinCode || '';
+        if (!confirm('要登出並換帳號嗎？登出後會用 Google 帳戶選擇器，請選正確 Gmail 重新登入。\n\n當前的邀請碼會保留，登入後自動繼續加入流程。')) return;
+        try {
+          // 把當前邀請碼存到 localStorage，登入後 afterLogin 會自動繼續
+          if (inviteCode) localStorage.setItem('brotrip_pending_invite', inviteCode);
+          // 登出
+          try { Auth.logout(); } catch {}
+          // reload + 強制 select_account (重 register tokenClient 時 prompt='select_account')
+          location.href = location.pathname + '?switch=1';
+        } catch (err) {
+          console.error('switch account failed:', err);
+          this.toast('切換失敗：' + (err.message || err));
         }
       });
     }

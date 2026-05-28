@@ -61,7 +61,9 @@ const Auth = {
     }
   },
 
-  async login() {
+  // v3.8.1: opts.forceSelectAccount=true → 強制 Google 顯示「帳戶選擇器」
+  //   (給「換帳號重登」用 — 登入用錯 Gmail 的朋友救急流程)
+  async login(opts = {}) {
     return new Promise((resolve, reject) => {
       this.tokenClient.callback = async (resp) => {
         if (resp.error) {
@@ -82,7 +84,8 @@ const Auth = {
           reject(err);
         }
       };
-      this.tokenClient.requestAccessToken({ prompt: 'consent' });
+      const prompt = opts.forceSelectAccount ? 'select_account' : 'consent';
+      this.tokenClient.requestAccessToken({ prompt });
     });
   },
 
