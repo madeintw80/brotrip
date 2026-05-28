@@ -108,6 +108,41 @@ const App = {
     document.getElementById('login-screen').classList.remove('hidden');
     // v3.1.0: PWA 模式下顯示「第一次需要重登」hint，告知會自動找回群組
     this._updatePwaLoginHint();
+    // v3.5.7: 偵測 in-app browser → 跳提示 modal (避免 Google OAuth 報 origin parameter 錯)
+    this._maybeShowInAppBrowserModal();
+  },
+
+  // v3.5.7: 偵測 in-app browser (LINE/FB/IG/Messenger/WebView 等)
+  //   這些 browser 對 Google OAuth 支援差 → 用戶會看到 "origin parameter is required" 錯誤
+  //   回傳人類可讀 name (例 "LINE") 或 null (= 一般瀏覽器)
+  _detectInAppBrowser() {
+    const ua = navigator.userAgent || '';
+    if (/Line\//i.test(ua)) return 'LINE';
+    if (/FBAN|FBAV|FB_IAB|FB4A/.test(ua)) return 'Facebook';
+    if (/Instagram/i.test(ua)) return 'Instagram';
+    if (/MessengerForiOS|Messenger/i.test(ua)) return 'Messenger';
+    if (/Twitter/i.test(ua)) return 'Twitter';
+    if (/MicroMessenger/i.test(ua)) return 'WeChat';
+    // iOS WebView (沒帶 Safari 標識) — 大多 in-app browser 都中
+    if (/iPhone|iPad|iPod/.test(ua) && !/Safari\//.test(ua) && !/CriOS|FxiOS|EdgiOS/.test(ua)) return 'iOS WebView';
+    // Android WebView (沒帶 Chrome 完整版本)
+    if (/Android/.test(ua) && /; wv\)/.test(ua)) return 'Android WebView';
+    return null;
+  },
+
+  // v3.5.7: 第一次 init 時若偵測到 in-app browser + 還沒登入 → 顯示提示 modal
+  _maybeShowInAppBrowserModal() {
+    if (Auth.isLoggedIn()) return;  // 已登入過就不擋 (重訪場景)
+    const detected = this._detectInAppBrowser();
+    if (!detected) return;
+    // localStorage 紀錄已 dismiss 過就不再 nag
+    try {
+      if (localStorage.getItem('brotrip_inapp_dismissed') === '1') return;
+    } catch {}
+    const nameEl = document.getElementById('inapp-detected-name');
+    if (nameEl) nameEl.textContent = `${detected} 內建瀏覽器`;
+    const modal = document.getElementById('modal-inapp-browser');
+    if (modal) modal.classList.remove('hidden');
   },
 
   // v3.1.0: 偵測是否以 PWA standalone 模式執行
@@ -1030,6 +1065,30 @@ const App = {
         this.renderWishlistMarkers();
       });
     }
+
+    // v3.5.7: in-app browser 提示 modal handlers
+    const inappCopyBtn = document.getElementById('inapp-copy-link-btn');
+    const inappContinueBtn = document.getElementById('inapp-continue-anyway-btn');
+    const inappCloseBtn = document.getElementById('inapp-modal-close-btn');
+    const inappModal = document.getElementById('modal-inapp-browser');
+    if (inappCopyBtn) {
+      inappCopyBtn.addEventListener('click', async () => {
+        const url = window.location.href;
+        try {
+          await navigator.clipboard.writeText(url);
+          this.toast('✅ 連結已複製，請開 Safari/Chrome 貼上');
+        } catch {
+          // Fallback: 顯示 URL 給用戶手動複製
+          prompt('複製這個連結，貼到 Safari/Chrome：', url);
+        }
+      });
+    }
+    const dismissInappModal = () => {
+      try { localStorage.setItem('brotrip_inapp_dismissed', '1'); } catch {}
+      if (inappModal) inappModal.classList.add('hidden');
+    };
+    if (inappContinueBtn) inappContinueBtn.addEventListener('click', dismissInappModal);
+    if (inappCloseBtn) inappCloseBtn.addEventListener('click', dismissInappModal);
 
     // v3.4.0 M6.3: GeoNotify onboarding modal
     const geoEnableBtn = document.getElementById('geo-notify-enable-btn');

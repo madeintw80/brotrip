@@ -630,6 +630,31 @@
     </div>
   </div>
 
+  <!-- Modal: 偵測到 in-app browser (v3.5.7) -->
+  <div id="modal-inapp-browser" class="modal hidden">
+    <div class="modal-content">
+      <header class="modal-header">
+        <h2>⚠️ 請用 Safari / Chrome 開啟</h2>
+        <button class="modal-close" type="button" id="inapp-modal-close-btn">✕</button>
+      </header>
+      <div style="font-size:14px; line-height:1.7; color:var(--text);">
+        <p style="margin:0 0 12px;">看起來你是從 <strong id="inapp-detected-name">App 內建瀏覽器</strong> 開啟 BroTrip。</p>
+        <p style="margin:0 0 12px; color:#dc2626;">⚠️ 這類瀏覽器不支援 Google 登入（會看到「origin parameter is required」錯誤）。</p>
+        <p style="margin:0 0 8px; font-weight:600;">請改用 Safari 或 Chrome 打開：</p>
+        <ol style="margin:0 0 12px; padding-left:22px; font-size:13px;">
+          <li>按下方「📋 複製連結」</li>
+          <li>打開 <strong>Safari</strong>（iPhone）或 <strong>Chrome</strong>（Android）</li>
+          <li>網址列<strong>長按 → 貼上 → 前往</strong></li>
+          <li>用 Google 登入即可</li>
+        </ol>
+      </div>
+      <div class="form-actions">
+        <button type="button" class="btn-cancel" id="inapp-continue-anyway-btn">仍要繼續</button>
+        <button type="button" class="btn-primary" id="inapp-copy-link-btn">📋 複製連結</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Modal: 附近 wishlist 推播 onboarding (v3.4.0 M6.3) -->
   <div id="modal-geo-notify-onboarding" class="modal hidden">
     <div class="modal-content">
@@ -738,7 +763,7 @@
   <script src="js/settlements.js?v=300"></script>
   <script src="js/wishlist.js?v=340"></script>
   <script src="js/geo_notify.js?v=350"></script>
-  <script src="js/app.js?v=350"></script>
+  <script src="js/app.js?v=357"></script>
 
   <!-- Service Worker + auto-update（偵測新版 SW 後通知用戶 reload） -->
   <script>
