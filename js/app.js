@@ -2542,10 +2542,9 @@ const App = {
         this.toast(`✓ 標記「${wish.name}」已去過`);
         break;
       case 'promote':
-        // M6.1 暫時版：標 status promoted（M6.2 會接 itinerary 真正建 waypoint）
-        await Wishlist.promote(id);
-        this.toast(`📌 「${wish.name}」標為已排進行程（M6.2 會自動加進 itinerary）`);
-        break;
+        // v3.3.0 (M6.2.2): 開 modal 讓用戶選「加進哪個 itinerary」或「建新行程」
+        this.openWishlistPromoteModal(wish);
+        return; // modal handler 會自己負責 toast/re-render
       case 'reset':
         await Wishlist.resetToPlanned(id);
         this.toast(`↺ 「${wish.name}」改回想去`);
@@ -2608,6 +2607,132 @@ const App = {
 
     modal.classList.remove('hidden');
     setTimeout(() => placeInput.focus(), 100);
+  },
+
+  // v3.3.0 M6.2.3: 在日記 modal 內渲染當前 trip 的 wishlist chips
+  _renderDiaryWishlistChips() {
+    const wrap = document.getElementById('diary-wishlist-chips');
+    const listEl = document.getElementById('diary-wishlist-chips-list');
+    if (!wrap || !listEl) return;
+    if (typeof Wishlist === 'undefined' || !Trips.current) {
+      wrap.style.display = 'none';
+      return;
+    }
+    // 只列 planned / promoted（未去過）
+    const candidates = Wishlist.list.filter(w => w.status === 'planned' || w.status === 'promoted');
+    if (candidates.length === 0) {
+      wrap.style.display = 'none';
+      return;
+    }
+    wrap.style.display = '';
+    listEl.innerHTML = candidates.map(w => {
+      const typeIcon = (Wishlist.TYPE_LABEL && Wishlist.TYPE_LABEL[w.type]) || '📍';
+      const shortType = typeIcon.split(' ')[0]; // 只取 emoji
+      return `<button type="button" class="chip diary-wish-chip" data-wish-id="${this.escapeHtml(w.id)}">${shortType} ${this.escapeHtml(w.name)}</button>`;
+    }).join('');
+
+    // 綁點擊
+    listEl.querySelectorAll('.diary-wish-chip').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const wid = btn.dataset.wishId;
+        const wish = Wishlist.list.find(w => w.id === wid);
+        if (!wish) return;
+        const form = document.getElementById('diary-form');
+        const locInput = form.elements['location'];
+        // 帶 location 文字（地址優先 + 名稱）
+        locInput.value = wish.address ? `${wish.name}（${wish.address}）` : wish.name;
+        // _selectedPlace 帶座標讓地圖能定位
+        if (wish.lat && wish.lng) {
+          this._selectedPlace = {
+            place_id: wish.place_id || '',
+            name: wish.name,
+            address: wish.address || '',
+            lat: parseFloat(wish.lat),
+            lng: parseFloat(wish.lng),
+          };
+        }
+        this._pendingDiaryWishId = wish.id;
+        // 視覺反饋：highlight chosen chip
+        listEl.querySelectorAll('.diary-wish-chip').forEach(c => c.classList.remove('chip-active'));
+        btn.classList.add('chip-active');
+        this.toast(`💡 已帶入「${wish.name}」，存日記後會自動標已去過`);
+      });
+    });
+  },
+
+  // v3.3.0 M6.2.2: Wishlist → Itinerary promote modal
+  openWishlistPromoteModal(wish) {
+    if (!Trips.current) { this.toast('沒有當前 trip'); return; }
+    if (!wish || !wish.lat || !wish.lng) {
+      this.toast('該 wish 沒有座標，無法加進行程');
+      return;
+    }
+    const modal = document.getElementById('modal-wishlist-promote');
+    if (!modal) return;
+
+    // 顯示要 promote 的 wish 資訊
+    const typeLabel = (Wishlist.TYPE_LABEL && Wishlist.TYPE_LABEL[wish.type]) || '📍';
+    document.getElementById('wishlist-promote-target-info').innerHTML =
+      `<strong>${typeLabel} ${this.escapeHtml(wish.name)}</strong>` +
+      (wish.address ? `<br><small style="color:var(--text-light);">${this.escapeHtml(wish.address)}</small>` : '');
+
+    // 填 itinerary dropdown — 只列當前 trip 的
+    const select = document.getElementById('wishlist-promote-itinerary-select');
+    const existingItins = (typeof Itineraries !== 'undefined') ? Itineraries.list : [];
+    select.innerHTML = '<option value="__new__">➕ 建立新行程（用這 wish 當第一個地點）</option>' +
+      existingItins.map(i => {
+        const wpCount = Itineraries.getWaypoints(i).length;
+        return `<option value="${this.escapeHtml(i.id)}">📋 ${this.escapeHtml(i.name)} (${wpCount} 個地點)</option>`;
+      }).join('');
+
+    // 新行程名稱 section 顯隱控制
+    const newSection = document.getElementById('wishlist-promote-new-itin-section');
+    const newNameInput = document.getElementById('wishlist-promote-new-name');
+    newNameInput.value = `${wish.name} 行程`;
+    const refreshNewSection = () => {
+      newSection.classList.toggle('hidden', select.value !== '__new__');
+    };
+    // 清掉舊 listener（clone trick）
+    const freshSelect = select.cloneNode(true);
+    // 重填 options
+    freshSelect.innerHTML = select.innerHTML;
+    freshSelect.value = '__new__';
+    select.parentNode.replaceChild(freshSelect, select);
+    freshSelect.addEventListener('change', refreshNewSection);
+    refreshNewSection();
+
+    // submit button
+    const submitBtn = document.getElementById('wishlist-promote-submit-btn');
+    const freshSubmit = submitBtn.cloneNode(true);
+    submitBtn.parentNode.replaceChild(freshSubmit, submitBtn);
+    freshSubmit.addEventListener('click', async () => {
+      freshSubmit.disabled = true;
+      try {
+        const choice = freshSelect.value;
+        if (choice === '__new__') {
+          const name = newNameInput.value.trim();
+          const mode = document.getElementById('wishlist-promote-new-mode').value;
+          await Itineraries.createFromWish(wish, { name, travel_mode: mode });
+        } else {
+          await Itineraries.addWaypointFromWish(choice, wish);
+        }
+        // 不論哪條路徑都標 promoted
+        await Wishlist.promote(wish.id);
+        this.toast(`📌 「${wish.name}」已加進行程`);
+        modal.classList.add('hidden');
+        this.renderWishlist();
+        this.renderItineraries();
+        // 如果在地圖 tab → 重新渲染 markers
+        if (this.currentTab === 'map') this.renderWishlistMarkers();
+      } catch (err) {
+        this.toast(err.message || '加入失敗');
+        console.error('promote error:', err);
+      } finally {
+        freshSubmit.disabled = false;
+      }
+    });
+
+    modal.classList.remove('hidden');
   },
 
   async handleWishlistAddSubmit(e) {
@@ -3487,6 +3612,7 @@ const App = {
     form.reset();
     this._editingDiaryId = id;
     this._selectedPlace = null;
+    this._pendingDiaryWishId = null; // v3.3.0 M6.2.3: 若選了 wish 暫存 id，submit 時用
     document.querySelector('#modal-diary .modal-header h2').textContent = id ? '編輯日記' : '新增日記';
     form.elements['date'].value = new Date().toISOString().slice(0, 10);
     const photosLabel = form.querySelector('input[name="photos"]').closest('label');
@@ -3499,6 +3625,9 @@ const App = {
         locInput.dataset.acAttached = '1';
       }
     } catch (err) { console.warn('Places autocomplete 未啟用：', err.message); }
+
+    // v3.3.0 M6.2.3: 渲染「從 Wishlist 選」chips（只列 planned / promoted，已 visited 不重複選）
+    this._renderDiaryWishlistChips();
 
     // v1.7.5: 取消 chip 列，改用 @autocomplete dropdown
     if (id) {
@@ -3757,10 +3886,23 @@ const App = {
         await Diaries.create(data, (cur, total) => { submitBtn.textContent = `上傳照片 ${cur}/${total}...`; });
         this.toast('✅ 已記錄日記' + (files.length ? `（${files.length} 張照片）` : ''));
       }
+      // v3.3.0 M6.2.4: 如果這篇日記是從 Wishlist chip 選的 → 自動標 wish 已去過
+      if (this._pendingDiaryWishId && typeof Wishlist !== 'undefined') {
+        try {
+          const wish = Wishlist.allList.find(w => w.id === this._pendingDiaryWishId);
+          await Wishlist.markVisited(this._pendingDiaryWishId);
+          if (wish) this.toast(`💡 「${wish.name}」已自動標已去過`);
+        } catch (err) {
+          console.warn('markVisited from diary failed:', err);
+        }
+        this._pendingDiaryWishId = null;
+      }
       this.closeModal('modal-diary');
       this.renderDiaryFilters();
       this.renderDiaries();
       this.updateNotifBadge();
+      // 如果在 wishlist tab → re-render
+      if (this.currentTab === 'wishlist') this.renderWishlist();
     } catch (err) {
       console.error(err);
       this.toast('儲存失敗：' + err.message);

@@ -178,6 +178,9 @@ const Diaries = {
     const existing = this.list.find(d => d.id === id);
     if (!existing) throw new Error('找不到該日記');
     if (existing.author !== Auth.user.email) throw new Error('只能刪自己的日記');
+    // TODO (v3.4+): 反向 reset wish — 目前 diary row 沒存 wishlist_id (避免污染既有群組 schema)，
+    //   未來實作 ensureGroupColumns 補 sheet header 後再啟用：
+    //     if (existing.wishlist_id) try { await Wishlist.resetToPlanned(existing.wishlist_id); } catch {}
     await API.deleteRow('Diaries', id);
     const idx = this.list.indexOf(existing);
     if (idx >= 0) this.list.splice(idx, 1);

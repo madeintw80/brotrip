@@ -360,6 +360,10 @@
         </label>
         <label>地點（可選）
           <input type="text" name="location" placeholder="例：渋谷">
+          <div id="diary-wishlist-chips" class="diary-wishlist-chips" style="margin-top:6px; display:none;">
+            <small style="color:var(--text-light); display:block; margin-bottom:4px;">💡 從願望清單選（選了會自動標已去過）：</small>
+            <div id="diary-wishlist-chips-list" style="display:flex; flex-wrap:wrap; gap:6px;"></div>
+          </div>
         </label>
         <label>照片（可多選）
           <input type="file" name="photos" accept="image/*" multiple>
@@ -611,6 +615,42 @@
     </div>
   </div>
 
+  <!-- Modal: Wishlist Promote → Itinerary (v3.3.0 M6.2) -->
+  <div id="modal-wishlist-promote" class="modal hidden">
+    <div class="modal-content">
+      <header class="modal-header">
+        <h2>📌 加進行程</h2>
+        <button class="modal-close" type="button">✕</button>
+      </header>
+      <div id="wishlist-promote-target-info" style="margin-bottom:12px; padding:10px; background:var(--bg-secondary,#f9fafb); border-radius:8px; font-size:14px;">
+        - <!-- 由 JS 填入 wish 名稱 -->
+      </div>
+      <label>要加進哪個行程？
+        <select id="wishlist-promote-itinerary-select">
+          <option value="__new__">➕ 建立新行程（用這 wish 當第一個地點）</option>
+          <!-- 由 JS 填入現有 itinerary 選項 -->
+        </select>
+      </label>
+      <div id="wishlist-promote-new-itin-section" class="hidden" style="margin-top:8px;">
+        <label>新行程名稱
+          <input id="wishlist-promote-new-name" type="text" placeholder="例：東京一日遊（會自動帶 wish 名）">
+        </label>
+        <label>交通方式
+          <select id="wishlist-promote-new-mode">
+            <option value="DRIVING">🚗 開車</option>
+            <option value="TRANSIT">🚆 大眾運輸</option>
+            <option value="WALKING">🚶 走路</option>
+            <option value="BICYCLING">🚴 騎車</option>
+          </select>
+        </label>
+      </div>
+      <div class="form-actions">
+        <button type="button" class="btn-cancel modal-close">取消</button>
+        <button type="button" id="wishlist-promote-submit-btn" class="btn-primary">確定加進去</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Modal: 通知 -->
   <div id="modal-notifications" class="modal hidden">
     <div class="modal-content">
@@ -650,15 +690,15 @@
   <script src="js/api.js?v=300"></script>
   <script src="js/trips.js?v=300"></script>
   <script src="js/expenses.js?v=300"></script>
-  <script src="js/diaries.js?v=300"></script>
+  <script src="js/diaries.js?v=330"></script>
   <script src="js/members.js?v=300"></script>
   <script src="js/nicknames.js?v=300"></script>
   <script src="js/comments.js?v=300"></script>
   <script src="js/notifications.js?v=300"></script>
-  <script src="js/itineraries.js?v=300"></script>
+  <script src="js/itineraries.js?v=330"></script>
   <script src="js/settlements.js?v=300"></script>
   <script src="js/wishlist.js?v=320"></script>
-  <script src="js/app.js?v=320"></script>
+  <script src="js/app.js?v=330"></script>
 
   <!-- Service Worker + auto-update（偵測新版 SW 後通知用戶 reload） -->
   <script>

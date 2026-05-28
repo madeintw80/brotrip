@@ -90,6 +90,16 @@ const Itineraries = {
   async delete(id) {
     const existing = this.allList.find(i => i.id === id);
     if (!existing) throw new Error('找不到該行程');
+
+    // v3.3.0 (M6.2.5) 反向 reset：刪 itinerary 時，把含 wishlist_id 的 waypoint 對應的 wish 改回 planned
+    if (typeof Wishlist !== 'undefined') {
+      const waypoints = this.getWaypoints(existing);
+      const wishIds = waypoints.map(w => w.wishlist_id).filter(Boolean);
+      for (const wid of wishIds) {
+        try { await Wishlist.resetToPlanned(wid); } catch (e) { console.warn('reset wish failed:', e); }
+      }
+    }
+
     await API.deleteRow('Itineraries', id);
     this.allList = this.allList.filter(i => i.id !== id);
     this._filter();
@@ -102,5 +112,86 @@ const Itineraries = {
       const arr = JSON.parse(itin.waypoints || '[]');
       return Array.isArray(arr) ? arr : [];
     } catch { return []; }
+  },
+
+  // ===== v3.3.0 (M6.2.1): Wishlist → Itinerary 互通 =====
+
+  // 用 wish 建一個新 itinerary（waypoint 只有一個 = 該 wish）
+  // 之後可在地圖 tab 編輯 itinerary 加更多 waypoint
+  async createFromWish(wish, { name, travel_mode } = {}) {
+    if (!wish) throw new Error('沒有 wish');
+    if (!Trips.current) throw new Error('沒有當前 trip');
+    const itinName = (name && name.trim()) || `${wish.name} 行程`;
+    const lat = parseFloat(wish.lat);
+    const lng = parseFloat(wish.lng);
+    if (isNaN(lat) || isNaN(lng)) throw new Error('該 wish 沒有座標，無法加進行程');
+
+    const waypoint = {
+      name: wish.name,
+      address: wish.address || '',
+      lat, lng,
+      place_id: wish.place_id || '',
+      wishlist_id: wish.id,  // M6.2 雙向 link
+    };
+
+    const id = API.newId();
+    const createdAt = new Date().toISOString();
+    // 注意：保持 7 column 跟原 create() 一致，避免既有群組 (Itineraries header 還沒 wishlist_id 欄) 寫到沒 header 的 cell。
+    // wishlist_id 是 *waypoint level* 帶在 JSON 內，已足夠反向 lookup。
+    const row = [
+      id, Trips.current.trip_id, itinName,
+      JSON.stringify([waypoint]),
+      travel_mode || 'DRIVING',
+      Auth.user.email, createdAt,
+    ];
+    await API.appendRow('Itineraries', row);
+
+    const newItin = {
+      id, trip_id: Trips.current.trip_id, name: itinName,
+      waypoints: JSON.stringify([waypoint]),
+      travel_mode: travel_mode || 'DRIVING',
+      author: Auth.user.email, created_at: createdAt,
+    };
+    this.allList.push(newItin);
+    this._filter();
+    Cache.set('itineraries', this.allList);
+    return newItin;
+  },
+
+  // 把某 wish append 成既有 itinerary 的最後一個 waypoint
+  async addWaypointFromWish(itineraryId, wish) {
+    const itin = this.allList.find(i => i.id === itineraryId);
+    if (!itin) throw new Error('找不到該行程');
+    const lat = parseFloat(wish.lat);
+    const lng = parseFloat(wish.lng);
+    if (isNaN(lat) || isNaN(lng)) throw new Error('該 wish 沒有座標');
+
+    const waypoints = this.getWaypoints(itin);
+    // 重複檢查（同 itinerary 同 wishlist_id 不重複加）
+    if (waypoints.find(w => w.wishlist_id === wish.id)) {
+      throw new Error(`「${wish.name}」已經在此行程內了`);
+    }
+    waypoints.push({
+      name: wish.name,
+      address: wish.address || '',
+      lat, lng,
+      place_id: wish.place_id || '',
+      wishlist_id: wish.id,
+    });
+
+    const updatedJson = JSON.stringify(waypoints);
+    // 保持 7 column 避免污染既有群組的 schema
+    const row = [
+      itin.id, itin.trip_id, itin.name,
+      updatedJson,
+      itin.travel_mode || 'DRIVING',
+      itin.author, itin.created_at,
+    ];
+    await API.updateRow('Itineraries', itin.id, row);
+
+    itin.waypoints = updatedJson;
+    this._filter();
+    Cache.set('itineraries', this.allList);
+    return itin;
   },
 };
