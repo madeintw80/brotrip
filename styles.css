@@ -839,10 +839,20 @@ summary {
   border-color: var(--primary);
   color: white;
 }
+/* v3.8.7: 日期 input 縮字體 + nowrap，避免兩位數月份跳行 */
 .filter-date {
-  padding: 4px 8px;
-  font-size: 16px; /* iOS auto-zoom 保險 */
-  width: 130px;
+  padding: 4px 6px;
+  font-size: 14px;        /* iOS 14+ 對 input 字體 ≥14px 不會 auto-zoom */
+  min-width: 0;
+  flex: 1 1 auto;
+  max-width: 145px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  overflow: hidden;
+}
+/* 「~」分隔符也縮一點 */
+#diary-filter .filter-row span[style*="text-light"] {
+  flex-shrink: 0;
 }
 .filter-keyword {
   flex: 1;

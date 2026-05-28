@@ -3872,8 +3872,18 @@ const App = {
         if (info) {
           const name = info.name || info.address || '';
           let link = '';
-          if (info.place_id) link = `https://www.google.com/maps/place/?q=place_id:${encodeURIComponent(info.place_id)}`;
-          else if (info.lat && info.lng) link = `https://www.google.com/maps/?q=${info.lat},${info.lng}`;
+          // v3.8.7: 用 Google 推薦的 search API 格式 (place_id + name fallback)
+          //   舊版 `?q=place_id:XXX` 對某些 place_id 會「找不到結果」
+          //   新版 `search/?api=1&query=NAME&query_place_id=XXX` 失敗時自動 fallback name search
+          if (info.place_id && name) {
+            link = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(name)}&query_place_id=${encodeURIComponent(info.place_id)}`;
+          } else if (info.place_id) {
+            link = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(info.address || 'place')}&query_place_id=${encodeURIComponent(info.place_id)}`;
+          } else if (info.lat && info.lng) {
+            link = `https://www.google.com/maps/?q=${info.lat},${info.lng}`;
+          } else if (name) {
+            link = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(name)}`;
+          }
           if (name) locHtml = link
             ? ` · <a href="${link}" target="_blank" rel="noopener">📍 ${this.escapeHtml(name)}</a>`
             : ` · 📍 ${this.escapeHtml(name)}`;
@@ -4443,11 +4453,18 @@ const App = {
     this.openModal('modal-trips');
   },
 
+  // v3.8.7: 新建 trip 預設「只勾自己」(舊版預設全勾，朋友容易誤把不該參加的全拉進來)
+  //   - 編輯既有 trip: 按 existingMembers 勾 (邏輯不變)
+  //   - 新建 trip (existingMembers 空): 只勾 Auth.user.email，其他全不勾
   renderTripMemberCheckboxes(existingMembers) {
     const el = document.getElementById('new-trip-members');
     if (!el) return;
+    const isEditing = existingMembers.length > 0;
+    const myEmail = (Auth.user || {}).email;
     el.innerHTML = Members.all().map((m, i) => {
-      const checked = (existingMembers.length === 0 || existingMembers.includes(m.email)) ? 'checked' : '';
+      const checked = isEditing
+        ? (existingMembers.includes(m.email) ? 'checked' : '')
+        : (m.email === myEmail ? 'checked' : '');
       return `
         <div class="member-check-row">
           <input type="checkbox" id="ntmem-${i}" value="${this.escapeAttr(m.email)}" ${checked}>
