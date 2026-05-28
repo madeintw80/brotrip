@@ -573,11 +573,10 @@ const Groups = {
   // 邀請碼 = base64(JSON({s:sheetId, f:folderId, p:photosFolderId, t:sheetTabIds, n:name, c:createdBy}))
   // 注意：邀請碼不算機密，沒 Drive 分享還是讀不到資料
 
-  // ===== M4.3: 邀請連結（取代純邀請碼）=====
-  // 產一個朋友點開就能用的 URL
-  // 格式：<current origin + path>?invite=<encoded>
-  buildInviteLink(group) {
-    const code = this.encodeInvite(group);
+  // ===== M4.3 → v3.6.1: 邀請連結（產生時可能 await Workers 拿短碼）=====
+  // 格式：<current origin + path>?invite=<8 字短碼 OR fallback base64>
+  async buildInviteLink(group) {
+    const code = await this.encodeInvite(group);
     if (!code) return '';
     const url = new URL(window.location.href);
     url.search = '';   // 清掉現有 query params
@@ -586,20 +585,59 @@ const Groups = {
     return url.toString();
   },
 
-  // v3.6.0: 邀請碼 payload 砍掉 t (sheetTabIds) 跟 p (photosFolderId)
-  //   → 從 ~600 字 → ~150 字 (降 75%)，朋友看到不嚇人
-  //   → 接收端 joinByInvite 自己用 API 抓回來，整體 API call 一樣 (只是時機提前)
-  //   → 加 v:2 標記，decodeInvite 向後相容讀 v1 (舊邀請碼仍能用)
-  encodeInvite(group) {
+  // v3.6.1: 邀請碼三層 fallback 策略
+  //   1. group.shortCode 已 cache → 直接回 (零延遲)
+  //   2. POST CF Workers 拿 8 字短碼 → cache 到 group.shortCode
+  //   3. Workers 失敗 → 回退到 v3.6.0 的 v=2 base64 (~190 字)
+  // 整體目標：邀請碼從 ~600 字 → 8 字（縮 99%），失敗時仍可用
+  async encodeInvite(group) {
     if (!group) return '';
+
+    // Step 1: 已有 cached shortCode → 直接回
+    if (group.shortCode) return group.shortCode;
+
+    // Step 2: 嘗試 POST Workers backend
+    if (typeof CONFIG !== 'undefined' && CONFIG.WORKERS_URL) {
+      try {
+        const resp = await fetch(CONFIG.WORKERS_URL + '/codes', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            s: group.sheetId,
+            f: group.folderId,
+            n: group.name,
+            c: (typeof Auth !== 'undefined' && Auth.user) ? Auth.user.email : '',
+          }),
+        });
+        if (resp.ok) {
+          const data = await resp.json();
+          if (data && data.code) {
+            // cache 短碼到 group object + 持久化
+            group.shortCode = data.code;
+            this._save();
+            return data.code;
+          }
+        } else {
+          console.warn('[Groups] encodeInvite workers HTTP', resp.status);
+        }
+      } catch (err) {
+        console.warn('[Groups] encodeInvite workers failed, fallback to base64:', err);
+      }
+    }
+
+    // Step 3: Fallback v3.6.0 base64 v=2 (Workers 失敗時)
+    return this._encodeInviteBase64(group);
+  },
+
+  // Fallback base64 編碼 (沿用 v3.6.0 邏輯)
+  _encodeInviteBase64(group) {
     const payload = {
-      v: 2,                                                // 版號 (v3.6.0 起)
+      v: 2,
       s: group.sheetId,
       f: group.folderId,
       n: group.name,
       c: (typeof Auth !== 'undefined' && Auth.user) ? Auth.user.email : '',
     };
-    // base64url（URL safe）
     const json = JSON.stringify(payload);
     const b64 = btoa(unescape(encodeURIComponent(json)));
     return b64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
@@ -611,8 +649,46 @@ const Groups = {
   //   2. 試讀 Sheet → 403 throw PERMISSION_DENIED（含 folderId 給 UI 用）
   //   3. 有權限 → 加進 list、setActive
   //   4. 由 UI 後續處理 display_name + 寫 Members row
+  // v3.6.1: 接受三種格式
+  //   1. 8 字短碼 (CF Workers) - 最新最短
+  //   2. base64 v=2 (~190 字, v3.6.0 fallback) - 向後相容
+  //   3. base64 v=1 (~600 字, 上古版本) - 向後相容
   async joinByInvite(code) {
-    const data = this.decodeInvite(code);
+    code = (code || '').trim();
+    if (!code) throw new Error('邀請碼格式錯誤，請確認複製完整');
+
+    let data = null;
+
+    // 偵測 8 字短碼 (CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789')
+    const isShortCode = code.length === 8 && /^[A-HJ-NP-Za-hjkm-z2-9]+$/.test(code);
+    if (isShortCode && typeof CONFIG !== 'undefined' && CONFIG.WORKERS_URL) {
+      try {
+        const resp = await fetch(`${CONFIG.WORKERS_URL}/codes/${encodeURIComponent(code)}`);
+        if (resp.status === 404) {
+          throw new Error('短碼無效或已過期');
+        }
+        if (resp.ok) {
+          const json = await resp.json();
+          data = {
+            version: 'short',
+            sheetId: json.s,
+            folderId: json.f,
+            photosFolderId: '',   // 短碼不含，下方 fetch 補
+            sheetTabIds: {},      // 短碼不含，下方 fetch 補
+            name: json.n,
+            createdBy: json.c || '',
+            shortCode: code,      // cache 給接收端的 group object
+          };
+        }
+      } catch (err) {
+        // 「短碼無效」error 直接 rethrow，其他 (network 等) fallback 試 base64
+        if (err.message && err.message.includes('短碼無效')) throw err;
+        console.warn('[Groups] joinByInvite short code fetch failed, try base64:', err);
+      }
+    }
+
+    // Fallback: 不是短碼 / 短碼 fetch 失敗 → 試 base64 decode
+    if (!data) data = this.decodeInvite(code);
     if (!data) throw new Error('邀請碼格式錯誤，請確認複製完整');
 
     // 已加入檢查
@@ -677,6 +753,7 @@ const Groups = {
       role: 'member',
       joinedAt: new Date().toISOString(),
       ownerEmail: data.createdBy || '',
+      shortCode: data.shortCode || '',  // v3.6.1: 朋友未來邀請別人也能用同短碼
     };
     this.add(newGroup);
     this.setActive(groupId);

@@ -602,16 +602,30 @@ const App = {
     }
   },
 
-  // Phase 2: 顯示邀請連結 + 純邀請碼 modal (M4.3 升級：以連結為主)
-  showInviteCodeModal(group) {
-    const code = Groups.encodeInvite(group);
-    const link = Groups.buildInviteLink(group);
+  // Phase 2 → v3.6.1: 顯示邀請連結 + 純邀請碼 modal (async — Workers 拿 8 字短碼)
+  async showInviteCodeModal(group) {
     const codeEl = document.getElementById('invite-code-text');
     const linkEl = document.getElementById('invite-link-text');
-    if (codeEl) codeEl.value = code;
-    if (linkEl) linkEl.value = link;
     const modal = document.getElementById('modal-invite-code');
-    if (modal) modal.classList.remove('hidden');
+    if (!modal) return;
+
+    // 先 show modal + loading state
+    if (codeEl) codeEl.value = '⏳ 產生短碼中...';
+    if (linkEl) linkEl.value = '⏳ 產生中...';
+    modal.classList.remove('hidden');
+
+    try {
+      // 已 cached shortCode → 瞬間 (~0ms)；沒 cached → POST Workers (~300ms)
+      const code = await Groups.encodeInvite(group);
+      const link = await Groups.buildInviteLink(group);
+      if (codeEl) codeEl.value = code;
+      if (linkEl) linkEl.value = link;
+    } catch (err) {
+      console.error('showInviteCodeModal failed:', err);
+      if (codeEl) codeEl.value = '❌ 產生失敗 — Workers 可能暫時無法存取';
+      if (linkEl) linkEl.value = '';
+      this.toast('邀請碼產生失敗：' + (err.message || '未知錯誤'));
+    }
   },
 
   // ===== M3: 加入群組流程 =====

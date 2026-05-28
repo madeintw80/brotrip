@@ -1,8 +1,12 @@
 // BroTrip 設定檔
 // CLIENT_ID 是 public（OAuth 本來就公開），可 commit 到 GitHub
 const CONFIG = {
-  VERSION: '3.6.0',
+  VERSION: '3.6.1',
   CLIENT_ID: '38081255296-ojiesn8jsdlkrsa5snlue0s3tprro3rq.apps.googleusercontent.com',
+  // v3.6.1: Cloudflare Workers 邀請短碼 backend
+  //   POST /codes → 拿 8 字短碼; GET /codes/:code → 查短碼
+  //   Source: workers/invite-shortcode/worker.js (deployed to CF Workers)
+  WORKERS_URL: 'https://brotrip-invite.madeintw80.workers.dev',
   // SHEET_ID / ROOT_FOLDER_ID / PHOTOS_FOLDER_ID 留著供 Phase 1 → Phase 2 auto-migration 用
   // M4.2: 不再被任何 UI / auth 直接讀，純粹給 groups.js 啟動時 migrate 一次
   SHEET_ID: '1vG0BdeLeCwcPlBeoSt5HjB5bgwzUMOPyXRrXJzgOhNE',
