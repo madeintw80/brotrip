@@ -49,45 +49,74 @@ const GeoNotify = {
       && 'serviceWorker' in navigator);
   },
 
-  // 請求所有必要 permission：geolocation + notification
-  // 回傳 'granted' | 'denied' | 'unsupported'
-  async requestPermissions() {
+  // v3.8.5: requestPermissions 重寫 — 加 timeout 防 iOS PWA silent hang
+  //   問題：iOS Safari/PWA 對 Notification.requestPermission() 在某些情境會
+  //         silent hang (不回應、不報錯)，UI 卡在「等待權限...」永遠
+  //   修法：
+  //     1. 每個 await 都用 Promise.race 加 timeout (8 秒)
+  //     2. Notification permission 改為「可選」(沒授權只 foreground toast)
+  //        → 只要 geolocation 通過就算成功
+  //     3. opts.onProgress(step) callback 讓 UI 顯示進度
+  //   回傳 'granted' | 'denied' | 'unsupported'
+  async requestPermissions(opts = {}) {
+    const onProgress = opts.onProgress || (() => {});
+
     if (!this.isSupported()) {
       this.setPref('unsupported');
       return 'unsupported';
     }
 
-    // Notification permission
-    let notifPerm = Notification.permission;
-    if (notifPerm === 'default') {
-      try {
-        notifPerm = await Notification.requestPermission();
-      } catch (err) {
-        console.warn('Notification.requestPermission failed:', err);
-        notifPerm = 'denied';
-      }
-    }
-    if (notifPerm !== 'granted') {
-      this.setPref('declined');
-      return 'denied';
-    }
+    // helper: Promise with timeout
+    const withTimeout = (promise, ms, label) => Promise.race([
+      promise,
+      new Promise((_, rej) => setTimeout(() => rej(new Error(`${label} timeout (${ms}ms)`)), ms)),
+    ]);
 
-    // Geolocation permission：直接 getCurrentPosition 一次（首次會跳系統 permission prompt）
+    // === Step 1: Notification permission (可選) ===
+    onProgress('請求通知權限中...');
+    let notifGranted = false;
     try {
-      await new Promise((resolve, reject) => {
-        navigator.geolocation.getCurrentPosition(resolve, reject, {
-          enableHighAccuracy: false,
-          timeout: 10000,
-          maximumAge: 60000,
-        });
-      });
+      let notifPerm = Notification.permission;
+      if (notifPerm === 'default') {
+        // 加 8 秒 timeout 防 iOS PWA silent hang
+        try {
+          notifPerm = await withTimeout(Notification.requestPermission(), 8000, 'Notification');
+        } catch (err) {
+          console.warn('[GeoNotify] Notification.requestPermission failed/timeout:', err);
+          notifPerm = 'denied';
+        }
+      }
+      notifGranted = (notifPerm === 'granted');
     } catch (err) {
-      console.warn('Geolocation permission denied/failed:', err);
+      console.warn('[GeoNotify] Notification API error (ignored):', err);
+    }
+
+    // === Step 2: Geolocation permission (必要) ===
+    onProgress('請求定位權限中...');
+    try {
+      await withTimeout(
+        new Promise((resolve, reject) => {
+          navigator.geolocation.getCurrentPosition(resolve, reject, {
+            enableHighAccuracy: false,
+            timeout: 10000,
+            maximumAge: 60000,
+          });
+        }),
+        15000, 'Geolocation'
+      );
+    } catch (err) {
+      console.warn('[GeoNotify] Geolocation denied/failed:', err);
       this.setPref('declined');
       return 'denied';
     }
 
+    // Geolocation 通過就算成功 (Notification 沒授權仍可用 foreground toast)
     this.setPref('granted');
+
+    // 留紀錄：是否能用系統通知 (背景時)
+    try { localStorage.setItem('brotrip_geo_notify_native', notifGranted ? '1' : '0'); } catch {}
+
+    onProgress(notifGranted ? '✅ 完成 (含系統通知)' : '✅ 完成 (只有 app 內提醒)');
     return 'granted';
   },
 

@@ -1273,23 +1273,27 @@ const App = {
     if (geoEnableBtn) {
       geoEnableBtn.addEventListener('click', async () => {
         geoEnableBtn.disabled = true;
-        geoEnableBtn.textContent = '等待權限...';
+        const origText = geoEnableBtn.textContent;
+        geoEnableBtn.textContent = '⏳ 處理中...';
+        // v3.8.5: 加進度顯示 + timeout 防 iOS PWA silent hang
         try {
-          const result = await GeoNotify.requestPermissions();
+          const result = await GeoNotify.requestPermissions({
+            onProgress: (step) => { geoEnableBtn.textContent = `⏳ ${step}`; },
+          });
           if (result === 'granted') {
             this.toast('🔔 已開啟！走在路上經過 wish 會推播');
             GeoNotify.start();
           } else if (result === 'unsupported') {
             this.toast('你的瀏覽器不支援推播，已關閉');
           } else {
-            this.toast('已拒絕。設定 tab 可以重新開啟');
+            this.toast('已拒絕 (可能是定位權限沒給)。設定 tab 可以重新開啟');
           }
         } catch (err) {
           console.error(err);
           this.toast('開啟失敗：' + (err.message || err));
         } finally {
           geoEnableBtn.disabled = false;
-          geoEnableBtn.textContent = '✅ 開啟';
+          geoEnableBtn.textContent = origText;
           if (geoModal) geoModal.classList.add('hidden');
         }
       });
