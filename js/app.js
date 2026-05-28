@@ -170,17 +170,22 @@ const App = {
       return;
     }
 
-    // M4.5 + v3.1.0: 本地沒群組 → 掃 Drive 找 (a) 自己建的 + (b) 被邀請加入的
-    // 這是 PWA 第一次開啟 / 換裝置登入時的「自動找回群組」入口，
-    // 包含 sharedWithMe 偵測 → 朋友從瀏覽器加入後，PWA 不用再貼一次邀請碼
-    if (Groups.list.length === 0 && Auth.user) {
+    // M4.5 + v3.1.0 + v3.1.3: 每次 afterLogin 都跑 autoDetect 同步 Drive 群組
+    //   - 自己建的（_detectOwnedGroups 掃 BroTrip/<group>/ 子資料夾）
+    //   - 被邀請加入的（_detectSharedGroups 掃 not 'me' in owners 的 BroTrip-Data）
+    // 內部都有 dedupe（已在 list 跳過），所以可重複跑。
+    // v3.1.3 修：之前用 `Groups.list.length === 0` 條件 → 一旦 list 有東西就永遠不再 detect
+    //          → 換裝置/PWA/另一個 session 建的新群組無法自動同步
+    if (Auth.user) {
       try {
-        this.toast('🔍 從 Google Drive 找你的群組...');
+        const before = Groups.list.length;
+        if (before === 0) this.toast('🔍 從 Google Drive 找你的群組...');
         const detected = await Groups.autoDetectGroups();
         if (detected.length > 0) {
           const ownerCount = detected.filter(g => g.role === 'owner').length;
           const memberCount = detected.filter(g => g.role === 'member').length;
           let msg = `✨ 找回 ${detected.length} 個群組`;
+          if (before > 0) msg = `✨ 同步到 ${detected.length} 個新群組`;
           if (ownerCount && memberCount) {
             msg += `（你建的 ${ownerCount}、被邀請 ${memberCount}）`;
           } else if (memberCount) {
@@ -739,6 +744,35 @@ const App = {
       noGroupLogout.addEventListener('click', (e) => {
         e.preventDefault();
         if (confirm('登出？')) { Auth.logout(); location.reload(); }
+      });
+    }
+
+    // v3.1.3: 設定 tab 的「從 Drive 重新偵測群組」按鈕
+    // 用於：換裝置 / 在另一個 session 建了新群組 / 被新邀請加入時手動同步
+    const settingsResyncBtn = document.getElementById('settings-resync-groups-btn');
+    if (settingsResyncBtn) {
+      settingsResyncBtn.addEventListener('click', async () => {
+        settingsResyncBtn.disabled = true;
+        const span = settingsResyncBtn.querySelector('span');
+        const origText = span ? span.textContent : '';
+        if (span) span.textContent = '🔄 偵測中...';
+        try {
+          const before = Groups.list.length;
+          const detected = await Groups.autoDetectGroups();
+          const added = Groups.list.length - before;
+          if (added === 0) {
+            this.toast('✅ 沒有新群組，目前已經是最新狀態');
+          } else {
+            this.toast(`✨ 新增 ${added} 個群組（共 ${Groups.list.length} 個），reload 套用...`);
+            setTimeout(() => location.reload(), 800);
+          }
+        } catch (err) {
+          console.error('Resync failed:', err);
+          this.toast('偵測失敗：' + (err.message || '未知錯誤'));
+        } finally {
+          settingsResyncBtn.disabled = false;
+          if (span) span.textContent = origText;
+        }
       });
     }
 
