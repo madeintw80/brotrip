@@ -63,6 +63,7 @@ const Auth = {
 
   // v3.8.1: opts.forceSelectAccount=true → 強制 Google 顯示「帳戶選擇器」
   //   (給「換帳號重登」用 — 登入用錯 Gmail 的朋友救急流程)
+  // v3.8.4: resolve 物件多帶 missingScopes (granular consent 朋友可能取消勾選 Drive)
   async login(opts = {}) {
     return new Promise((resolve, reject) => {
       this.tokenClient.callback = async (resp) => {
@@ -73,13 +74,23 @@ const Auth = {
         this.accessToken = resp.access_token;
         this.expiresAt = Date.now() + (resp.expires_in * 1000) - 30000;
         this.saveToken();
+
+        // v3.8.4: 檢查 token 是否有 drive + spreadsheets scope
+        //   Google granular consent (2022+) 允許用戶個別取消勾選 scope
+        //   如果朋友取消勾選 Drive → BroTrip 仍拿到 token 但所有 Drive API 都會 403
+        //   → 看起來像「找不到群組」但其實是「沒授權看 Drive」
+        const grantedScope = resp.scope || '';
+        const requiredScopes = [
+          'https://www.googleapis.com/auth/drive',
+          'https://www.googleapis.com/auth/spreadsheets',
+        ];
+        const missingScopes = requiredScopes.filter(s => !grantedScope.includes(s));
+
         try {
           const userInfo = await this.fetchUserInfo();
-          // M4: 不再做白名單檢查，任何 Google 帳號都可登入
-          // 資料保護靠 Drive ACL（路人登入只能看到自己 Drive）+ 群組系統
           this.user = userInfo;
           localStorage.setItem('brotrip_user', JSON.stringify(this.user));
-          resolve(this.user);
+          resolve({ ...this.user, missingScopes });
         } catch (err) {
           reject(err);
         }
@@ -87,6 +98,15 @@ const Auth = {
       const prompt = opts.forceSelectAccount ? 'select_account' : 'consent';
       this.tokenClient.requestAccessToken({ prompt });
     });
+  },
+
+  // v3.8.4: 檢查當前 token 是否有必要 scope (給 ensureToken 後 verify 用)
+  // 注意：silent refresh 沒辦法重 check，只能拿到 access_token 當時的 scope
+  hasRequiredScopes() {
+    // 我們不在 access_token 本身存 scope 資訊（GIS API 不直接提供 inspect）
+    // 唯一可靠方式是 login() 當下檢查 resp.scope
+    // 這 helper 留給未來想做更嚴格 check 用
+    return true;
   },
 
   async fetchUserInfo() {

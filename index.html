@@ -18,7 +18,7 @@
       if (t) document.documentElement.dataset.theme = t;
     } catch (e) {}
   </script>
-  <link rel="stylesheet" href="styles.css?v=383">
+  <link rel="stylesheet" href="styles.css?v=384">
 </head>
 <body>
   <div id="pull-indicator" class="pull-indicator"></div>
@@ -684,6 +684,29 @@
     </div>
   </div>
 
+  <!-- Modal: OAuth scope 沒勾警告 (v3.8.4) -->
+  <div id="modal-missing-scope" class="modal hidden">
+    <div class="modal-content">
+      <header class="modal-header">
+        <h2>⚠️ 缺少必要權限</h2>
+      </header>
+      <div style="font-size:14px; line-height:1.7; color:var(--text);">
+        <p style="margin:0 0 12px; color:#dc2626; font-weight:600;">你在 Google 登入時取消勾選了重要權限：</p>
+        <ul id="missing-scope-list" style="margin:0 0 14px; padding-left:24px; font-size:14px;"></ul>
+        <p style="margin:0 0 8px;">BroTrip 需要這些權限才能：</p>
+        <ul style="margin:0 0 14px; padding-left:22px; font-size:13px; color:var(--text-light);">
+          <li>📂 找到你被邀請加入的群組（讀 Google Drive）</li>
+          <li>📊 看群組共用的資料表（讀寫 Google 試算表）</li>
+        </ul>
+        <p style="margin:0 0 8px; font-weight:600; color:#dc2626;">📌 請按下方按鈕重新登入：</p>
+        <p style="margin:0; font-size:13px;">下次 Google 跳出的權限視窗 → <strong>所有選項都不要取消勾選</strong>，全部保留打勾</p>
+      </div>
+      <div class="form-actions">
+        <button type="button" class="btn-primary" id="missing-scope-relogin-btn" style="width:100%; background:#dc2626; color:white;">🔄 重新登入並授權所有權限</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Modal: 偵測到 in-app browser (v3.5.7) -->
   <div id="modal-inapp-browser" class="modal hidden">
     <div class="modal-content">
@@ -801,23 +824,23 @@
 
   <!-- App 程式碼（順序很重要，後面的依賴前面的）
        Phase 2: groups.js 必須在 cache.js 之前載入，cache PREFIX 依賴 Groups.active() -->
-  <script src="js/config.js?v=383"></script>
-  <script src="js/groups.js?v=383"></script>
-  <script src="js/cache.js?v=383"></script>
-  <script src="js/auth.js?v=383"></script>
-  <script src="js/api.js?v=383"></script>
-  <script src="js/trips.js?v=383"></script>
-  <script src="js/expenses.js?v=383"></script>
-  <script src="js/diaries.js?v=383"></script>
-  <script src="js/members.js?v=383"></script>
-  <script src="js/nicknames.js?v=383"></script>
-  <script src="js/comments.js?v=383"></script>
-  <script src="js/notifications.js?v=383"></script>
-  <script src="js/itineraries.js?v=383"></script>
-  <script src="js/settlements.js?v=383"></script>
-  <script src="js/wishlist.js?v=383"></script>
-  <script src="js/geo_notify.js?v=383"></script>
-  <script src="js/app.js?v=383"></script>
+  <script src="js/config.js?v=384"></script>
+  <script src="js/groups.js?v=384"></script>
+  <script src="js/cache.js?v=384"></script>
+  <script src="js/auth.js?v=384"></script>
+  <script src="js/api.js?v=384"></script>
+  <script src="js/trips.js?v=384"></script>
+  <script src="js/expenses.js?v=384"></script>
+  <script src="js/diaries.js?v=384"></script>
+  <script src="js/members.js?v=384"></script>
+  <script src="js/nicknames.js?v=384"></script>
+  <script src="js/comments.js?v=384"></script>
+  <script src="js/notifications.js?v=384"></script>
+  <script src="js/itineraries.js?v=384"></script>
+  <script src="js/settlements.js?v=384"></script>
+  <script src="js/wishlist.js?v=384"></script>
+  <script src="js/geo_notify.js?v=384"></script>
+  <script src="js/app.js?v=384"></script>
 
   <!-- Service Worker + auto-update（偵測新版 SW 後通知用戶 reload） -->
   <script>

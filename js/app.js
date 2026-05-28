@@ -118,6 +118,30 @@ const App = {
     } catch {}
   },
 
+  // v3.8.4: 顯示「Drive/Sheets scope 沒勾」警告 modal
+  //   朋友 OAuth 同意畫面取消勾選 Drive → BroTrip 看不到群組
+  //   這 modal 教用戶重登 + 強調「請保留所有勾選」
+  _showMissingScopeModal(missingScopes) {
+    const modal = document.getElementById('modal-missing-scope');
+    if (!modal) {
+      // Fallback: 沒 modal 用 alert (極舊版 PWA)
+      alert('⚠️ 你在 Google 登入時取消勾選了「Drive 雲端硬碟」權限，BroTrip 看不到你的群組。\n\n請登出後重登，並保留 Google 跳出的所有勾選。');
+      Auth.logout();
+      location.reload();
+      return;
+    }
+    // 填要授權的 scope 名稱
+    const listEl = document.getElementById('missing-scope-list');
+    if (listEl) {
+      const scopeNames = {
+        'https://www.googleapis.com/auth/drive': '📂 Google 雲端硬碟',
+        'https://www.googleapis.com/auth/spreadsheets': '📊 Google 試算表',
+      };
+      listEl.innerHTML = missingScopes.map(s => `<li>${scopeNames[s] || s}</li>`).join('');
+    }
+    modal.classList.remove('hidden');
+  },
+
   // v3.5.7: 偵測 in-app browser (LINE/FB/IG/Messenger/WebView 等)
   //   這些 browser 對 Google OAuth 支援差 → 用戶會看到 "origin parameter is required" 錯誤
   //   回傳人類可讀 name (例 "LINE") 或 null (= 一般瀏覽器)
@@ -825,7 +849,21 @@ const App = {
       try {
         // v3.8.1: URL 帶 ?switch=1 表示用戶剛從「換帳號重登」過來 → 強制 Google 帳戶選擇器
         const forceSelectAccount = new URLSearchParams(window.location.search).get('switch') === '1';
-        await Auth.login({ forceSelectAccount });
+        const result = await Auth.login({ forceSelectAccount });
+
+        // v3.8.4: 登入完成立刻 toast 顯示當前 Gmail (朋友一眼看到自己用什麼帳號)
+        if (result && result.email) {
+          this.toast(`✅ 已用 ${result.email} 登入`);
+        }
+
+        // v3.8.4: 檢查 OAuth scope — 朋友可能在同意畫面取消勾選 Drive
+        //   → token 仍會給但所有 Drive API 都 403 → autoDetect 看不到群組
+        //   → 但看起來像「BroTrip 壞了」(真凶其實是 scope 沒勾)
+        if (result && result.missingScopes && result.missingScopes.length > 0) {
+          this._showMissingScopeModal(result.missingScopes);
+          return;  // 不繼續走 afterLogin，先解決 scope 問題
+        }
+
         await this.afterLogin();
       } catch (err) {
         const msg = err.error_description || err.error || err.message || '請重試';
@@ -1187,6 +1225,20 @@ const App = {
       toggleWishMarkers.addEventListener('change', () => {
         this._showWishMarkers = toggleWishMarkers.checked;
         this.renderWishlistMarkers();
+      });
+    }
+
+    // v3.8.4: 缺少 OAuth scope modal — 「重新登入並授權」按鈕
+    const missingScopeRelogin = document.getElementById('missing-scope-relogin-btn');
+    if (missingScopeRelogin) {
+      missingScopeRelogin.addEventListener('click', async () => {
+        try {
+          // 完整登出 (revoke 舊 token) 然後 prompt='consent' 重新跳完整同意畫面
+          try { Auth.logout(); } catch {}
+          location.href = location.pathname + '?reauth=1';
+        } catch (err) {
+          console.error('relogin failed:', err);
+        }
       });
     }
 
