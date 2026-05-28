@@ -1730,6 +1730,17 @@ const App = {
     const tripsCount = (typeof Trips !== 'undefined') ? Trips.list.length : '?';
     const expensesCount = (typeof Expenses !== 'undefined') ? Expenses.allList.length : '?';
     const diariesCount = (typeof Diaries !== 'undefined') ? Diaries.allList.length : '?';
+
+    // v3.6.1: 群組相關資訊
+    const groupsCount = (typeof Groups !== 'undefined') ? Groups.list.length : 0;
+    const activeGroup = (typeof Groups !== 'undefined') ? Groups.active() : null;
+    const groupShortCode = activeGroup && activeGroup.shortCode ? activeGroup.shortCode : '(尚未產生)';
+    const groupShortCodeColor = activeGroup && activeGroup.shortCode ? '#10b981' : 'var(--text-light)';
+
+    // v3.6.1: Workers backend 資訊
+    const workersUrl = (typeof CONFIG !== 'undefined' && CONFIG.WORKERS_URL) ? CONFIG.WORKERS_URL : '';
+    const workersUrlShort = workersUrl.replace(/^https?:\/\//, '').replace(/\/$/, '') || '(未設定)';
+
     const lastErr = this._lastError ? `<div style="color:#ef4444;">❌ ${this.escapeHtml(this._lastError)}</div>` : '';
     el.innerHTML = `
       <div class="debug-row"><span>Email:</span> <code>${this.escapeHtml(Auth.user ? Auth.user.email : '(未登入)')}</code></div>
@@ -1738,8 +1749,44 @@ const App = {
       <div class="debug-row"><span>SW:</span> <code>${swStatus}</code></div>
       <div class="debug-row"><span>網路:</span> <code>${onLine}</code></div>
       <div class="debug-row"><span>Trips/Expenses/Diaries:</span> <code>${tripsCount}/${expensesCount}/${diariesCount}</code></div>
+      <div class="debug-row"><span>群組數:</span> <code>${groupsCount}</code></div>
+      <div class="debug-row"><span>當前群組短碼:</span> <code style="color:${groupShortCodeColor};">${this.escapeHtml(groupShortCode)}</code></div>
+      <div class="debug-row"><span>Workers backend:</span> <code style="font-size:11px;">${this.escapeHtml(workersUrlShort)}</code></div>
+      <div class="debug-row"><span>Workers 狀態:</span> <code id="debug-workers-status">⏳ 檢查中...</code></div>
       ${lastErr}
     `;
+
+    // v3.6.1: 非同步 check Workers /health (3 秒 timeout)
+    if (workersUrl) {
+      try {
+        const controller = new AbortController();
+        const tid = setTimeout(() => controller.abort(), 3000);
+        const resp = await fetch(workersUrl + '/health', { signal: controller.signal });
+        clearTimeout(tid);
+        const statusEl = document.getElementById('debug-workers-status');
+        if (statusEl) {
+          if (resp.ok) {
+            statusEl.textContent = '✅ 正常';
+            statusEl.style.color = '#10b981';
+          } else {
+            statusEl.textContent = `❌ HTTP ${resp.status}`;
+            statusEl.style.color = '#ef4444';
+          }
+        }
+      } catch (err) {
+        const statusEl = document.getElementById('debug-workers-status');
+        if (statusEl) {
+          statusEl.textContent = err.name === 'AbortError' ? '⚠️ timeout (3s)' : '❌ 連線失敗';
+          statusEl.style.color = '#ef4444';
+        }
+      }
+    } else {
+      const statusEl = document.getElementById('debug-workers-status');
+      if (statusEl) {
+        statusEl.textContent = '(未設定 — 用 base64 fallback)';
+        statusEl.style.color = 'var(--text-light)';
+      }
+    }
   },
 
   // 重置：清 SW + login，但保留 data cache（暱稱/日記/支出）
