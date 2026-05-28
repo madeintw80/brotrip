@@ -2799,16 +2799,23 @@ const App = {
     // 新行程名稱 section 顯隱控制
     const newSection = document.getElementById('wishlist-promote-new-itin-section');
     const newNameInput = document.getElementById('wishlist-promote-new-name');
+    const newModeInput = document.getElementById('wishlist-promote-new-mode');
     newNameInput.value = `${wish.name} 行程`;
-    const refreshNewSection = () => {
-      newSection.classList.toggle('hidden', select.value !== '__new__');
-    };
+
     // 清掉舊 listener（clone trick）
     const freshSelect = select.cloneNode(true);
-    // 重填 options
     freshSelect.innerHTML = select.innerHTML;
     freshSelect.value = '__new__';
     select.parentNode.replaceChild(freshSelect, select);
+
+    // v3.4.1 fix: refresh 用 freshSelect.value 而非外部閉包的 select (那是已被 replaceChild 的舊節點)
+    // 同時把「新行程」section 內欄位 disabled 起來 — 避免 hidden 後表單仍包含值
+    const refreshNewSection = () => {
+      const isNew = freshSelect.value === '__new__';
+      newSection.classList.toggle('hidden', !isNew);
+      newNameInput.disabled = !isNew;
+      newModeInput.disabled = !isNew;
+    };
     freshSelect.addEventListener('change', refreshNewSection);
     refreshNewSection();
 
