@@ -145,6 +145,23 @@ const App = {
     if (modal) modal.classList.remove('hidden');
   },
 
+  // v3.8.0: 角色判斷 — 當前用戶是否為當前 trip 的成員
+  //   true  → 「Trip 主角」：功能全開（加支出/日記/行程、否決票等）
+  //   false → 「圍觀群眾」（群組成員但沒去這 trip）：可看 + 留言 + 加願望
+  //
+  // 用法：const isMember = App.isCurrentTripMember();
+  isCurrentTripMember() {
+    if (!Auth.user || !Trips.current) return false;
+    try {
+      const members = (typeof Trips.getMembers === 'function')
+        ? Trips.getMembers()
+        : JSON.parse(Trips.current.members || '[]');
+      return Array.isArray(members) && members.includes(Auth.user.email);
+    } catch {
+      return false;
+    }
+  },
+
   // v3.1.0: 偵測是否以 PWA standalone 模式執行
   _isPWA() {
     try {
@@ -1083,8 +1100,16 @@ const App = {
 
     document.getElementById('fab').addEventListener('click', () => {
       if (!Trips.current) { this.openModal('modal-trips'); return; }
-      if (this.currentTab === 'expenses') this.openExpenseModal();
-      else if (this.currentTab === 'diaries') this.openDiaryModal();
+      // v3.8.0: 非 trip member 不能加支出/日記 (FAB 本身已隱藏，這是 safety net)
+      const isMember = this.isCurrentTripMember();
+      if (this.currentTab === 'expenses') {
+        if (!isMember) { this.toast('👁 你不是這個 trip 的成員，不能加支出'); return; }
+        this.openExpenseModal();
+      }
+      else if (this.currentTab === 'diaries') {
+        if (!isMember) { this.toast('👁 你不是這個 trip 的成員，不能加日記'); return; }
+        this.openDiaryModal();
+      }
       else if (this.currentTab === 'wishlist') this.openWishlistAddModal();
     });
 
@@ -2102,9 +2127,17 @@ const App = {
   renderItineraries() {
     const el = document.getElementById('itinerary-list');
     if (!el || typeof Itineraries === 'undefined') return;
+
+    // v3.8.0: 非 trip member 隱藏「+ 新增」行程按鈕 (沒去的人不規劃路線)
+    const isMember = this.isCurrentTripMember();
+    const newItinBtn = document.getElementById('new-itinerary-btn');
+    if (newItinBtn) newItinBtn.style.display = isMember ? '' : 'none';
+
     const list = Itineraries.list;
     if (list.length === 0) {
-      el.innerHTML = '<div style="text-align:center; color:var(--text-light); padding:14px; font-size:13px;">還沒有行程，點 + 新增規劃一條路線</div>';
+      el.innerHTML = isMember
+        ? '<div style="text-align:center; color:var(--text-light); padding:14px; font-size:13px;">還沒有行程，點 + 新增規劃一條路線</div>'
+        : '<div style="text-align:center; color:var(--text-light); padding:14px; font-size:13px;">還沒有行程</div>';
       return;
     }
     el.innerHTML = list.map(itin => {
@@ -2132,6 +2165,11 @@ const App = {
 
   openNewItineraryModal() {
     if (!Trips.current) { this.toast('先選一個 trip'); return; }
+    // v3.8.0: 非 trip member 不能規劃行程 (safety net — button 已隱藏)
+    if (!this.isCurrentTripMember()) {
+      this.toast('👁 你不是這個 trip 的成員，不能加行程');
+      return;
+    }
     const form = document.getElementById('itinerary-form');
     form.reset();
     this._itineraryWaypoints = [
@@ -2859,30 +2897,37 @@ const App = {
       : '';
     const voteBadge = `<span class="wish-vote ${voteBadgeClass}" title="${escape(votersList)}">👎 ${voteCount}/${threshold}</span>`;
 
-    // 操作按鈕：依狀態 + 是否我加的 顯示
+    // 操作按鈕：依狀態 + 是否我加的 + v3.8.0 是否 trip 成員 顯示
+    // v3.8.0 角色規則:
+    //   非 trip 成員 (圍觀者) 可以：看、加 wish (透過 FAB)、刪自己加的
+    //   非 trip 成員 不可以：promote 進行程、標已去過/改回想去、投否決票/取消否決
+    //   原因：這些動作影響「實際出遊」流程，不該由沒去的人控制
+    const isMember = this.isCurrentTripMember();
     const actions = [];
-    // v3.5.2: 跳 Google Maps（永遠在最前面，最常用）
+    // v3.5.2: 跳 Google Maps（永遠在最前面，任何人都能用）
     const gmUrl = this._buildGoogleMapsUrl(w);
     if (gmUrl) {
       actions.push(`<a class="btn-small wish-gmaps-btn" href="${gmUrl}" target="_blank" rel="noopener">🗺️ 地圖</a>`);
     }
-    if (!visited && !isRejectedView) {
+    if (!visited && !isRejectedView && isMember) {
       actions.push(`<button class="btn-small wish-action" data-action="promote" data-id="${w.id}">➕ 加進行程</button>`);
       actions.push(`<button class="btn-small wish-action" data-action="visited" data-id="${w.id}">✓ 已去過</button>`);
     }
-    if (visited) {
+    if (visited && isMember) {
       actions.push(`<button class="btn-small wish-action" data-action="reset" data-id="${w.id}">↺ 改回想去</button>`);
     }
-    if (!isMine && !iVoted && !visited) {
+    if (!isMine && !iVoted && !visited && isMember) {
       actions.push(`<button class="btn-small btn-warn wish-action" data-action="vote" data-id="${w.id}">👎 否決</button>`);
     }
-    if (!isMine && iVoted) {
+    if (!isMine && iVoted && isMember) {
       actions.push(`<button class="btn-small wish-action" data-action="unvote" data-id="${w.id}">↺ 取消否決</button>`);
     }
     if (isMine && isRejectedView) {
+      // 強行恢復：加 wish 的人本來就是 owner，不論是否 trip member 都可救自己加的
       actions.push(`<button class="btn-small wish-action" data-action="force-restore" data-id="${w.id}">💪 強行恢復</button>`);
     }
     if (isMine) {
+      // 刪除自己加的：永遠允許 (圍觀者也能刪自己加的 wish)
       actions.push(`<button class="btn-small btn-danger wish-action" data-action="delete" data-id="${w.id}">🗑️ 刪除</button>`);
     }
 
@@ -3221,8 +3266,22 @@ const App = {
     document.getElementById('tab-map').classList.toggle('hidden', tab !== 'map');
     document.getElementById('tab-wishlist').classList.toggle('hidden', tab !== 'wishlist');
     document.getElementById('tab-settings').classList.toggle('hidden', tab !== 'settings');
-    // FAB 顯示：記帳/日記/願望 都有「+ 新增」動作
-    document.getElementById('fab').style.display = (tab === 'expenses' || tab === 'diaries' || tab === 'wishlist') ? '' : 'none';
+    // v3.8.0: FAB 顯示考慮 trip 成員身份
+    //   - wishlist tab → 任何群組成員可加 wish (圍觀者也行)
+    //   - expenses/diaries tab → 只有 trip member 能加 (沒去就別記帳/發日記)
+    const isMember = this.isCurrentTripMember();
+    const showFab =
+      (tab === 'wishlist') ||
+      ((tab === 'expenses' || tab === 'diaries') && isMember);
+    document.getElementById('fab').style.display = showFab ? '' : 'none';
+
+    // v3.8.0: 角色提示 banner — 在 4 個內容 tab 對非 member 顯示
+    const roleBanner = document.getElementById('role-banner');
+    if (roleBanner) {
+      const showBanner = !isMember && Trips.current &&
+        ['expenses', 'diaries', 'map', 'wishlist'].includes(tab);
+      roleBanner.classList.toggle('hidden', !showBanner);
+    }
     if (tab === 'map') this.initOrRefreshMap();
     // v3.2.0: 切到 wishlist tab → load + render（lazy migration 在 loadAll 內處理）
     if (tab === 'wishlist') {

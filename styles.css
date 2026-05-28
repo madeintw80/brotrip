@@ -2065,3 +2065,24 @@ summary {
   background: #374151;
 }
 
+
+/* v3.8.0: 角色提示 banner (非 trip member 時顯示) */
+.role-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  margin: 0 0 8px;
+  background: #fef3c7;
+  border-left: 4px solid #f59e0b;
+  color: #78350f;
+  font-size: 13px;
+  line-height: 1.4;
+  border-radius: 0 8px 8px 0;
+}
+[data-theme="dark"] .role-banner {
+  background: #422006;
+  color: #fde68a;
+}
+.role-banner-icon { flex-shrink: 0; font-size: 16px; }
+.role-banner-text { flex: 1; }
