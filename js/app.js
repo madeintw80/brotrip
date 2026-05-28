@@ -2486,8 +2486,11 @@ const App = {
     this.renderWishlist();
   },
 
-  // type filter 狀態（記在 App 上，跨 render 保留）
+  // v3.5.0: filter / sort state (跨 render 保留)
   _wishlistTypeFilter: 'all',
+  _wishlistAddedByFilter: 'all',  // 'all' | email
+  _wishlistSort: 'recent',         // 'recent' | 'distance' | 'name'
+  _wishlistDistanceMap: null,      // Map<wishId, meters> for current render
 
   renderWishlist() {
     const listEl = document.getElementById('wishlist-list');
@@ -2514,9 +2517,23 @@ const App = {
       return;
     }
 
-    // 按 type filter
-    const filtered = Wishlist.filterByType(this._wishlistTypeFilter);
-    // 分主列表（planned / promoted / visited）和被否決區
+    // 先 render added_by filter chips (動態 - 按當前 trip 有加 wish 的人)
+    this._renderAddedByFilterChips();
+
+    // Sync sort dropdown UI 跟 state
+    const sortSel = document.getElementById('wishlist-sort-select');
+    if (sortSel && sortSel.value !== this._wishlistSort) sortSel.value = this._wishlistSort;
+
+    // 套用兩層 filter
+    let filtered = Wishlist.filterByType(this._wishlistTypeFilter);
+    if (this._wishlistAddedByFilter !== 'all') {
+      filtered = filtered.filter(w => w.added_by === this._wishlistAddedByFilter);
+    }
+
+    // 套用 sort
+    filtered = this._sortWishlist(filtered);
+
+    // 分主列表 / 被否決區
     const memberCount = (typeof Members !== 'undefined') ? (Members.all().length || 1) : 1;
     const mainItems = filtered.filter(w => !Wishlist.isRejected(w, memberCount));
     const rejectedItems = filtered.filter(w => Wishlist.isRejected(w, memberCount));
@@ -2524,16 +2541,20 @@ const App = {
     if (mainItems.length === 0 && rejectedItems.length === 0) {
       listEl.innerHTML = '';
       if (emptyEl) {
-        emptyEl.textContent = this._wishlistTypeFilter === 'all'
-          ? '還沒有 wish — 按右下 ＋ 加你想去的地方'
-          : `這個分類還沒有 wish`;
+        const hasFilter = this._wishlistTypeFilter !== 'all' || this._wishlistAddedByFilter !== 'all';
+        emptyEl.textContent = hasFilter ? '這個篩選沒有 wish' : '還沒有 wish — 按右下 ＋ 加你想去的地方';
         emptyEl.classList.remove('hidden');
       }
     } else {
       if (emptyEl) emptyEl.classList.add('hidden');
     }
 
-    listEl.innerHTML = mainItems.map(w => this._wishlistCardHtml(w, memberCount)).join('');
+    // 距離排序時加分組 heading
+    if (this._wishlistSort === 'distance') {
+      listEl.innerHTML = this._renderWishlistGroupedByDistance(mainItems, memberCount);
+    } else {
+      listEl.innerHTML = mainItems.map(w => this._wishlistCardHtml(w, memberCount)).join('');
+    }
 
     if (rejectedItems.length > 0 && rejectedSection) {
       rejectedSection.classList.remove('hidden');
@@ -2543,8 +2564,103 @@ const App = {
       rejectedSection.classList.add('hidden');
     }
 
-    // bind 按鈕 listener (delegated 一次到 list root)
     this._bindWishlistCardActions();
+  },
+
+  // v3.5.0: 渲染 added_by filter chips
+  _renderAddedByFilterChips() {
+    const wrap = document.getElementById('wishlist-addedby-filter');
+    if (!wrap) return;
+    // 列當前 trip 有加 wish 的所有 email + 統計筆數
+    const counts = {};
+    Wishlist.list.forEach(w => {
+      if (w.added_by) counts[w.added_by] = (counts[w.added_by] || 0) + 1;
+    });
+    const emails = Object.keys(counts).sort();
+    if (emails.length === 0) {
+      wrap.innerHTML = '';
+      return;
+    }
+    const total = Wishlist.list.length;
+    const myEmail = (Auth.user || {}).email;
+    const chips = [];
+    chips.push(`<button type="button" class="chip ${this._wishlistAddedByFilter === 'all' ? 'chip-active' : ''}" data-addedby="all">👥 全部 (${total})</button>`);
+    if (myEmail && counts[myEmail]) {
+      chips.push(`<button type="button" class="chip ${this._wishlistAddedByFilter === myEmail ? 'chip-active' : ''}" data-addedby="${this.escapeAttr(myEmail)}">我的 (${counts[myEmail]})</button>`);
+    }
+    emails.filter(e => e !== myEmail).forEach(email => {
+      const name = this.nameOf(email) || email.split('@')[0];
+      chips.push(`<button type="button" class="chip ${this._wishlistAddedByFilter === email ? 'chip-active' : ''}" data-addedby="${this.escapeAttr(email)}">${this.escapeHtml(name)} (${counts[email]})</button>`);
+    });
+    wrap.innerHTML = chips.join('');
+  },
+
+  // v3.5.0: 排序
+  _sortWishlist(items) {
+    const sort = this._wishlistSort;
+    if (sort === 'name') {
+      return [...items].sort((a, b) => (a.name || '').localeCompare(b.name || '', 'zh-Hant'));
+    }
+    if (sort === 'distance') {
+      // 用 cached 距離 (renderWishlist 前 caller 已經先準備好 _wishlistDistanceMap)
+      const map = this._wishlistDistanceMap || new Map();
+      return [...items].sort((a, b) => {
+        const da = map.has(a.id) ? map.get(a.id) : Infinity;
+        const db = map.has(b.id) ? map.get(b.id) : Infinity;
+        return da - db;
+      });
+    }
+    // 'recent': 按既有規則（_filter 已排好：planned 在前 + created_at 新→舊）
+    return items;
+  },
+
+  // v3.5.0: 距離分組 heading 渲染
+  _renderWishlistGroupedByDistance(items, memberCount) {
+    const map = this._wishlistDistanceMap || new Map();
+    const groups = {
+      near: { label: '📍 500m 內', items: [] },
+      mid: { label: '🚶 500m–2km', items: [] },
+      far: { label: '🚗 2km 以上', items: [] },
+      unknown: { label: '❓ 沒有座標', items: [] },
+    };
+    items.forEach(w => {
+      const d = map.has(w.id) ? map.get(w.id) : null;
+      if (d === null || d === undefined || d === Infinity) groups.unknown.items.push(w);
+      else if (d < 500) groups.near.items.push(w);
+      else if (d < 2000) groups.mid.items.push(w);
+      else groups.far.items.push(w);
+    });
+    let html = '';
+    for (const key of ['near', 'mid', 'far', 'unknown']) {
+      const g = groups[key];
+      if (g.items.length === 0) continue;
+      html += `<div class="wish-group-header">${g.label} (${g.items.length})</div>`;
+      html += g.items.map(w => this._wishlistCardHtml(w, memberCount)).join('');
+    }
+    return html;
+  },
+
+  // v3.5.0: 切到 distance 排序時呼叫一次，準備 _wishlistDistanceMap 後再 render
+  async _prepareWishlistDistances() {
+    this._wishlistDistanceMap = new Map();
+    if (typeof GeoNotify === 'undefined') return;
+    const pos = await GeoNotify.getLastKnownPosition();
+    if (!pos) {
+      // 拿不到位置 → 顯示 hint
+      const hintEl = document.getElementById('wishlist-distance-hint');
+      if (hintEl) hintEl.textContent = '⚠️ 拿不到你的位置（請授權定位）';
+      return;
+    }
+    // 算每個 wish 的距離
+    Wishlist.list.forEach(w => {
+      const lat = parseFloat(w.lat);
+      const lng = parseFloat(w.lng);
+      if (isNaN(lat) || isNaN(lng)) return;
+      const d = GeoNotify.distanceMeters(pos.lat, pos.lng, lat, lng);
+      this._wishlistDistanceMap.set(w.id, d);
+    });
+    const hintEl = document.getElementById('wishlist-distance-hint');
+    if (hintEl) hintEl.textContent = `📍 已用你當前位置計算`;
   },
 
   _wishlistCardHtml(w, memberCount, isRejectedView = false) {
@@ -2594,6 +2710,16 @@ const App = {
       actions.push(`<button class="btn-small btn-danger wish-action" data-action="delete" data-id="${w.id}">🗑️ 刪除</button>`);
     }
 
+    // v3.5.0: 距離 badge（只在 distance 排序模式下顯示）
+    let distBadge = '';
+    if (this._wishlistSort === 'distance' && this._wishlistDistanceMap) {
+      const d = this._wishlistDistanceMap.get(w.id);
+      if (typeof d === 'number' && isFinite(d)) {
+        const distText = d < 1000 ? `${Math.round(d)}m` : `${(d / 1000).toFixed(1)}km`;
+        distBadge = `<span class="wish-dist" title="距離當前位置">📍 ${distText}</span>`;
+      }
+    }
+
     return `
       <div class="wish-card ${visited ? 'wish-card-done' : ''} ${isRejectedView ? 'wish-card-rejected' : ''}">
         <div class="wish-card-header">
@@ -2601,6 +2727,7 @@ const App = {
           <strong class="wish-name">${escape(w.name)}</strong>
           ${statusBadge}
           ${voteCount > 0 || !isMine ? voteBadge : ''}
+          ${distBadge}
         </div>
         ${w.address ? `<div class="wish-address">📍 ${escape(w.address)}</div>` : ''}
         ${w.source_note ? `<div class="wish-source">💬 ${escape(w.source_note)}</div>` : ''}
@@ -2641,6 +2768,35 @@ const App = {
         this.renderWishlist();
       });
     });
+
+    // v3.5.0: added_by filter chips (動態 - 每次 renderAddedByFilterChips 重生 → 直接綁)
+    document.querySelectorAll('#wishlist-addedby-filter .chip').forEach(chip => {
+      chip.addEventListener('click', () => {
+        this._wishlistAddedByFilter = chip.dataset.addedby;
+        this.renderWishlist();
+      });
+    });
+
+    // v3.5.0: sort dropdown (只綁一次 — 第一次 bind 後 dataset 標記)
+    const sortSel = document.getElementById('wishlist-sort-select');
+    if (sortSel && !sortSel.dataset.wishSortBound) {
+      sortSel.dataset.wishSortBound = '1';
+      sortSel.addEventListener('change', async () => {
+        this._wishlistSort = sortSel.value;
+        if (sortSel.value === 'distance') {
+          // 顯示「計算中」
+          const hintEl = document.getElementById('wishlist-distance-hint');
+          if (hintEl) hintEl.textContent = '⏳ 取得位置中...';
+          await this._prepareWishlistDistances();
+        } else {
+          // 切回非距離排序 → 清掉 hint
+          const hintEl = document.getElementById('wishlist-distance-hint');
+          if (hintEl) hintEl.textContent = '';
+          this._wishlistDistanceMap = null;
+        }
+        this.renderWishlist();
+      });
+    }
   },
 
   async _handleWishAction(action, id) {

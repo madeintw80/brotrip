@@ -1956,3 +1956,40 @@ summary {
   font-size: 11px;
 }
 
+/* v3.5.0: Wishlist filter / sort 增強 */
+.wishlist-addedby-filter {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.wishlist-addedby-filter:empty { display: none; }
+
+.wish-dist {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 8px;
+  background: #dbeafe;
+  color: #1e40af;
+  font-weight: 600;
+  white-space: nowrap;
+  margin-left: auto; /* push 到 header 右側 */
+}
+[data-theme="dark"] .wish-dist {
+  background: #1e3a8a;
+  color: #bfdbfe;
+}
+
+.wish-group-header {
+  margin: 12px 0 6px;
+  padding: 6px 12px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text);
+  background: var(--bg-secondary, #f3f4f6);
+  border-radius: 8px;
+  display: inline-block;
+}
+[data-theme="dark"] .wish-group-header {
+  background: #374151;
+}
+

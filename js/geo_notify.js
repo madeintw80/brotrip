@@ -22,6 +22,7 @@ const GeoNotify = {
   _watchId: null,
   _sessionNotifCount: 0,
   _enabled: false,
+  _lastPosition: null, // v3.5.0: cache 最後一次 position 給 wishlist sort 重用
 
   // 配置
   DISTANCE_THRESHOLD_M: 500,      // 500m 內觸發
@@ -129,6 +130,9 @@ const GeoNotify = {
   // ===== Position handler =====
 
   _onPosition(pos) {
+    // v3.5.0: cache 最後位置 (給 wishlist sort 重用，不另外請求)
+    this._lastPosition = { lat: pos.coords.latitude, lng: pos.coords.longitude, ts: Date.now() };
+
     if (typeof Wishlist === 'undefined' || !Wishlist.list) return;
     if (this._sessionNotifCount >= this.SESSION_NOTIF_CAP) return;
 
@@ -156,6 +160,39 @@ const GeoNotify = {
 
       if (this._sessionNotifCount >= this.SESSION_NOTIF_CAP) break;
     }
+  },
+
+  // v3.5.0: 給 wishlist sort 用 — 拿 cached 位置 (≤ 5 分鐘) 或 getCurrentPosition 一次
+  // 回傳 { lat, lng } 或 null (拿不到)
+  async getLastKnownPosition({ maxAgeMs = 300000 } = {}) {
+    // 已 cached 且夠新
+    if (this._lastPosition && (Date.now() - this._lastPosition.ts) < maxAgeMs) {
+      return { lat: this._lastPosition.lat, lng: this._lastPosition.lng };
+    }
+    // 沒 cached → getCurrentPosition 一次
+    if (!this.isSupported()) return null;
+    if (Notification.permission !== 'granted' && this.getPref() !== 'granted') {
+      // 沒推播權限，但 wishlist sort 場景仍可請求 geolocation (兩個 permission 分開)
+    }
+    try {
+      const pos = await new Promise((resolve, reject) => {
+        navigator.geolocation.getCurrentPosition(resolve, reject, {
+          enableHighAccuracy: false,
+          timeout: 8000,
+          maximumAge: 60000,
+        });
+      });
+      this._lastPosition = { lat: pos.coords.latitude, lng: pos.coords.longitude, ts: Date.now() };
+      return { lat: pos.coords.latitude, lng: pos.coords.longitude };
+    } catch (err) {
+      console.warn('[GeoNotify] getLastKnownPosition failed:', err);
+      return null;
+    }
+  },
+
+  // Public 距離計算 wrapper (給其他模組重用，例 wishlist sort)
+  distanceMeters(lat1, lng1, lat2, lng2) {
+    return this._haversineMeters(lat1, lng1, lat2, lng2);
   },
 
   // ===== 距離計算 (Haversine) =====

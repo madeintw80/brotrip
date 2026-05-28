@@ -1,5 +1,5 @@
 // 改版時記得升 version，下次載入會清舊 cache
-const CACHE = 'brotrip-v341';
+const CACHE = 'brotrip-v350';
 const ASSETS = [
   './',
   './index.html',
@@ -23,7 +23,7 @@ const ASSETS = [
   './js/wishlist.js?v=340',
   './js/geo_notify.js?v=340',
   './js/notifications.js?v=340',
-  './js/app.js?v=341',
+  './js/app.js?v=350',
   './js/diaries.js?v=330',
 ];
 
