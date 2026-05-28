@@ -1,7 +1,7 @@
 // BroTrip 設定檔
 // CLIENT_ID 是 public（OAuth 本來就公開），可 commit 到 GitHub
 const CONFIG = {
-  VERSION: '3.8.1',
+  VERSION: '3.8.2',
   CLIENT_ID: '38081255296-ojiesn8jsdlkrsa5snlue0s3tprro3rq.apps.googleusercontent.com',
   // v3.6.1: Cloudflare Workers 邀請短碼 backend
   //   POST /codes → 拿 8 字短碼; GET /codes/:code → 查短碼

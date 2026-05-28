@@ -808,6 +808,19 @@ const App = {
   },
 
   bindUI() {
+    // v3.8.2: login + no-group screen 顯示版本號 + 強制更新按鈕
+    //   解決朋友卡在這兩個畫面無法升級的痛點
+    const versionStr = (typeof CONFIG !== 'undefined') ? CONFIG.VERSION : '?';
+    const loginVerLabel = document.getElementById('login-version-label');
+    const nogroupVerLabel = document.getElementById('nogroup-version-label');
+    if (loginVerLabel) loginVerLabel.textContent = versionStr;
+    if (nogroupVerLabel) nogroupVerLabel.textContent = versionStr;
+    const loginForceUpdate = document.getElementById('login-force-update-btn');
+    const nogroupForceUpdate = document.getElementById('nogroup-force-update-btn');
+    const triggerUpdate = () => this.checkUpdate();
+    if (loginForceUpdate) loginForceUpdate.addEventListener('click', triggerUpdate);
+    if (nogroupForceUpdate) nogroupForceUpdate.addEventListener('click', triggerUpdate);
+
     document.getElementById('login-btn').addEventListener('click', async () => {
       try {
         // v3.8.1: URL 帶 ?switch=1 表示用戶剛從「換帳號重登」過來 → 強制 Google 帳戶選擇器

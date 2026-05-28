@@ -18,7 +18,7 @@
       if (t) document.documentElement.dataset.theme = t;
     } catch (e) {}
   </script>
-  <link rel="stylesheet" href="styles.css?v=381">
+  <link rel="stylesheet" href="styles.css?v=382">
 </head>
 <body>
   <div id="pull-indicator" class="pull-indicator"></div>
@@ -31,6 +31,11 @@
 
   <!-- 登入畫面 -->
   <div id="login-screen" class="screen hidden">
+    <!-- v3.8.2: 左下角顯示版本號 + 強制更新按鈕 (朋友卡這畫面也能升級) -->
+    <div class="version-corner" style="position:fixed; bottom:env(safe-area-inset-bottom,0); left:0; padding:8px 12px; font-size:11px; color:rgba(255,255,255,0.6); display:flex; align-items:center; gap:8px; z-index:5;">
+      <span>v<span id="login-version-label">?</span></span>
+      <button id="login-force-update-btn" type="button" style="background:rgba(255,255,255,0.15); color:white; border:none; padding:4px 10px; border-radius:12px; font-size:11px; cursor:pointer;">🔄 強制更新</button>
+    </div>
     <div class="logo">BroTrip</div>
     <p class="subtitle">和好友一起出遊、一起記錄 ✈️</p>
     <button id="login-btn" class="btn-primary">用 Google 登入</button>
@@ -44,6 +49,11 @@
 
   <!-- 無群組畫面（登入後沒有加入任何群組時顯示）-->
   <div id="no-group-screen" class="screen hidden">
+    <!-- v3.8.2: 左下角顯示版本號 + 強制更新按鈕 -->
+    <div class="version-corner" style="position:fixed; bottom:env(safe-area-inset-bottom,0); left:0; padding:8px 12px; font-size:11px; color:rgba(255,255,255,0.6); display:flex; align-items:center; gap:8px; z-index:5;">
+      <span>v<span id="nogroup-version-label">?</span></span>
+      <button id="nogroup-force-update-btn" type="button" style="background:rgba(255,255,255,0.15); color:white; border:none; padding:4px 10px; border-radius:12px; font-size:11px; cursor:pointer;">🔄 強制更新</button>
+    </div>
     <div class="logo">BroTrip</div>
     <p class="subtitle">歡迎！👋</p>
     <p class="no-group-text">目前找不到你的群組</p>
@@ -791,23 +801,23 @@
 
   <!-- App 程式碼（順序很重要，後面的依賴前面的）
        Phase 2: groups.js 必須在 cache.js 之前載入，cache PREFIX 依賴 Groups.active() -->
-  <script src="js/config.js?v=381"></script>
-  <script src="js/groups.js?v=381"></script>
-  <script src="js/cache.js?v=381"></script>
-  <script src="js/auth.js?v=381"></script>
-  <script src="js/api.js?v=381"></script>
-  <script src="js/trips.js?v=381"></script>
-  <script src="js/expenses.js?v=381"></script>
-  <script src="js/diaries.js?v=381"></script>
-  <script src="js/members.js?v=381"></script>
-  <script src="js/nicknames.js?v=381"></script>
-  <script src="js/comments.js?v=381"></script>
-  <script src="js/notifications.js?v=381"></script>
-  <script src="js/itineraries.js?v=381"></script>
-  <script src="js/settlements.js?v=381"></script>
-  <script src="js/wishlist.js?v=381"></script>
-  <script src="js/geo_notify.js?v=381"></script>
-  <script src="js/app.js?v=381"></script>
+  <script src="js/config.js?v=382"></script>
+  <script src="js/groups.js?v=382"></script>
+  <script src="js/cache.js?v=382"></script>
+  <script src="js/auth.js?v=382"></script>
+  <script src="js/api.js?v=382"></script>
+  <script src="js/trips.js?v=382"></script>
+  <script src="js/expenses.js?v=382"></script>
+  <script src="js/diaries.js?v=382"></script>
+  <script src="js/members.js?v=382"></script>
+  <script src="js/nicknames.js?v=382"></script>
+  <script src="js/comments.js?v=382"></script>
+  <script src="js/notifications.js?v=382"></script>
+  <script src="js/itineraries.js?v=382"></script>
+  <script src="js/settlements.js?v=382"></script>
+  <script src="js/wishlist.js?v=382"></script>
+  <script src="js/geo_notify.js?v=382"></script>
+  <script src="js/app.js?v=382"></script>
 
   <!-- Service Worker + auto-update（偵測新版 SW 後通知用戶 reload） -->
   <script>
