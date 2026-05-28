@@ -1123,6 +1123,7 @@ summary {
   /* 撐滿 viewport 剩餘空間（扣 header ~80 + bottom nav ~60 + padding） */
   min-height: calc(100dvh - 160px);
   gap: 10px;
+  position: relative; /* v3.5.1: 給 .map-controls absolute 定位用 */
 }
 #trip-map {
   /* 地圖佔大頭，最少 320px，最多到行程 section 邊界 */
@@ -1806,28 +1807,38 @@ summary {
   .nav-btn .nav-label { font-size: 10px; }
 }
 
-/* 地圖 toggle controls */
+/* v3.5.1: 地圖 toggle 改 absolute 浮地圖右上 chip 化，不佔 layout */
 .map-controls {
-  display: flex;
-  justify-content: flex-end;
-  padding: 6px 12px;
-  background: var(--bg-secondary, #f9fafb);
-  border-bottom: 1px solid var(--border);
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 5;
+  padding: 4px 10px;
+  background: rgba(255, 255, 255, 0.94);
+  border-radius: 16px;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.15);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
 }
-[data-theme="dark"] .map-controls { background: #1f2937; }
+[data-theme="dark"] .map-controls {
+  background: rgba(31, 41, 55, 0.92);
+  color: #e5e7eb;
+}
 .map-toggle {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  font-size: 13px;
+  gap: 5px;
+  font-size: 12px;
   color: var(--text);
   cursor: pointer;
   user-select: none;
+  line-height: 1.2;
 }
 .map-toggle input[type="checkbox"] {
-  width: 16px;
-  height: 16px;
+  width: 14px;
+  height: 14px;
   cursor: pointer;
+  margin: 0;
 }
 
 /* Wishlist tab */
