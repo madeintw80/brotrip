@@ -2,17 +2,19 @@
 // 每群組存在用戶 Drive 的獨立資料夾+Sheet（BroTrip/<group_name>/）
 // localStorage 存群組清單和當前 active group id
 
-// 9 個分頁的 schema（Sheet 建立時用）
+// 10 個分頁的 schema（Sheet 建立時用）
+// v3.2.0 (M6.1) 新增 Wishlist；Itineraries/Diaries 加 wishlist_id（M6.2 才用到，先 future-proof）
 const GROUP_SCHEMA = {
   Trips: ['trip_id', 'name', 'start_date', 'end_date', 'members', 'created_by', 'created_at'],
   Expenses: ['id', 'trip_id', 'date', 'payer', 'amount', 'currency', 'category', 'description', 'splits', 'photo_url', 'created_at', 'payers', 'settled'],
-  Diaries: ['id', 'trip_id', 'date', 'author', 'content', 'mood', 'photo_ids', 'location', 'created_at', 'pinned', 'drive_folder_url', 'mentions'],
+  Diaries: ['id', 'trip_id', 'date', 'author', 'content', 'mood', 'photo_ids', 'location', 'created_at', 'pinned', 'drive_folder_url', 'mentions', 'wishlist_id'],
   Members: ['email', 'display_name', 'joined_at'],
   Nicknames: ['target_email', 'nickname', 'updated_by', 'updated_at'],
   Comments: ['id', 'diary_id', 'author', 'content', 'created_at', 'mentions'],
   Notifications: ['id', 'target_email', 'type', 'diary_id', 'comment_id', 'from_email', 'created_at'],
-  Itineraries: ['id', 'trip_id', 'name', 'waypoints', 'travel_mode', 'author', 'created_at'],
+  Itineraries: ['id', 'trip_id', 'name', 'waypoints', 'travel_mode', 'author', 'created_at', 'wishlist_id'],
   Settlements: ['id', 'trip_id', 'from_email', 'to_email', 'amount', 'currency', 'status', 'note', 'created_at', 'confirmed_at'],
+  Wishlist: ['id', 'trip_id', 'place_id', 'name', 'address', 'lat', 'lng', 'type', 'added_by', 'source_note', 'status', 'rejected_votes', 'created_at', 'promoted_at', 'visited_at'],
 };
 
 const Groups = {
@@ -236,6 +238,43 @@ const Groups = {
       console.error('Groups.create failed:', err);
       throw err;
     }
+  },
+
+  // ===== v3.2.0 (M6.1): 既有群組的 lazy tab migration =====
+  // 給「新 schema tab（例如 Wishlist）」用的：第一次 load 抓不到 → 自動建 + 寫 headers + 更新 sheetTabIds
+  // Group 已建很久後新 release 加新 tab 時呼叫，避免每個 user 手動升級
+  async ensureGroupTab(tabName) {
+    const group = this.active();
+    if (!group) throw new Error('沒有 active group');
+    if (!GROUP_SCHEMA[tabName]) throw new Error(`未知 tab: ${tabName}`);
+
+    // 已知有 tabId → 已存在，跳過
+    if (group.sheetTabIds && group.sheetTabIds[tabName] !== undefined) {
+      return group.sheetTabIds[tabName];
+    }
+
+    // 先抓最新的 tabIds（避免本地 cache 過時）
+    let liveTabIds = {};
+    try {
+      liveTabIds = await API.getSpreadsheetTabIds(group.sheetId);
+    } catch (err) {
+      console.warn(`[Groups] getSpreadsheetTabIds failed:`, err);
+    }
+    if (liveTabIds[tabName] !== undefined) {
+      // 雲端已有但本地 cache 沒記 → 補進去
+      group.sheetTabIds = { ...group.sheetTabIds, ...liveTabIds };
+      this._save();
+      return liveTabIds[tabName];
+    }
+
+    // 真的沒有 → 建立
+    const addedIds = await API.addSheetTabs(group.sheetId, [tabName]);
+    await API.setSheetHeaders(group.sheetId, tabName, GROUP_SCHEMA[tabName]);
+
+    group.sheetTabIds = { ...group.sheetTabIds, [tabName]: addedIds[tabName] };
+    this._save();
+    console.log(`[Groups] ensureGroupTab created '${tabName}' (sheetId=${addedIds[tabName]})`);
+    return addedIds[tabName];
   },
 
   // ===== M2: 重新命名群組 =====

@@ -108,6 +108,12 @@
 
       <!-- 地圖 tab -->
       <section id="tab-map" class="tab-content hidden">
+        <div class="map-controls">
+          <label class="map-toggle">
+            <input type="checkbox" id="toggle-wish-markers" checked>
+            <span>💡 顯示願望清單地點</span>
+          </label>
+        </div>
         <div id="trip-map"></div>
         <div id="trip-map-empty" class="list-empty hidden">還沒有日記/行程有座標 — 新增日記時用「地點」自動推薦選地點，或下方按 +規劃預計行程。</div>
         <!-- 預計行程 -->
@@ -118,6 +124,30 @@
           </div>
           <div id="itinerary-list" class="itinerary-list"></div>
         </div>
+      </section>
+
+      <!-- 願望 tab (v3.2.0 M6.1) -->
+      <section id="tab-wishlist" class="tab-content hidden">
+        <div class="wishlist-header">
+          <h3 class="section-title" style="margin-bottom:8px;">💡 願望清單</h3>
+          <p class="hint" id="wishlist-trip-hint" style="margin:0 0 10px 0;">- (還沒選 trip)</p>
+          <div class="wishlist-type-filter" id="wishlist-type-filter">
+            <button type="button" class="chip chip-active" data-type="all">全部</button>
+            <button type="button" class="chip" data-type="restaurant">🍜 餐廳</button>
+            <button type="button" class="chip" data-type="attraction">🏛️ 景點</button>
+            <button type="button" class="chip" data-type="cafe">☕ 咖啡</button>
+            <button type="button" class="chip" data-type="experience">✨ 體驗</button>
+            <button type="button" class="chip" data-type="shopping">🛍️ 購物</button>
+            <button type="button" class="chip" data-type="other">📍 其他</button>
+          </div>
+        </div>
+        <div id="wishlist-list" class="wishlist-list"></div>
+        <div id="wishlist-empty" class="list-empty hidden">還沒有 wish — 按右下 + 加你想去的地方</div>
+        <!-- 已 rejected 收進來這個 expander -->
+        <details id="wishlist-rejected-section" class="hidden" style="margin-top:16px;">
+          <summary>🙈 被否決的 (<span id="wishlist-rejected-count">0</span>)</summary>
+          <div id="wishlist-rejected-list" class="wishlist-list"></div>
+        </details>
       </section>
 
       <!-- 設定 tab -->
@@ -230,10 +260,11 @@
 
     <!-- Bottom tab nav -->
     <nav class="bottom-nav">
-      <button class="nav-btn active" data-tab="expenses">💰 記帳</button>
-      <button class="nav-btn" data-tab="diaries">📸 日記</button>
-      <button class="nav-btn" data-tab="map">🗺 地圖</button>
-      <button class="nav-btn" data-tab="settings">⚙ 設定</button>
+      <button class="nav-btn active" data-tab="expenses">💰<span class="nav-label">記帳</span></button>
+      <button class="nav-btn" data-tab="diaries">📸<span class="nav-label">日記</span></button>
+      <button class="nav-btn" data-tab="map">🗺<span class="nav-label">地圖</span></button>
+      <button class="nav-btn" data-tab="wishlist">💡<span class="nav-label">願望</span></button>
+      <button class="nav-btn" data-tab="settings">⚙<span class="nav-label">設定</span></button>
     </nav>
 
     <!-- 浮動新增按鈕 -->
@@ -543,6 +574,43 @@
     </div>
   </div>
 
+  <!-- Modal: 新增 Wish (v3.2.0 M6.1) -->
+  <div id="modal-wishlist-add" class="modal hidden">
+    <div class="modal-content">
+      <header class="modal-header">
+        <h2>💡 加進願望清單</h2>
+        <button class="modal-close" type="button">✕</button>
+      </header>
+      <form id="wishlist-add-form">
+        <label>地點
+          <input id="wishlist-place-input" name="place" type="text" required autocomplete="off" placeholder="輸入地點名稱，跳 Google 推薦選一個">
+          <input type="hidden" name="place_id" id="wishlist-place-id">
+          <input type="hidden" name="lat" id="wishlist-lat">
+          <input type="hidden" name="lng" id="wishlist-lng">
+          <input type="hidden" name="address" id="wishlist-address">
+          <small id="wishlist-place-selected-hint" style="color:var(--text-light);"></small>
+        </label>
+        <label>類型
+          <select name="type" required>
+            <option value="restaurant">🍜 餐廳</option>
+            <option value="attraction">🏛️ 景點</option>
+            <option value="cafe">☕ 咖啡</option>
+            <option value="experience">✨ 體驗</option>
+            <option value="shopping">🛍️ 購物</option>
+            <option value="other">📍 其他</option>
+          </select>
+        </label>
+        <label>備註（推薦來源、為什麼想去...）
+          <input name="source_note" type="text" maxlength="60" placeholder="例：Paul 推薦 / IG @xxx / 米其林必比登">
+        </label>
+        <div class="form-actions">
+          <button type="button" class="btn-cancel modal-close">取消</button>
+          <button type="submit" class="btn-primary">加進清單</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
   <!-- Modal: 通知 -->
   <div id="modal-notifications" class="modal hidden">
     <div class="modal-content">
@@ -589,7 +657,8 @@
   <script src="js/notifications.js?v=300"></script>
   <script src="js/itineraries.js?v=300"></script>
   <script src="js/settlements.js?v=300"></script>
-  <script src="js/app.js?v=300"></script>
+  <script src="js/wishlist.js?v=320"></script>
+  <script src="js/app.js?v=320"></script>
 
   <!-- Service Worker + auto-update（偵測新版 SW 後通知用戶 reload） -->
   <script>

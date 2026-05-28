@@ -1780,3 +1780,179 @@ summary {
   border-color: var(--text-light);
   color: var(--text-light);
 }
+
+/* ===== v3.2.0 M6.1 Wishlist + 5-tab navbar ===== */
+
+/* 5-tab navbar：原本 4 個改 5 個，要縮 padding + 字體 + emoji 為主 */
+.nav-btn {
+  padding: 10px 4px;
+  font-size: 22px; /* emoji 為主 */
+  line-height: 1.2;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  min-width: 0; /* 允許壓縮 */
+}
+.nav-btn .nav-label {
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: -0.3px;
+}
+.nav-btn.active .nav-label { font-weight: 700; }
+/* 超窄螢幕（< 360px）字體再縮 */
+@media (max-width: 360px) {
+  .nav-btn { padding: 10px 2px; font-size: 20px; }
+  .nav-btn .nav-label { font-size: 10px; }
+}
+
+/* 地圖 toggle controls */
+.map-controls {
+  display: flex;
+  justify-content: flex-end;
+  padding: 6px 12px;
+  background: var(--bg-secondary, #f9fafb);
+  border-bottom: 1px solid var(--border);
+}
+[data-theme="dark"] .map-controls { background: #1f2937; }
+.map-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--text);
+  cursor: pointer;
+  user-select: none;
+}
+.map-toggle input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+}
+
+/* Wishlist tab */
+.wishlist-header { padding: 12px 16px 0; }
+.wishlist-type-filter {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 8px 0 14px;
+}
+.chip {
+  background: var(--bg-secondary, #f3f4f6);
+  border: 1px solid var(--border);
+  color: var(--text-light);
+  padding: 5px 12px;
+  border-radius: 999px;
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.15s;
+}
+.chip:hover { border-color: var(--primary); }
+.chip.chip-active {
+  background: var(--primary);
+  color: white;
+  border-color: var(--primary);
+  font-weight: 600;
+}
+[data-theme="dark"] .chip {
+  background: #374151;
+  color: #d1d5db;
+}
+
+.wishlist-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 0 16px 80px; /* 底部留空避開 FAB */
+}
+
+.wish-card {
+  background: var(--card-bg, white);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 12px 14px;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+}
+[data-theme="dark"] .wish-card { background: #1f2937; }
+
+.wish-card-done { opacity: 0.65; }
+.wish-card-rejected { opacity: 0.55; border-style: dashed; }
+
+.wish-card-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-bottom: 6px;
+}
+.wish-type { font-size: 16px; }
+.wish-name {
+  font-size: 15px;
+  color: var(--text);
+  word-break: break-word;
+}
+.wish-badge {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 8px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.wish-visited { background: #e5e7eb; color: #6b7280; }
+.wish-promoted { background: #d1fae5; color: #065f46; }
+[data-theme="dark"] .wish-visited { background: #374151; color: #d1d5db; }
+[data-theme="dark"] .wish-promoted { background: #064e3b; color: #6ee7b7; }
+
+.wish-vote {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 8px;
+  background: #f3f4f6;
+  color: #6b7280;
+}
+.wish-vote-some { background: #fef3c7; color: #92400e; }
+.wish-vote-full { background: #fee2e2; color: #991b1b; }
+[data-theme="dark"] .wish-vote { background: #374151; color: #d1d5db; }
+[data-theme="dark"] .wish-vote-some { background: #78350f; color: #fde68a; }
+[data-theme="dark"] .wish-vote-full { background: #7f1d1d; color: #fecaca; }
+
+.wish-address, .wish-source, .wish-meta {
+  font-size: 12px;
+  color: var(--text-light);
+  margin-top: 4px;
+}
+.wish-source { color: var(--primary); }
+
+.wish-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+}
+.wish-actions .btn-small {
+  padding: 5px 10px;
+  font-size: 12px;
+}
+.btn-warn {
+  background: #fef3c7 !important;
+  color: #92400e !important;
+  border: 1px solid #fde68a !important;
+}
+.btn-warn:hover { background: #fde68a !important; }
+.btn-danger {
+  background: #fee2e2 !important;
+  color: #991b1b !important;
+  border: 1px solid #fecaca !important;
+}
+[data-theme="dark"] .btn-warn { background: #78350f !important; color: #fde68a !important; border-color: #92400e !important; }
+[data-theme="dark"] .btn-danger { background: #7f1d1d !important; color: #fecaca !important; border-color: #991b1b !important; }
+
+/* Wishlist Add modal: place input + selected hint */
+#wishlist-place-selected-hint {
+  display: block;
+  margin-top: 4px;
+  font-size: 11px;
+}
+

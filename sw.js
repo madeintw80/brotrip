@@ -1,5 +1,5 @@
 // 改版時記得升 version，下次載入會清舊 cache
-const CACHE = 'brotrip-v313';
+const CACHE = 'brotrip-v320';
 const ASSETS = [
   './',
   './index.html',
@@ -20,7 +20,8 @@ const ASSETS = [
   './js/notifications.js?v=300',
   './js/itineraries.js?v=300',
   './js/settlements.js?v=300',
-  './js/app.js?v=300',
+  './js/wishlist.js?v=320',
+  './js/app.js?v=320',
 ];
 
 self.addEventListener('install', e => {

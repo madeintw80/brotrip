@@ -957,6 +957,7 @@ const App = {
       if (!Trips.current) { this.openModal('modal-trips'); return; }
       if (this.currentTab === 'expenses') this.openExpenseModal();
       else if (this.currentTab === 'diaries') this.openDiaryModal();
+      else if (this.currentTab === 'wishlist') this.openWishlistAddModal();
     });
 
     document.getElementById('trip-switch').addEventListener('click', () => this.openTripsModal());
@@ -980,6 +981,16 @@ const App = {
     document.getElementById('expense-form').addEventListener('submit', e => this.handleExpenseSubmit(e));
     document.getElementById('diary-form').addEventListener('submit', e => this.handleDiarySubmit(e));
     document.getElementById('new-trip-form').addEventListener('submit', e => this.handleNewTripSubmit(e));
+    // v3.2.0 M6.1
+    const wishForm = document.getElementById('wishlist-add-form');
+    if (wishForm) wishForm.addEventListener('submit', e => this.handleWishlistAddSubmit(e));
+    const toggleWishMarkers = document.getElementById('toggle-wish-markers');
+    if (toggleWishMarkers) {
+      toggleWishMarkers.addEventListener('change', () => {
+        this._showWishMarkers = toggleWishMarkers.checked;
+        this.renderWishlistMarkers();
+      });
+    }
 
     // Photo lightbox
     const lightbox = document.getElementById('photo-lightbox');
@@ -1715,6 +1726,81 @@ const App = {
       this._map.setCenter({ lat: diariesWithCoords[0].lat, lng: diariesWithCoords[0].lng });
       this._map.setZoom(14);
     }
+
+    // v3.2.0 M6.1: 加 wishlist markers（toggle on 時）
+    this.renderWishlistMarkers();
+  },
+
+  // v3.2.0 M6.1
+  _wishMarkers: null,
+  _showWishMarkers: true,
+
+  renderWishlistMarkers() {
+    if (this._wishMarkers) this._wishMarkers.forEach(m => m.setMap(null));
+    this._wishMarkers = [];
+    if (!this._showWishMarkers) return;
+    if (!this._map || typeof Wishlist === 'undefined') return;
+
+    const items = Wishlist.getMappable();
+    items.forEach(w => {
+      const lat = parseFloat(w.lat);
+      const lng = parseFloat(w.lng);
+      if (isNaN(lat) || isNaN(lng)) return;
+
+      // 圖示與透明度按狀態區分：
+      //   planned → 黃半透明 (candidate)
+      //   promoted → 綠實心 (進路線)
+      //   visited → 灰實心 (去過了)
+      let iconUrl, opacity;
+      if (w.status === 'visited') { iconUrl = 'https://maps.google.com/mapfiles/ms/icons/grey-dot.png'; opacity = 0.85; }
+      else if (w.status === 'promoted') { iconUrl = 'https://maps.google.com/mapfiles/ms/icons/green-dot.png'; opacity = 1.0; }
+      else { iconUrl = 'https://maps.google.com/mapfiles/ms/icons/yellow-dot.png'; opacity = 0.7; }
+
+      const marker = new google.maps.Marker({
+        position: { lat, lng },
+        map: this._map,
+        title: w.name,
+        icon: iconUrl,
+        opacity,
+      });
+
+      const typeLabel = (Wishlist.TYPE_LABEL && Wishlist.TYPE_LABEL[w.type]) || '📍';
+      const addedBy = this.nameOf(w.added_by) || (w.added_by || '').split('@')[0];
+      const statusText = w.status === 'visited' ? '✓ 已去過' :
+                         w.status === 'promoted' ? '📌 已排進行程' :
+                         '🌱 候選中';
+      const content = `
+        <div style="max-width:240px; font-family:inherit;">
+          <div style="font-weight:600; font-size:14px;">${typeLabel} ${this.escapeHtml(w.name)}</div>
+          ${w.address ? `<div style="font-size:12px; color:#6b7280; margin-top:2px;">${this.escapeHtml(w.address)}</div>` : ''}
+          ${w.source_note ? `<div style="font-size:12px; color:#3b82f6; margin-top:6px;">💬 ${this.escapeHtml(w.source_note)}</div>` : ''}
+          <div style="font-size:11px; color:#9ca3af; margin-top:6px;">${this.escapeHtml(addedBy)} 加的 · ${statusText}</div>
+          ${w.status === 'planned' ? `
+            <button onclick="App._wishMarkerAction('visited','${w.id}')"
+                    style="margin-top:8px; padding:5px 12px; background:#3b82f6; color:#fff; border:none; border-radius:6px; cursor:pointer; font-size:12px;">
+              ✓ 標已去過
+            </button>
+            <button onclick="App._wishMarkerAction('promote','${w.id}')"
+                    style="margin-top:8px; margin-left:4px; padding:5px 12px; background:#10b981; color:#fff; border:none; border-radius:6px; cursor:pointer; font-size:12px;">
+              ➕ 進行程
+            </button>
+          ` : ''}
+        </div>
+      `;
+      const info = new google.maps.InfoWindow({ content });
+      marker.addListener('click', () => info.open(this._map, marker));
+      this._wishMarkers.push(marker);
+    });
+  },
+
+  // InfoWindow 的 onclick 動作 → 跑 wish action → re-render markers
+  async _wishMarkerAction(action, id) {
+    try {
+      await this._handleWishAction(action, id);
+      this.renderWishlistMarkers();
+    } catch (err) {
+      console.error('wish marker action err:', err);
+    }
   },
 
   openDiaryFromMap(id) {
@@ -2260,6 +2346,7 @@ const App = {
       Notifications.loadAll(),
       typeof Itineraries !== 'undefined' ? Itineraries.loadAll() : Promise.resolve(),
       typeof Settlements !== 'undefined' ? Settlements.loadAll() : Promise.resolve(),
+      typeof Wishlist !== 'undefined' ? Wishlist.loadAll() : Promise.resolve(),
     ]);
     this.renderAll();
     this.updateNotifBadge();
@@ -2275,7 +2362,280 @@ const App = {
     this.renderDiaries();
     this.renderNicknamesUI();
     this.renderItineraries();
+    this.renderWishlist();
     this.updateDebugInfo();
+  },
+
+  // ===== Wishlist (v3.2.0 M6.1) =====
+
+  // 切到 wishlist tab 時呼叫：cache → render → 背景 fetch → re-render
+  async loadAndRenderWishlist() {
+    if (Wishlist.loadFromCache()) this.renderWishlist();
+    await Wishlist.loadAll();
+    this.renderWishlist();
+  },
+
+  // type filter 狀態（記在 App 上，跨 render 保留）
+  _wishlistTypeFilter: 'all',
+
+  renderWishlist() {
+    const listEl = document.getElementById('wishlist-list');
+    const emptyEl = document.getElementById('wishlist-empty');
+    const tripHintEl = document.getElementById('wishlist-trip-hint');
+    const rejectedSection = document.getElementById('wishlist-rejected-section');
+    const rejectedListEl = document.getElementById('wishlist-rejected-list');
+    const rejectedCountEl = document.getElementById('wishlist-rejected-count');
+    if (!listEl) return;
+
+    if (tripHintEl) {
+      tripHintEl.textContent = Trips.current
+        ? `當前 trip：${Trips.current.name}（${Wishlist.list.length} 個 wish）`
+        : '請先建立或選擇一個 trip';
+    }
+
+    if (!Trips.current) {
+      listEl.innerHTML = '';
+      if (emptyEl) {
+        emptyEl.textContent = '請先建立或選擇一個 trip，wish 是綁在 trip 上的';
+        emptyEl.classList.remove('hidden');
+      }
+      if (rejectedSection) rejectedSection.classList.add('hidden');
+      return;
+    }
+
+    // 按 type filter
+    const filtered = Wishlist.filterByType(this._wishlistTypeFilter);
+    // 分主列表（planned / promoted / visited）和被否決區
+    const memberCount = (typeof Members !== 'undefined') ? (Members.all().length || 1) : 1;
+    const mainItems = filtered.filter(w => !Wishlist.isRejected(w, memberCount));
+    const rejectedItems = filtered.filter(w => Wishlist.isRejected(w, memberCount));
+
+    if (mainItems.length === 0 && rejectedItems.length === 0) {
+      listEl.innerHTML = '';
+      if (emptyEl) {
+        emptyEl.textContent = this._wishlistTypeFilter === 'all'
+          ? '還沒有 wish — 按右下 ＋ 加你想去的地方'
+          : `這個分類還沒有 wish`;
+        emptyEl.classList.remove('hidden');
+      }
+    } else {
+      if (emptyEl) emptyEl.classList.add('hidden');
+    }
+
+    listEl.innerHTML = mainItems.map(w => this._wishlistCardHtml(w, memberCount)).join('');
+
+    if (rejectedItems.length > 0 && rejectedSection) {
+      rejectedSection.classList.remove('hidden');
+      if (rejectedCountEl) rejectedCountEl.textContent = rejectedItems.length;
+      if (rejectedListEl) rejectedListEl.innerHTML = rejectedItems.map(w => this._wishlistCardHtml(w, memberCount, true)).join('');
+    } else if (rejectedSection) {
+      rejectedSection.classList.add('hidden');
+    }
+
+    // bind 按鈕 listener (delegated 一次到 list root)
+    this._bindWishlistCardActions();
+  },
+
+  _wishlistCardHtml(w, memberCount, isRejectedView = false) {
+    const escape = s => this.escapeHtml(s || '');
+    const typeLabel = Wishlist.TYPE_LABEL[w.type] || '📍';
+    const addedByName = this.nameOf(w.added_by) || (w.added_by || '').split('@')[0];
+    const voters = Wishlist.getVoters(w);
+    const voteCount = voters.length;
+    const threshold = Wishlist.rejectionThreshold(memberCount);
+    const myEmail = (Auth.user || {}).email;
+    const isMine = w.added_by === myEmail;
+    const iVoted = voters.includes(myEmail);
+    const visited = w.status === 'visited';
+    const promoted = w.status === 'promoted';
+
+    const statusBadge = visited
+      ? '<span class="wish-badge wish-visited">✓ 已去過</span>'
+      : promoted
+        ? '<span class="wish-badge wish-promoted">📌 已排進行程</span>'
+        : '';
+
+    const voteBadgeClass = voteCount > 0 ? (voteCount >= threshold ? 'wish-vote-full' : 'wish-vote-some') : '';
+    const votersList = voters.length > 0
+      ? voters.map(e => this.nameOf(e) || e.split('@')[0]).join(', ')
+      : '';
+    const voteBadge = `<span class="wish-vote ${voteBadgeClass}" title="${escape(votersList)}">👎 ${voteCount}/${threshold}</span>`;
+
+    // 操作按鈕：依狀態 + 是否我加的 顯示
+    const actions = [];
+    if (!visited && !isRejectedView) {
+      actions.push(`<button class="btn-small wish-action" data-action="promote" data-id="${w.id}">➕ 加進行程</button>`);
+      actions.push(`<button class="btn-small wish-action" data-action="visited" data-id="${w.id}">✓ 已去過</button>`);
+    }
+    if (visited) {
+      actions.push(`<button class="btn-small wish-action" data-action="reset" data-id="${w.id}">↺ 改回想去</button>`);
+    }
+    if (!isMine && !iVoted && !visited) {
+      actions.push(`<button class="btn-small btn-warn wish-action" data-action="vote" data-id="${w.id}">👎 否決</button>`);
+    }
+    if (!isMine && iVoted) {
+      actions.push(`<button class="btn-small wish-action" data-action="unvote" data-id="${w.id}">↺ 取消否決</button>`);
+    }
+    if (isMine && isRejectedView) {
+      actions.push(`<button class="btn-small wish-action" data-action="force-restore" data-id="${w.id}">💪 強行恢復</button>`);
+    }
+    if (isMine) {
+      actions.push(`<button class="btn-small btn-danger wish-action" data-action="delete" data-id="${w.id}">🗑️ 刪除</button>`);
+    }
+
+    return `
+      <div class="wish-card ${visited ? 'wish-card-done' : ''} ${isRejectedView ? 'wish-card-rejected' : ''}">
+        <div class="wish-card-header">
+          <span class="wish-type">${typeLabel}</span>
+          <strong class="wish-name">${escape(w.name)}</strong>
+          ${statusBadge}
+          ${voteCount > 0 || !isMine ? voteBadge : ''}
+        </div>
+        ${w.address ? `<div class="wish-address">📍 ${escape(w.address)}</div>` : ''}
+        ${w.source_note ? `<div class="wish-source">💬 ${escape(w.source_note)}</div>` : ''}
+        <div class="wish-meta">${escape(addedByName)} 加的</div>
+        <div class="wish-actions">${actions.join(' ')}</div>
+      </div>
+    `;
+  },
+
+  _bindWishlistCardActions() {
+    document.querySelectorAll('.wish-action').forEach(btn => {
+      // remove old listener by cloning
+      const fresh = btn.cloneNode(true);
+      btn.parentNode.replaceChild(fresh, btn);
+      fresh.addEventListener('click', async (e) => {
+        const action = fresh.dataset.action;
+        const id = fresh.dataset.id;
+        fresh.disabled = true;
+        try {
+          await this._handleWishAction(action, id);
+        } catch (err) {
+          this.toast('操作失敗：' + (err.message || '未知錯誤'));
+          console.error('wish action err:', err);
+        } finally {
+          fresh.disabled = false;
+        }
+      });
+    });
+    // type filter chips
+    document.querySelectorAll('#wishlist-type-filter .chip').forEach(chip => {
+      const fresh = chip.cloneNode(true);
+      chip.parentNode.replaceChild(fresh, chip);
+      fresh.addEventListener('click', () => {
+        this._wishlistTypeFilter = fresh.dataset.type;
+        document.querySelectorAll('#wishlist-type-filter .chip').forEach(c => {
+          c.classList.toggle('chip-active', c.dataset.type === this._wishlistTypeFilter);
+        });
+        this.renderWishlist();
+      });
+    });
+  },
+
+  async _handleWishAction(action, id) {
+    const wish = Wishlist.allList.find(w => w.id === id);
+    if (!wish) { this.toast('找不到該筆 wish'); return; }
+    const myEmail = Auth.user.email;
+    switch (action) {
+      case 'visited':
+        await Wishlist.markVisited(id);
+        this.toast(`✓ 標記「${wish.name}」已去過`);
+        break;
+      case 'promote':
+        // M6.1 暫時版：標 status promoted（M6.2 會接 itinerary 真正建 waypoint）
+        await Wishlist.promote(id);
+        this.toast(`📌 「${wish.name}」標為已排進行程（M6.2 會自動加進 itinerary）`);
+        break;
+      case 'reset':
+        await Wishlist.resetToPlanned(id);
+        this.toast(`↺ 「${wish.name}」改回想去`);
+        break;
+      case 'vote':
+        await Wishlist.vote(id, myEmail);
+        this.toast(`👎 已否決「${wish.name}」`);
+        break;
+      case 'unvote':
+        await Wishlist.unvote(id, myEmail);
+        this.toast(`↺ 取消否決「${wish.name}」`);
+        break;
+      case 'force-restore':
+        if (!confirm(`強行恢復「${wish.name}」會清掉所有否決票，確定嗎？`)) return;
+        await Wishlist.forceRestore(id);
+        this.toast(`💪 「${wish.name}」已恢復`);
+        break;
+      case 'delete':
+        if (!confirm(`刪除「${wish.name}」？無法復原`)) return;
+        await Wishlist.remove(id);
+        this.toast(`🗑️ 已刪除「${wish.name}」`);
+        break;
+      default:
+        console.warn('unknown wish action:', action);
+    }
+    this.renderWishlist();
+  },
+
+  // === 新增 Wish modal ===
+
+  async openWishlistAddModal() {
+    if (!Trips.current) { this.toast('請先建立或選擇一個 trip'); return; }
+    const modal = document.getElementById('modal-wishlist-add');
+    if (!modal) return;
+    const form = document.getElementById('wishlist-add-form');
+    form.reset();
+    // 清掉 hidden 欄
+    ['place_id', 'lat', 'lng', 'address'].forEach(n => { form.elements[n].value = ''; });
+    document.getElementById('wishlist-place-selected-hint').textContent = '';
+
+    // 綁 Google Maps Autocomplete（只綁一次）
+    const placeInput = document.getElementById('wishlist-place-input');
+    try {
+      await Maps.load();
+      if (!placeInput.dataset.acAttached) {
+        Maps.attachAutocomplete(placeInput, (place) => {
+          // 填 hidden 欄
+          form.elements['place_id'].value = place.place_id || '';
+          form.elements['lat'].value = place.lat || '';
+          form.elements['lng'].value = place.lng || '';
+          form.elements['address'].value = place.address || '';
+          placeInput.value = place.name || place.address || '';
+          document.getElementById('wishlist-place-selected-hint').textContent = `✓ 已選：${place.address || place.name}`;
+        });
+        placeInput.dataset.acAttached = '1';
+      }
+    } catch (err) {
+      console.warn('Maps autocomplete 未啟用，可手動輸入：', err.message);
+    }
+
+    modal.classList.remove('hidden');
+    setTimeout(() => placeInput.focus(), 100);
+  },
+
+  async handleWishlistAddSubmit(e) {
+    e.preventDefault();
+    const form = e.target;
+    const submitBtn = form.querySelector('button[type="submit"]');
+    submitBtn.disabled = true;
+    try {
+      const name = form.elements['place'].value.trim();
+      if (!name) { this.toast('地點名稱必填'); return; }
+      const wish = await Wishlist.add({
+        placeId: form.elements['place_id'].value,
+        name,
+        address: form.elements['address'].value,
+        lat: form.elements['lat'].value ? parseFloat(form.elements['lat'].value) : '',
+        lng: form.elements['lng'].value ? parseFloat(form.elements['lng'].value) : '',
+        type: form.elements['type'].value,
+        sourceNote: form.elements['source_note'].value,
+      });
+      this.toast(`💡 已加入「${wish.name}」`);
+      document.getElementById('modal-wishlist-add').classList.add('hidden');
+      this.renderWishlist();
+    } catch (err) {
+      this.toast(err.message || '新增失敗');
+      console.error('wishlist add error:', err);
+    } finally {
+      submitBtn.disabled = false;
+    }
   },
 
   switchTab(tab) {
@@ -2284,9 +2644,13 @@ const App = {
     document.getElementById('tab-expenses').classList.toggle('hidden', tab !== 'expenses');
     document.getElementById('tab-diaries').classList.toggle('hidden', tab !== 'diaries');
     document.getElementById('tab-map').classList.toggle('hidden', tab !== 'map');
+    document.getElementById('tab-wishlist').classList.toggle('hidden', tab !== 'wishlist');
     document.getElementById('tab-settings').classList.toggle('hidden', tab !== 'settings');
-    document.getElementById('fab').style.display = (tab === 'expenses' || tab === 'diaries') ? '' : 'none';
+    // FAB 顯示：記帳/日記/願望 都有「+ 新增」動作
+    document.getElementById('fab').style.display = (tab === 'expenses' || tab === 'diaries' || tab === 'wishlist') ? '' : 'none';
     if (tab === 'map') this.initOrRefreshMap();
+    // v3.2.0: 切到 wishlist tab → load + render（lazy migration 在 loadAll 內處理）
+    if (tab === 'wishlist') this.loadAndRenderWishlist();
     // M5.1: 切到設定 tab 時更新群組統計
     if (tab === 'settings') this.updateGroupStats();
   },
