@@ -1,0 +1,945 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, viewport-fit=cover">
+  <title>BroTrip — 和好友的出遊紀錄</title>
+  <link rel="manifest" href="manifest.json">
+  <link rel="icon" type="image/svg+xml" href="icons/icon.svg">
+  <link rel="apple-touch-icon" href="icons/icon.svg">
+  <meta name="theme-color" content="#3b82f6">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="mobile-web-app-capable" content="yes">
+  <!-- 還原 dark/light theme（必須在 styles.css 之前，避免閃白）-->
+  <script>
+    try {
+      var t = localStorage.getItem('brotrip_theme');
+      if (t) document.documentElement.dataset.theme = t;
+    } catch (e) {}
+  </script>
+  <link rel="stylesheet" href="styles.css?v=399">
+</head>
+<body>
+  <div id="pull-indicator" class="pull-indicator"></div>
+
+  <!-- 載入中 -->
+  <div id="loading" class="screen">
+    <div class="logo">BroTrip</div>
+    <p class="subtitle">載入中...</p>
+  </div>
+
+  <!-- 登入畫面 -->
+  <div id="login-screen" class="screen hidden">
+    <!-- v3.8.2: 左下角顯示版本號 + 強制更新按鈕 (朋友卡這畫面也能升級) -->
+    <div class="version-corner" style="position:fixed; bottom:env(safe-area-inset-bottom,0); left:0; padding:8px 12px; font-size:11px; color:rgba(255,255,255,0.6); display:flex; align-items:center; gap:8px; z-index:5;">
+      <span>v<span id="login-version-label">?</span></span>
+      <button id="login-force-update-btn" type="button" style="background:rgba(255,255,255,0.15); color:white; border:none; padding:4px 10px; border-radius:12px; font-size:11px; cursor:pointer;">🔄 強制更新</button>
+    </div>
+    <div class="logo">BroTrip</div>
+    <p class="subtitle">和好友一起出遊、一起記錄 ✈️</p>
+    <button id="login-btn" class="btn-primary">用 Google 登入</button>
+    <p class="hint">用 Google 帳號登入開始</p>
+    <!-- v3.1.0: PWA standalone 模式才顯示，由 app.js _updatePwaLoginHint() 控制 -->
+    <div id="pwa-first-login-hint" class="hidden" style="margin-top:20px; padding:12px 16px; background:rgba(255,255,255,0.12); border-radius:10px; max-width:320px; text-align:left; font-size:13px; line-height:1.5;">
+      <div style="font-weight:600; margin-bottom:4px;">📱 PWA 第一次開啟需要重登</div>
+      <div style="opacity:0.92;">瀏覽器版和 PWA 是兩個獨立空間，登入後我會自動從 Google Drive 找回你所有群組（包含被邀請加入的），不用再貼邀請碼。</div>
+    </div>
+  </div>
+
+  <!-- 無群組畫面（登入後沒有加入任何群組時顯示）-->
+  <div id="no-group-screen" class="screen hidden">
+    <!-- v3.8.2: 左下角顯示版本號 + 強制更新按鈕 -->
+    <div class="version-corner" style="position:fixed; bottom:env(safe-area-inset-bottom,0); left:0; padding:8px 12px; font-size:11px; color:rgba(255,255,255,0.6); display:flex; align-items:center; gap:8px; z-index:5;">
+      <span>v<span id="nogroup-version-label">?</span></span>
+      <button id="nogroup-force-update-btn" type="button" style="background:rgba(255,255,255,0.15); color:white; border:none; padding:4px 10px; border-radius:12px; font-size:11px; cursor:pointer;">🔄 強制更新</button>
+    </div>
+    <div class="logo">BroTrip</div>
+    <p class="subtitle">歡迎！👋</p>
+    <p class="no-group-text">目前找不到你的群組</p>
+
+    <!-- v3.7.0: 「我曾被邀請過」醒目救急按鈕（最大、最顯眼） -->
+    <button id="no-group-research-btn" class="btn-primary" style="margin-top:24px; background:#10b981; color:white;">
+      🔄 重新搜尋我的群組
+    </button>
+    <p class="hint" style="margin-top:8px; font-size:12px; color:rgba(255,255,255,0.85);">如果你之前被邀請過，按這個</p>
+
+    <!-- 分隔線 -->
+    <div style="margin:24px 0 16px; display:flex; align-items:center; gap:8px; color:rgba(255,255,255,0.5); font-size:12px;">
+      <div style="flex:1; height:1px; background:rgba(255,255,255,0.2);"></div>
+      <span>或者首次使用</span>
+      <div style="flex:1; height:1px; background:rgba(255,255,255,0.2);"></div>
+    </div>
+
+    <button id="create-group-btn" class="btn-primary">➕ 建立新群組</button>
+    <button id="join-group-btn" class="btn-secondary" style="margin-top:12px;">📨 用邀請碼加入</button>
+    <p class="hint" style="margin-top:24px;"><a href="#" id="no-group-logout" style="color:rgba(255,255,255,0.7);">登出</a></p>
+  </div>
+
+  <!-- 主畫面 -->
+  <div id="app" class="screen hidden">
+    <header class="app-header">
+      <div class="trip-info">
+        <button id="group-switch" class="group-name-pill" type="button" title="切換群組">🏠 載入中... ▾</button>
+        <button id="trip-switch" class="trip-name">📍 載入中...</button>
+        <small id="trip-dates"></small>
+      </div>
+      <div class="user-info">
+        <button id="notif-bell" class="notif-bell" type="button" title="通知">
+          🔔<span id="notif-badge" class="notif-badge hidden">0</span>
+        </button>
+        <img id="user-avatar" alt="" referrerpolicy="no-referrer">
+        <button id="logout-btn" title="登出">⏏</button>
+      </div>
+    </header>
+
+    <main>
+      <!-- v3.8.0: 角色提示 banner (非 trip member 時顯示) -->
+      <div id="role-banner" class="role-banner hidden">
+        <span class="role-banner-icon">👁</span>
+        <span class="role-banner-text">你不是這個 trip 的成員，可以看、留言、加願望，但不能加支出/日記/行程</span>
+      </div>
+
+      <!-- 記帳 tab -->
+      <section id="tab-expenses" class="tab-content">
+        <div id="settlement-card" class="card">
+          <h3>💰 結算</h3>
+          <div id="settlement-content">尚無支出</div>
+        </div>
+        <h3 class="section-title">支出記錄</h3>
+        <div id="expense-list" class="list"></div>
+      </section>
+
+      <!-- 日記 tab -->
+      <section id="tab-diaries" class="tab-content hidden">
+        <div id="diary-filter" class="filter-bar">
+          <div class="filter-row">
+            <span class="filter-label">搜尋：</span>
+            <input type="search" id="filter-keyword" class="filter-keyword" placeholder="關鍵字（內容/心情/地點/人名）" autocomplete="off">
+          </div>
+          <div class="filter-row">
+            <span class="filter-label">作者：</span>
+            <div id="filter-authors" class="filter-chips"></div>
+          </div>
+          <div class="filter-row">
+            <span class="filter-label">日期：</span>
+            <div class="date-field">
+              <input type="date" id="filter-date-from" class="date-field-input" onclick="if(this.showPicker)this.showPicker()" aria-label="起始日期">
+              <span class="date-field-text placeholder" id="filter-date-from-text">起始</span>
+            </div>
+            <span class="filter-date-sep">~</span>
+            <div class="date-field">
+              <input type="date" id="filter-date-to" class="date-field-input" onclick="if(this.showPicker)this.showPicker()" aria-label="結束日期">
+              <span class="date-field-text placeholder" id="filter-date-to-text">結束</span>
+            </div>
+          </div>
+          <div class="filter-row filter-footer">
+            <span id="filter-summary"></span>
+            <button id="filter-clear" type="button" class="btn-link">清除篩選</button>
+          </div>
+        </div>
+        <h3 class="section-title">📸 出遊日記</h3>
+        <div id="diary-list" class="list"></div>
+      </section>
+
+      <!-- 地圖 tab -->
+      <section id="tab-map" class="tab-content hidden">
+        <div class="map-controls" style="display:flex; flex-direction:row; align-items:center; justify-content:flex-end; gap:6px; padding:2px 12px; min-height:22px; background:transparent;">
+          <input type="checkbox" id="toggle-wish-markers" checked style="width:15px; height:15px; margin:0; cursor:pointer;">
+          <label for="toggle-wish-markers" style="font-size:13px; font-weight:500; color:var(--text); cursor:pointer; white-space:nowrap; line-height:1; user-select:none;">💡 顯示願望清單地點</label>
+        </div>
+        <div id="wish-type-filter" class="wish-type-filter"></div>
+        <div id="trip-map"></div>
+        <div id="trip-map-empty" class="list-empty hidden">還沒有日記/行程有座標 — 新增日記時用「地點」自動推薦選地點，或下方按 +規劃預計行程。</div>
+        <!-- 預計行程 -->
+        <div id="itinerary-section">
+          <div class="itinerary-header">
+            <h3>📋 預計行程</h3>
+            <button id="new-itinerary-btn" type="button" class="btn-small">+ 新增</button>
+          </div>
+          <div class="itinerary-scroll-wrap">
+            <div id="itinerary-list" class="itinerary-list"></div>
+            <div class="itinerary-scroll-hint" aria-hidden="true"><span>⌄</span></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 願望 tab (v3.2.0 M6.1 → v3.5.0 加 filter/sort/距離分組) -->
+      <section id="tab-wishlist" class="tab-content hidden">
+        <div class="wishlist-header">
+          <h3 class="wishlist-title">💡 願望清單</h3>
+          <p class="hint" id="wishlist-trip-hint">- (還沒選 trip)</p>
+          <!-- 類型 filter -->
+          <div class="wishlist-type-filter" id="wishlist-type-filter">
+            <button type="button" class="chip chip-active" data-type="all">全部</button>
+            <button type="button" class="chip" data-type="restaurant">🍜 餐廳</button>
+            <button type="button" class="chip" data-type="attraction">🏛️ 景點</button>
+            <button type="button" class="chip" data-type="cafe">☕ 咖啡</button>
+            <button type="button" class="chip" data-type="experience">✨ 體驗</button>
+            <button type="button" class="chip" data-type="shopping">🛍️ 購物</button>
+            <button type="button" class="chip" data-type="other">📍 其他</button>
+          </div>
+          <!-- v3.5.0: added_by filter (動態 generate) -->
+          <div class="wishlist-addedby-filter" id="wishlist-addedby-filter"></div>
+          <!-- v3.5.0: 排序 dropdown -->
+          <div class="wishlist-sort-row">
+            <span class="wishlist-sort-label">排序：</span>
+            <select id="wishlist-sort-select">
+              <option value="recent">⏰ 最近加的</option>
+              <option value="distance">📍 距離我最近</option>
+              <option value="name">🔤 名稱 A→Z</option>
+            </select>
+            <small id="wishlist-distance-hint"></small>
+          </div>
+          <button type="button" id="wishlist-batch-btn" class="btn-small wishlist-batch-btn">📋 批次排行程</button>
+        </div>
+        <div id="wishlist-list" class="wishlist-list"></div>
+        <div id="wishlist-empty" class="list-empty hidden">還沒有 wish — 按右下 + 加你想去的地方</div>
+        <!-- 已 rejected 收進來這個 expander -->
+        <details id="wishlist-rejected-section" class="hidden" style="margin-top:16px;">
+          <summary>🙈 被否決的 (<span id="wishlist-rejected-count">0</span>)</summary>
+          <div id="wishlist-rejected-list" class="wishlist-list"></div>
+        </details>
+      </section>
+
+      <!-- 設定 tab -->
+      <section id="tab-settings" class="tab-content hidden">
+        <h3 class="section-title">⚙ 設定</h3>
+        <div class="settings-list">
+          <button id="toggle-dark-btn" class="settings-btn" type="button">
+            <span>🌓 切換深淺模式</span>
+            <small>目前：<span id="theme-current">淺色 ☀</span></small>
+          </button>
+          <button id="check-update-btn" class="settings-btn" type="button">
+            <span>🔄 檢查新版本</span>
+            <small>強制更新 app code（不會登出、不會清掉剛改的資料）</small>
+          </button>
+          <button id="reset-app-btn" class="settings-btn" type="button" style="border-color:#ef4444;">
+            <span style="color:#ef4444;">🚨 重置 (登出 + 清 SW)</span>
+            <small>救援用：清 Service Worker + 登出，但保留暱稱/日記/支出快取</small>
+          </button>
+          <button id="open-sheet-btn" class="settings-btn" type="button">
+            <span>📊 開啟 BroTrip-Data Sheet</span>
+            <small>看原始資料 / 手動修</small>
+          </button>
+          <button id="open-drive-btn" class="settings-btn" type="button">
+            <span>📂 開啟 Drive 資料夾</span>
+            <small>看照片 / 分享給朋友</small>
+          </button>
+        </div>
+        <div class="groups-section">
+          <h4>📁 群組管理</h4>
+          <p class="hint">當前群組：<strong id="current-group-name">-</strong>（角色：<span id="current-group-role">-</span>）</p>
+          <button id="settings-resync-groups-btn" class="settings-btn" type="button" style="margin-top:8px;">
+            <span>🔄 從 Drive 重新偵測群組</span>
+            <small>會把 Drive 上你建的 / 被邀請加入的群組同步回來（換裝置 / 群組沒出現時用）</small>
+          </button>
+          <button id="settings-geo-notify-btn" class="settings-btn" type="button" style="margin-top:8px;">
+            <span id="geo-notify-btn-label">🔔 附近 wish 推播</span>
+            <small id="geo-notify-btn-status">- (狀態未知)</small>
+          </button>
+          <button id="settings-create-group-btn" class="settings-btn" type="button" style="margin-top:8px;">
+            <span>➕ 建立新群組</span>
+            <small>會在你 Drive 建 BroTrip/<群組名>/ 資料夾</small>
+          </button>
+          <button id="settings-show-invite-btn" class="settings-btn" type="button" style="margin-top:8px;">
+            <span>📨 顯示當前群組邀請碼</span>
+            <small>把碼分享給朋友，他們可以加入此群組</small>
+          </button>
+          <button id="settings-rename-group-btn" class="settings-btn" type="button" style="margin-top:8px;">
+            <span>✏️ 重新命名當前群組</span>
+            <small>會同步改 Drive 資料夾名稱，不影響資料</small>
+          </button>
+          <button id="settings-join-group-btn" class="settings-btn" type="button" style="margin-top:8px;">
+            <span>📨 用邀請碼加入其他群組</span>
+            <small>貼邀請碼加入朋友的群組，加入後會 reload 切過去（切群組用上方群組選單）</small>
+          </button>
+          <button id="settings-edit-displayname-btn" class="settings-btn" type="button" style="margin-top:8px;">
+            <span>👤 我在此群組的顯示名稱</span>
+            <small>當前：<span id="my-display-name">-</span></small>
+          </button>
+          <button id="settings-manage-members-btn" class="settings-btn" type="button" style="margin-top:8px;">
+            <span>👥 管理成員</span>
+            <small id="manage-members-hint">看當前群組所有成員（owner 可踢人）</small>
+          </button>
+          <button id="settings-leave-group-btn" class="settings-btn" type="button" style="margin-top:8px; border-color:#f59e0b;">
+            <span style="color:#f59e0b;">🚪 退出此群組</span>
+            <small>只從你 app 移除 + Members sheet 刪你的 row（你的歷史紀錄保留給其他人看）</small>
+          </button>
+          <button id="settings-archive-group-btn" class="settings-btn" type="button" style="margin-top:8px;">
+            <span>📦 <span id="archive-toggle-label">封存此群組</span></span>
+            <small>從切換 dropdown 隱藏（不刪資料，可隨時取消封存）</small>
+          </button>
+          <button id="settings-delete-group-btn" class="settings-btn" type="button" style="margin-top:8px; border-color:#ef4444;">
+            <span style="color:#ef4444;">💀 刪除整個群組</span>
+            <small>⚠️ 只有 owner 可用，會刪 Drive 資料夾 + Sheet + 照片，不可復原</small>
+          </button>
+        </div>
+        <div class="groups-stats-section" style="margin-top:24px;">
+          <h4>📊 群組統計</h4>
+          <p class="hint">所有人累積數據</p>
+          <div id="group-stats" style="display:grid; grid-template-columns:repeat(2,1fr); gap:10px; margin-top:10px;">
+            <div class="stat-card" style="padding:12px; background:var(--bg-soft, rgba(99,102,241,0.05)); border-radius:8px;">
+              <div style="font-size:12px; color:var(--text-light);">總 Trips</div>
+              <div id="stat-trips" style="font-size:22px; font-weight:700;">-</div>
+            </div>
+            <div class="stat-card" style="padding:12px; background:var(--bg-soft, rgba(16,185,129,0.05)); border-radius:8px;">
+              <div style="font-size:12px; color:var(--text-light);">總成員</div>
+              <div id="stat-members" style="font-size:22px; font-weight:700;">-</div>
+            </div>
+            <div class="stat-card" style="padding:12px; background:var(--bg-soft, rgba(245,158,11,0.05)); border-radius:8px;">
+              <div style="font-size:12px; color:var(--text-light);">總花費</div>
+              <div id="stat-expenses" style="font-size:18px; font-weight:700;">-</div>
+            </div>
+            <div class="stat-card" style="padding:12px; background:var(--bg-soft, rgba(239,68,68,0.05)); border-radius:8px;">
+              <div style="font-size:12px; color:var(--text-light);">總日記</div>
+              <div id="stat-diaries" style="font-size:22px; font-weight:700;">-</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="nicknames-section">
+          <h4>💬 暱稱設定</h4>
+          <p class="hint">每人可以給任何人取暱稱，所有人都看得到。誰最後改算數（Meta Messenger 風格）</p>
+          <div id="nicknames-list"></div>
+        </div>
+        <div class="debug-section">
+          <h4>🔧 Debug 資訊</h4>
+          <p class="hint">給管理員看的，幫忙 debug 用</p>
+          <div id="debug-info"></div>
+        </div>
+        <div class="version-info-wrap">
+          <span id="version-info">BroTrip</span>
+        </div>
+      </section>
+    </main>
+
+    <!-- Bottom tab nav -->
+    <nav class="bottom-nav">
+      <button class="nav-btn active" data-tab="expenses">💰<span class="nav-label">記帳</span></button>
+      <button class="nav-btn" data-tab="diaries">📸<span class="nav-label">日記</span></button>
+      <button class="nav-btn" data-tab="map">🗺<span class="nav-label">地圖</span></button>
+      <button class="nav-btn" data-tab="wishlist">💡<span class="nav-label">願望</span></button>
+      <button class="nav-btn" data-tab="settings">⚙<span class="nav-label">設定</span></button>
+    </nav>
+
+    <!-- 浮動新增按鈕 -->
+    <button id="fab" class="fab" title="新增">+</button>
+  </div>
+
+  <!-- Modal: 新增支出 -->
+  <div id="modal-expense" class="modal hidden">
+    <div class="modal-content">
+      <header class="modal-header">
+        <h2>新增支出</h2>
+        <button class="modal-close" type="button">✕</button>
+      </header>
+      <form id="expense-form">
+        <div id="expense-lock-banner" class="lock-banner hidden">🔒 這筆已結清，僅檢視。按「✏️ 解鎖修改」可改（會變回未結清）</div>
+        <label>日期<input type="date" name="date" required></label>
+        <label>總金額
+          <input type="number" name="amount" step="0.01" min="0" required placeholder="0" inputmode="decimal">
+        </label>
+        <fieldset class="payer-section">
+          <legend>付款人</legend>
+          <p class="hint">一人付款：「我」金額空白會自動 = 總額。多人付款點「+ 加付款人」。</p>
+          <div id="payer-rows"></div>
+          <button type="button" id="add-payer-btn" class="btn-link" style="margin-top:6px;">+ 加付款人</button>
+          <div id="payer-summary" class="split-summary"></div>
+        </fieldset>
+        <label>幣別
+          <select name="currency">
+            <option value="TWD" selected>TWD 台幣</option>
+            <option value="JPY">JPY 日圓</option>
+            <option value="USD">USD 美元</option>
+            <option value="KRW">KRW 韓元</option>
+            <option value="THB">THB 泰銖</option>
+            <option value="VND">VND 越南盾</option>
+            <option value="MYR">MYR 馬幣</option>
+            <option value="EUR">EUR 歐元</option>
+          </select>
+        </label>
+        <label>類別
+          <select name="category">
+            <option value="🍜 食">🍜 食</option>
+            <option value="🏨 住">🏨 住</option>
+            <option value="🚗 行">🚗 行</option>
+            <option value="🎢 樂">🎢 樂</option>
+            <option value="🛍 購">🛍 購</option>
+            <option value="💊 其他">💊 其他</option>
+          </select>
+        </label>
+        <label>品項/說明
+          <input type="text" name="description" placeholder="例：拉麵晚餐">
+        </label>
+        <fieldset class="split-section">
+          <legend>分帳（每人應付金額）</legend>
+          <p class="hint">空白欄位 = 自動均分剩餘。<br>例：a 欄填 500、其他空 → a 固定 500、其他人均分剩下。代墊 b 出 500 → 只勾 b、b 填 500、付款人選 a。</p>
+          <div id="split-rows"></div>
+          <div id="split-summary" class="split-summary"></div>
+        </fieldset>
+        <div class="modal-actions">
+          <button type="button" id="expense-relock-btn" class="btn-primary hidden" style="background:#6b7280;">🔒 取消修改</button>
+          <button type="button" id="expense-unlock-btn" class="btn-primary hidden" style="background:#f59e0b;">✏️ 解鎖修改</button>
+          <button type="button" class="btn-cancel">取消</button>
+          <button type="submit" class="btn-primary">儲存</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal: 新增日記 -->
+  <div id="modal-diary" class="modal hidden">
+    <div class="modal-content">
+      <header class="modal-header">
+        <h2>新增日記</h2>
+        <button class="modal-close" type="button">✕</button>
+      </header>
+      <form id="diary-form">
+        <label>日期<input type="date" name="date" required></label>
+        <label>心情
+          <select name="mood">
+            <!-- 正向 -->
+            <option value="😄">😄 開心</option>
+            <option value="🥳">🥳 興奮</option>
+            <option value="😌">😌 放鬆</option>
+            <option value="🤤">🤤 美食</option>
+            <option value="😂">😂 爆笑</option>
+            <option value="🥲">🥲 感動</option>
+            <option value="🍻">🍻 乾杯</option>
+            <option value="🍺">🍺 啤酒</option>
+            <!-- 中性 -->
+            <option value="😴">😴 疲累</option>
+            <option value="🤔">🤔 思考</option>
+            <!-- v3.5.8: 負面 (旅遊也有不爽的時候) -->
+            <option value="😭">😭 大哭</option>
+            <option value="😤">😤 不爽</option>
+            <option value="🙄">🙄 無言</option>
+            <option value="😱">😱 嚇到</option>
+            <option value="🤬">🤬 暴怒</option>
+            <!-- v3.5.8: 身體狀態 -->
+            <option value="🥶">🥶 冷</option>
+            <option value="🥵">🥵 熱</option>
+            <option value="🤒">🤒 不舒服</option>
+            <option value="🤮">🤮 想吐</option>
+          </select>
+        </label>
+        <label>內容
+          <textarea name="content" rows="4" required placeholder="今天最爽的事是...（打「@」tag 人）"></textarea>
+        </label>
+        <label>地點（可選）
+          <input type="text" name="location" placeholder="例：渋谷">
+          <div id="diary-wishlist-chips" class="diary-wishlist-chips" style="margin-top:6px; display:none;">
+            <small style="color:var(--text-light); display:block; margin-bottom:4px;">💡 從願望清單選（選了會自動標已去過）：</small>
+            <div id="diary-wishlist-chips-list" style="display:flex; flex-wrap:wrap; gap:6px;"></div>
+          </div>
+        </label>
+        <label>照片（可多選）
+          <input type="file" name="photos" accept="image/*" multiple>
+        </label>
+        <div class="modal-actions">
+          <button type="button" class="btn-cancel">取消</button>
+          <button type="submit" class="btn-primary">儲存</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal: Trip 切換 -->
+  <div id="modal-trips" class="modal hidden">
+    <div class="modal-content">
+      <header class="modal-header">
+        <h2>切換 Trip</h2>
+        <button class="modal-close" type="button">✕</button>
+      </header>
+      <div id="trip-list" class="list"></div>
+      <button id="new-trip-btn" class="btn-primary" type="button" style="width:100%;margin-top:12px;">+ 新增 Trip</button>
+    </div>
+  </div>
+
+  <!-- Modal: 建立新群組 (M2) -->
+  <div id="modal-create-group" class="modal hidden">
+    <div class="modal-content">
+      <header class="modal-header">
+        <h2>建立新群組</h2>
+        <button class="modal-close" type="button">✕</button>
+      </header>
+      <form id="create-group-form">
+        <label>群組名稱
+          <input type="text" name="name" required placeholder="例：TGL、家人出遊、東京 trip" maxlength="40" autocomplete="off">
+        </label>
+        <p class="hint">會在你 Drive 建 <code>BroTrip/&lt;群組名&gt;/</code> 資料夾 + 一個 Sheet。建立者預設為 owner（資料存你 Drive）。</p>
+        <div id="create-group-progress" class="hidden" style="margin:12px 0; padding:12px; background:var(--bg-soft); border-radius:8px;">
+          <p style="margin:0;">⏳ <span id="create-group-step">準備中...</span></p>
+        </div>
+        <div class="modal-actions">
+          <button type="button" class="btn-cancel">取消</button>
+          <button type="submit" class="btn-primary" id="create-group-submit">建立</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal: 用邀請碼加入群組 (M3) -->
+  <div id="modal-join-group" class="modal hidden">
+    <div class="modal-content">
+      <header class="modal-header">
+        <h2>📨 用邀請碼加入群組</h2>
+        <button class="modal-close" type="button">✕</button>
+      </header>
+      <form id="join-group-form">
+        <label>貼上朋友給你的邀請碼
+          <textarea name="code" required rows="4" placeholder="貼上邀請碼（一長串字串）" style="font-family:monospace; font-size:12px; word-break:break-all;"></textarea>
+        </label>
+        <div id="join-group-permission-banner" class="hidden" style="margin:12px 0; padding:12px; background:rgba(251, 191, 36, 0.15); border:1px solid rgba(251, 191, 36, 0.5); border-radius:8px; color:#78350f;">
+          <p style="margin:0 0 8px 0; font-weight:600; color:#78350f;">⚠️ 你還沒有 Drive 存取權限</p>
+
+          <!-- v3.8.1 / v3.8.9: 顯示朋友當前登入 Gmail
+               v3.8.9 修：強制深褐色 (避免 dark mode 黃底淺字看不見) + word-break 防長 email -->
+          <div style="margin:0 0 12px 0; padding:10px; background:rgba(255,255,255,0.85); border-radius:6px; font-size:13px; line-height:1.5; color:#78350f;">
+            <div style="font-weight:600; margin-bottom:4px; color:#78350f;">🔍 先檢查：你登入的 Gmail 對嗎？</div>
+            <div style="font-size:13px; color:#78350f;">你現在用 <code id="join-current-email" style="background:#fde68a; color:#451a03; padding:3px 8px; border-radius:4px; font-weight:700; word-break:break-all; display:inline-block; font-family:monospace;">-</code></div>
+            <div style="font-size:12px; margin-top:6px; color:#78350f;">群組擁有者 <strong id="join-owner-email" style="color:#451a03;">-</strong> 是否把這個 Gmail 加進 share？<br><strong>如果你登入用錯帳號，請按下方「換帳號重登」</strong></div>
+          </div>
+
+          <button type="button" id="join-switch-account-btn" class="btn-primary" style="width:100%; background:#dc2626; color:white;">🔄 換帳號重登</button>
+          <p style="margin:6px 0 12px 0; font-size:12px; color:#78350f; text-align:center;">↑ 如果上面 Gmail 不是你常用的、或不是 owner share 的對象</p>
+
+          <p style="margin:12px 0 8px 0; font-size:13px; font-weight:600; color:#78350f;">或是 owner 還沒 share 給你？</p>
+          <button type="button" id="join-retry-btn" class="btn-primary" style="width:100%;">✅ 我已經有權限了，重試</button>
+          <button type="button" id="join-open-drive-btn" class="btn-secondary" style="width:100%; margin-top:8px;">🔗 再開一次 Drive 頁面</button>
+        </div>
+        <div id="join-group-progress" class="hidden" style="margin:12px 0; padding:12px; background:var(--bg-soft); border-radius:8px;">
+          <p style="margin:0;">⏳ <span id="join-group-step">驗證中...</span></p>
+        </div>
+        <div class="modal-actions">
+          <button type="button" class="btn-cancel">取消</button>
+          <button type="submit" class="btn-primary" id="join-group-submit">加入</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal: 切換群組 (M5.0) -->
+  <div id="modal-group-switcher" class="modal hidden">
+    <div class="modal-content">
+      <header class="modal-header">
+        <h2>📁 切換群組</h2>
+        <button class="modal-close" type="button">✕</button>
+      </header>
+      <div style="padding:8px 0;">
+        <div id="group-switcher-list"></div>
+        <div style="margin-top:16px; padding-top:12px; border-top:1px solid var(--border);">
+          <button type="button" id="switcher-create-btn" class="settings-btn">
+            <span>➕ 建立新群組</span>
+            <small>會在你 Drive 建 BroTrip/&lt;群組名&gt;/ 資料夾</small>
+          </button>
+          <button type="button" id="switcher-join-btn" class="settings-btn" style="margin-top:8px;">
+            <span>📨 用邀請碼加入</span>
+            <small>貼朋友給你的邀請連結 / 邀請碼</small>
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: 管理成員 (M4.4) -->
+  <div id="modal-manage-members" class="modal hidden">
+    <div class="modal-content">
+      <header class="modal-header">
+        <h2>👥 群組成員</h2>
+        <button class="modal-close" type="button">✕</button>
+      </header>
+      <div style="padding:8px 0;">
+        <p class="hint">當前群組：<strong id="manage-members-group-name">-</strong>。<span id="manage-members-owner-note"></span></p>
+        <div id="manage-members-list" style="margin-top:12px;"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: 設定顯示名稱 (M3) -->
+  <div id="modal-display-name" class="modal hidden">
+    <div class="modal-content">
+      <header class="modal-header">
+        <h2>👤 你的顯示名稱</h2>
+        <button class="modal-close" type="button">✕</button>
+      </header>
+      <form id="display-name-form">
+        <p class="hint">這是你在<strong id="display-name-group">此群組</strong>顯示的名字（其他成員看到的）。可隨時改。</p>
+        <label>顯示名稱
+          <input type="text" name="name" required maxlength="40" autocomplete="off">
+        </label>
+        <div class="modal-actions">
+          <button type="button" class="btn-cancel">取消</button>
+          <button type="submit" class="btn-primary">儲存</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal: 顯示邀請連結 (M4.3 升級版) -->
+  <div id="modal-invite-code" class="modal hidden">
+    <div class="modal-content">
+      <header class="modal-header">
+        <h2>📨 邀請朋友加入</h2>
+        <button class="modal-close" type="button">✕</button>
+      </header>
+      <div style="padding:12px 0;">
+        <p>把這個<strong>連結</strong>傳給朋友（LINE / iMessage / 任何聊天 app），他們點開就會自動偵測邀請碼：</p>
+        <textarea id="invite-link-text" readonly rows="3" style="width:100%; font-family:monospace; font-size:13px; padding:10px; background:var(--bg-soft); border:1px solid var(--border); border-radius:6px; resize:none; word-break:break-all;"></textarea>
+        <div class="modal-actions" style="margin-top:12px;">
+          <button type="button" class="btn-primary" id="copy-invite-link-btn" style="flex:1;">🔗 複製邀請連結</button>
+        </div>
+        <details style="margin-top:16px; padding:8px 0; border-top:1px solid var(--border);">
+          <summary style="cursor:pointer; color:var(--text-muted); font-size:13px;">進階：純邀請碼（朋友手動貼也行）</summary>
+          <textarea id="invite-code-text" readonly rows="4" style="width:100%; margin-top:8px; font-family:monospace; font-size:11px; padding:8px; background:var(--bg-soft); border:1px solid var(--border); border-radius:6px; resize:none; word-break:break-all;"></textarea>
+          <button type="button" class="btn-secondary" id="copy-invite-btn" style="width:100%; margin-top:8px;">📋 複製純邀請碼</button>
+        </details>
+        <p class="hint" style="margin-top:12px;">📌 朋友第一次按連結會跳到登入頁，登入後會自動跳「加入群組」對話框（已預填邀請碼）<br>📌 如果他們沒有 Drive 存取權，會自動觸發 Google「要求存取權」流程，你 email 一鍵核准就好</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: 新增 Trip -->
+  <div id="modal-new-trip" class="modal hidden">
+    <div class="modal-content">
+      <header class="modal-header">
+        <h2>新增 Trip</h2>
+        <button class="modal-close" type="button">✕</button>
+      </header>
+      <form id="new-trip-form">
+        <label>Trip ID（英文小寫，例 2026-tokyo）
+          <input type="text" name="trip_id" pattern="[a-z0-9-]+" required placeholder="2026-tokyo">
+        </label>
+        <label>名稱
+          <input type="text" name="name" required placeholder="例：東京之旅">
+        </label>
+        <label>開始日期<input type="date" name="start_date" required></label>
+        <label>結束日期<input type="date" name="end_date" required></label>
+        <label>成員（誰參加這趟）</label>
+        <div id="new-trip-members" class="member-checkboxes"></div>
+        <div class="modal-actions">
+          <button type="button" class="btn-cancel">取消</button>
+          <button type="submit" class="btn-primary">建立</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal: 新增 / 檢視 行程 -->
+  <div id="modal-itinerary" class="modal hidden">
+    <div class="modal-content">
+      <header class="modal-header">
+        <h2>📋 新增預計行程</h2>
+        <button class="modal-close" type="button">✕</button>
+      </header>
+      <form id="itinerary-form">
+        <label>行程名稱 <input name="name" type="text" required placeholder="例：第一天 北部一日遊"></label>
+        <label>交通方式
+          <select name="travel_mode">
+            <option value="DRIVING">🚗 開車</option>
+            <option value="TRANSIT">🚆 大眾運輸</option>
+            <option value="WALKING">🚶 走路</option>
+            <option value="BICYCLING">🚴 騎車</option>
+          </select>
+        </label>
+        <div class="itinerary-waypoints-section">
+          <div class="waypoints-header">
+            <span>地點順序（最少 2 個）</span>
+            <button type="button" id="add-waypoint-btn" class="btn-small">+ 加地點</button>
+          </div>
+          <div id="waypoint-rows"></div>
+          <small style="color:var(--text-light);">輸入地點時會跳 Google 推薦，選一個。可拖拉重排（暫時用上下箭頭調）。</small>
+        </div>
+        <div class="form-actions">
+          <button type="button" class="btn-cancel modal-close">取消</button>
+          <button type="submit" class="btn-primary">儲存行程</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal: 新增 Wish (v3.2.0 M6.1) -->
+  <div id="modal-wishlist-add" class="modal hidden">
+    <div class="modal-content">
+      <header class="modal-header">
+        <h2>💡 加進願望清單</h2>
+        <button class="modal-close" type="button">✕</button>
+      </header>
+      <form id="wishlist-add-form">
+        <label>地點
+          <input id="wishlist-place-input" name="place" type="text" required autocomplete="off" placeholder="輸入地點名稱，跳 Google 推薦選一個">
+          <input type="hidden" name="place_id" id="wishlist-place-id">
+          <input type="hidden" name="lat" id="wishlist-lat">
+          <input type="hidden" name="lng" id="wishlist-lng">
+          <input type="hidden" name="address" id="wishlist-address">
+          <small id="wishlist-place-selected-hint" style="color:var(--text-light);"></small>
+        </label>
+        <label>類型
+          <select name="type" required>
+            <option value="restaurant">🍜 餐廳</option>
+            <option value="attraction">🏛️ 景點</option>
+            <option value="cafe">☕ 咖啡</option>
+            <option value="experience">✨ 體驗</option>
+            <option value="shopping">🛍️ 購物</option>
+            <option value="other">📍 其他</option>
+          </select>
+        </label>
+        <label>備註（推薦來源、為什麼想去...）
+          <input name="source_note" type="text" maxlength="60" placeholder="例：Paul 推薦 / IG @xxx / 米其林必比登">
+        </label>
+        <div class="form-actions">
+          <button type="button" class="btn-cancel modal-close">取消</button>
+          <button type="submit" class="btn-primary">加進清單</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal: 日記從願望清單搜尋 (v3.8.6) -->
+  <div id="modal-diary-wishlist-search" class="modal hidden">
+    <div class="modal-content" style="max-height:80vh; display:flex; flex-direction:column;">
+      <header class="modal-header">
+        <h2>💡 從願望清單選地點</h2>
+        <button class="modal-close" type="button">✕</button>
+      </header>
+      <div style="padding:8px 0 12px;">
+        <input type="search" id="diary-wish-search-input" placeholder="🔍 搜尋名稱 / 地址 / 備註..." style="width:100%; padding:10px 12px; border:1px solid var(--border); border-radius:8px; font-size:14px; background:var(--card); color:var(--text);">
+      </div>
+      <div id="diary-wish-search-list" style="overflow-y:auto; flex:1; padding-right:4px; max-height:50vh;"></div>
+      <div class="form-actions" style="margin-top:12px;">
+        <button type="button" class="btn-cancel modal-close" style="width:100%;">取消</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: OAuth scope 沒勾警告 (v3.8.4) -->
+  <div id="modal-missing-scope" class="modal hidden">
+    <div class="modal-content">
+      <header class="modal-header">
+        <h2>⚠️ 缺少必要權限</h2>
+      </header>
+      <div style="font-size:14px; line-height:1.7; color:var(--text);">
+        <p style="margin:0 0 12px; color:#dc2626; font-weight:600;">你在 Google 登入時取消勾選了重要權限：</p>
+        <ul id="missing-scope-list" style="margin:0 0 14px; padding-left:24px; font-size:14px;"></ul>
+        <p style="margin:0 0 8px;">BroTrip 需要這些權限才能：</p>
+        <ul style="margin:0 0 14px; padding-left:22px; font-size:13px; color:var(--text-light);">
+          <li>📂 找到你被邀請加入的群組（讀 Google Drive）</li>
+          <li>📊 看群組共用的資料表（讀寫 Google 試算表）</li>
+        </ul>
+        <p style="margin:0 0 8px; font-weight:600; color:#dc2626;">📌 請按下方按鈕重新登入：</p>
+        <p style="margin:0; font-size:13px;">下次 Google 跳出的權限視窗 → <strong>所有選項都不要取消勾選</strong>，全部保留打勾</p>
+      </div>
+      <div class="form-actions">
+        <button type="button" class="btn-primary" id="missing-scope-relogin-btn" style="width:100%; background:#dc2626; color:white;">🔄 重新登入並授權所有權限</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: 偵測到 in-app browser (v3.5.7) -->
+  <div id="modal-inapp-browser" class="modal hidden">
+    <div class="modal-content">
+      <header class="modal-header">
+        <h2>⚠️ 請用 Safari / Chrome 開啟</h2>
+        <button class="modal-close" type="button" id="inapp-modal-close-btn">✕</button>
+      </header>
+      <div style="font-size:14px; line-height:1.7; color:var(--text);">
+        <p style="margin:0 0 12px;">看起來你是從 <strong id="inapp-detected-name">App 內建瀏覽器</strong> 開啟 BroTrip。</p>
+        <p style="margin:0 0 12px; color:#dc2626;">⚠️ 這類瀏覽器不支援 Google 登入（會看到「origin parameter is required」錯誤）。</p>
+        <p style="margin:0 0 8px; font-weight:600;">請改用 Safari 或 Chrome 打開：</p>
+        <ol style="margin:0 0 12px; padding-left:22px; font-size:13px;">
+          <li>按下方「📋 複製連結」</li>
+          <li>打開 <strong>Safari</strong>（iPhone）或 <strong>Chrome</strong>（Android）</li>
+          <li>網址列<strong>長按 → 貼上 → 前往</strong></li>
+          <li>用 Google 登入即可</li>
+        </ol>
+      </div>
+      <div class="form-actions">
+        <button type="button" class="btn-cancel" id="inapp-continue-anyway-btn">仍要繼續</button>
+        <button type="button" class="btn-primary" id="inapp-copy-link-btn">📋 複製連結</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: 附近 wishlist 推播 onboarding (v3.4.0 M6.3) -->
+  <div id="modal-geo-notify-onboarding" class="modal hidden">
+    <div class="modal-content">
+      <header class="modal-header">
+        <h2>🔔 開啟附近 wish 提醒</h2>
+        <button class="modal-close" type="button">✕</button>
+      </header>
+      <div style="font-size:14px; line-height:1.6; color:var(--text);">
+        <p style="margin:0 0 12px;">出國走在路上經過 wish 地點（500m 內）→ 自動推播提醒你「欸這附近有想去的」。</p>
+        <ul style="margin:0 0 12px; padding-left:20px; font-size:13px; color:var(--text-light);">
+          <li>需要定位 + 通知權限</li>
+          <li>App 開著或被切到背景都能收到</li>
+          <li>App 完全 kill (從 App Switcher 滑掉) 無法收到（PWA 限制）</li>
+          <li>同 wish 30 分鐘內只通知 1 次，避免煩</li>
+        </ul>
+        <p style="margin:0 0 8px; font-size:12px; color:var(--text-light);">⚙️ 之後想關 / 重開 → 設定 tab</p>
+      </div>
+      <div class="form-actions">
+        <button type="button" class="btn-cancel" id="geo-notify-decline-btn">先不要</button>
+        <button type="button" class="btn-primary" id="geo-notify-enable-btn">✅ 開啟</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Wishlist Promote → Itinerary (v3.3.0 M6.2) -->
+  <div id="modal-wishlist-promote" class="modal hidden">
+    <div class="modal-content">
+      <header class="modal-header">
+        <h2>📌 加進行程</h2>
+        <button class="modal-close" type="button">✕</button>
+      </header>
+      <div id="wishlist-promote-target-info" style="margin-bottom:12px; padding:10px; background:var(--card); border:1px solid var(--border); border-radius:8px; font-size:14px; color:var(--text);">
+        - <!-- 由 JS 填入 wish 名稱 -->
+      </div>
+      <label>要加進哪個行程？
+        <select id="wishlist-promote-itinerary-select">
+          <option value="__new__">➕ 建立新行程（用這 wish 當第一個地點）</option>
+          <!-- 由 JS 填入現有 itinerary 選項 -->
+        </select>
+      </label>
+      <div id="wishlist-promote-new-itin-section" class="hidden" style="margin-top:8px;">
+        <label>新行程名稱
+          <input id="wishlist-promote-new-name" type="text" placeholder="例：東京一日遊（會自動帶 wish 名）">
+        </label>
+        <label>交通方式
+          <select id="wishlist-promote-new-mode">
+            <option value="DRIVING">🚗 開車</option>
+            <option value="TRANSIT">🚆 大眾運輸</option>
+            <option value="WALKING">🚶 走路</option>
+            <option value="BICYCLING">🚴 騎車</option>
+          </select>
+        </label>
+      </div>
+      <div class="form-actions">
+        <button type="button" class="btn-cancel modal-close">取消</button>
+        <button type="button" id="wishlist-promote-submit-btn" class="btn-primary">確定加進去</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: 批次排行程 Wishlist → Itinerary (v3.9.2) -->
+  <div id="modal-wishlist-batch" class="modal hidden">
+    <div class="modal-content">
+      <header class="modal-header">
+        <h2>📋 批次排行程</h2>
+        <button class="modal-close" type="button">✕</button>
+      </header>
+      <p class="hint" style="margin-bottom:6px;">勾選想一起排進行程的願望，可一次加多個</p>
+      <div class="batch-toolbar">
+        <button type="button" id="wishlist-batch-selectall" class="btn-link">全選 / 全不選</button>
+        <span id="wishlist-batch-count">已選 0 個</span>
+      </div>
+      <div id="wishlist-batch-list" class="batch-list"></div>
+      <label>加進哪個行程？
+        <select id="wishlist-batch-itinerary-select">
+          <option value="__new__">➕ 建立新行程</option>
+        </select>
+      </label>
+      <div id="wishlist-batch-new-section" style="margin-top:8px;">
+        <label>新行程名稱
+          <input id="wishlist-batch-new-name" type="text" placeholder="留空自動命名（例：XX 等 3 個地點）">
+        </label>
+        <label>交通方式
+          <select id="wishlist-batch-new-mode">
+            <option value="DRIVING">🚗 開車</option>
+            <option value="TRANSIT">🚆 大眾運輸</option>
+            <option value="WALKING">🚶 走路</option>
+            <option value="BICYCLING">🚴 騎車</option>
+          </select>
+        </label>
+      </div>
+      <div class="form-actions">
+        <button type="button" class="btn-cancel modal-close">取消</button>
+        <button type="button" id="wishlist-batch-submit-btn" class="btn-primary">加進去</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: 通知 -->
+  <div id="modal-notifications" class="modal hidden">
+    <div class="modal-content">
+      <header class="modal-header">
+        <h2>🔔 通知</h2>
+        <button class="modal-close" type="button">✕</button>
+      </header>
+      <div id="notif-list" class="list"></div>
+      <button id="mark-all-read-btn" type="button" class="btn-cancel" style="width:100%;margin-top:12px;">全部標為已讀</button>
+    </div>
+  </div>
+
+  <!-- Mention autocomplete dropdown（全 app 共用，打 @ 跳出推薦清單）-->
+  <div id="mention-dropdown" class="mention-dropdown hidden"></div>
+
+  <!-- Toast -->
+  <div id="toast" class="toast hidden"></div>
+
+  <!-- Photo Lightbox（相簿：點日記照片放大、左右切換）-->
+  <dialog id="photo-lightbox">
+    <button id="lightbox-close" type="button" aria-label="關閉">✕</button>
+    <button id="lightbox-prev" type="button" aria-label="上一張">‹</button>
+    <img id="lightbox-img" alt="">
+    <button id="lightbox-next" type="button" aria-label="下一張">›</button>
+    <div id="lightbox-counter"></div>
+  </dialog>
+
+  <!-- Google Identity Services -->
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
+
+  <!-- App 程式碼（順序很重要，後面的依賴前面的）
+       Phase 2: groups.js 必須在 cache.js 之前載入，cache PREFIX 依賴 Groups.active() -->
+  <script src="js/config.js?v=399"></script>
+  <script src="js/groups.js?v=399"></script>
+  <script src="js/cache.js?v=399"></script>
+  <script src="js/auth.js?v=399"></script>
+  <script src="js/api.js?v=399"></script>
+  <script src="js/trips.js?v=399"></script>
+  <script src="js/expenses.js?v=399"></script>
+  <script src="js/diaries.js?v=399"></script>
+  <script src="js/members.js?v=399"></script>
+  <script src="js/nicknames.js?v=399"></script>
+  <script src="js/comments.js?v=399"></script>
+  <script src="js/notifications.js?v=399"></script>
+  <script src="js/itineraries.js?v=399"></script>
+  <script src="js/settlements.js?v=399"></script>
+  <script src="js/wishlist.js?v=399"></script>
+  <script src="js/geo_notify.js?v=399"></script>
+  <script src="js/app.js?v=399"></script>
+
+  <!-- Service Worker + auto-update（偵測新版 SW 後通知用戶 reload） -->
+  <script>
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', async () => {
+        try {
+          const reg = await navigator.serviceWorker.register('sw.js');
+
+          // 每次頁面 load 主動 check 一次新版
+          reg.update().catch(() => {});
+
+          // 每 15 分鐘背景 check（用戶長時間開著 app 也能拿到新版）
+          setInterval(() => reg.update().catch(() => {}), 15 * 60 * 1000);
+
+          // 偵測到新版 SW 安裝中 → 等它 activated → 通知用戶 reload
+          reg.addEventListener('updatefound', () => {
+            const newWorker = reg.installing;
+            if (!newWorker) return;
+            newWorker.addEventListener('statechange', () => {
+              // 'activated' 表示新版已就緒（舊頁面還在用舊 cache，reload 才會吃新版）
+              if (newWorker.state === 'activated' && navigator.serviceWorker.controller) {
+                if (window.App && typeof App.showUpdateBanner === 'function') {
+                  App.showUpdateBanner();
+                }
+              }
+            });
+          });
+        } catch (err) {
+          console.warn('SW register failed:', err);
+        }
+      });
+    }
+  </script>
+</body>
+</html>
