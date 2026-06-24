@@ -1,0 +1,5268 @@
+// BroTrip 主應用：UI router + 事件處理
+// v1.6.0：tag 人 + 通知 + 多付款人
+
+// Google Maps 動態載入
+const Maps = {
+  loaded: false,
+  loadPromise: null,
+
+  load() {
+    if (this.loaded) return Promise.resolve();
+    if (this.loadPromise) return this.loadPromise;
+    if (!CONFIG.MAPS_API_KEY) return Promise.reject(new Error('沒有 MAPS_API_KEY'));
+
+    this.loadPromise = new Promise((resolve, reject) => {
+      window.__onGoogleMapsLoaded = () => { this.loaded = true; resolve(); };
+      const script = document.createElement('script');
+      script.src = `https://maps.googleapis.com/maps/api/js?key=${CONFIG.MAPS_API_KEY}&libraries=places&v=weekly&callback=__onGoogleMapsLoaded&loading=async`;
+      script.async = true;
+      script.defer = true;
+      script.onerror = () => reject(new Error('Maps script 載入失敗'));
+      document.head.appendChild(script);
+    });
+    return this.loadPromise;
+  },
+
+  attachAutocomplete(input, onSelect) {
+    const ac = new google.maps.places.Autocomplete(input, {
+      fields: ['place_id', 'name', 'geometry', 'formatted_address'],
+    });
+    ac.addListener('place_changed', () => {
+      const p = ac.getPlace();
+      if (!p || !p.geometry) return;
+      onSelect({
+        place_id: p.place_id || '',
+        name: p.name || p.formatted_address || '',
+        address: p.formatted_address || '',
+        lat: p.geometry.location.lat(),
+        lng: p.geometry.location.lng(),
+      });
+    });
+    return ac;
+  },
+};
+
+const App = {
+  currentTab: 'expenses',
+  _toastTimer: null,
+  _selectedPlace: null,
+  _editingExpenseId: null,
+  _editingDiaryId: null,
+  _editingTripId: null,
+  _map: null,
+  _mapMarkers: null,
+  _itineraryRenderer: null,  // DirectionsRenderer 實例
+  _itineraryWaypoints: [],   // 新增 modal 用的暫存 waypoints
+  _activeItineraryId: null,  // 當前在地圖上顯示的行程
+  _diaryFilter: { authors: [], dateFrom: '', dateTo: '', keyword: '' },
+  _lightboxPhotos: [],
+  _lightboxIndex: 0,
+  _mentionState: null,  // { inputEl, atIdx } 當 @ 正在輸入中
+  _lastError: null,  // 上次 loadAll 失敗的訊息（debug 用）
+
+  async init() {
+    // 還原 dark/light theme（最早做以免閃白）
+    const savedTheme = localStorage.getItem('brotrip_theme');
+    if (savedTheme) document.documentElement.dataset.theme = savedTheme;
+
+    // M4.3: 偵測 invite 連結 ?invite=...（要在 Auth.init 之前，避免 reload 後 URL 已被清掉）
+    this._checkInviteFromUrl();
+
+    await Auth.init();
+    this.bindUI();
+    // v3.9.13: token 過期（silent refresh 失敗）時 ensureToken 會 dispatch 此事件，
+    //   不論背景載入或使用者按「新增」觸發，統一顯示「重新連線」banner（showReauthBanner 自帶去重）
+    window.addEventListener('brotrip:auth-expired', () => this.showReauthBanner());
+    this.initPullToRefresh();
+    this.updateVersionInfo();
+    this.updateThemeUI();
+
+    if (Auth.isLoggedIn()) {
+      document.getElementById('loading').classList.add('hidden');
+      await this.afterLogin();
+      return;
+    }
+
+    if (Auth.user) {
+      try {
+        // ⭐ v2.0.2 timeout 5s → 10s（iOS GIS 載入慢，給多一點時間）
+        const timeout = new Promise((_, rej) => setTimeout(() => rej(new Error('silent timeout')), 10000));
+        await Promise.race([Auth.ensureToken(), timeout]);
+        document.getElementById('loading').classList.add('hidden');
+        await this.afterLogin();
+        return;
+      } catch (err) {
+        console.warn('Silent re-auth failed:', err);
+        // ⭐ v2.0.2 silent fail 不清 user，改進主畫面 with cache + 顯示續登 banner
+        document.getElementById('loading').classList.add('hidden');
+        // Phase 2: 沒群組時不能跑 cache main app，直接跳 no-group 畫面
+        if (!Groups.active()) {
+          this.showNoGroupScreen();
+          this.showReauthBanner();
+          return;
+        }
+        this.showReauthBanner();
+        await this._showMainAppCacheOnly();
+        return;
+      }
+    }
+
+    document.getElementById('loading').classList.add('hidden');
+    document.getElementById('login-screen').classList.remove('hidden');
+    // v3.1.0: PWA 模式下顯示「第一次需要重登」hint，告知會自動找回群組
+    this._updatePwaLoginHint();
+    // v3.5.7: 偵測 in-app browser → 跳提示 modal (避免 Google OAuth 報 origin parameter 錯)
+    this._maybeShowInAppBrowserModal();
+    // v3.8.1: ?switch=1 表示從「換帳號重登」來的，提示用戶按登入會跳帳戶選擇器
+    try {
+      if (new URLSearchParams(location.search).get('switch') === '1') {
+        setTimeout(() => this.toast('🔄 請按下方登入，Google 會跳出帳戶選擇器讓你選正確 Gmail'), 500);
+      }
+    } catch {}
+  },
+
+  // v3.8.4: 顯示「Drive/Sheets scope 沒勾」警告 modal
+  //   朋友 OAuth 同意畫面取消勾選 Drive → BroTrip 看不到群組
+  //   這 modal 教用戶重登 + 強調「請保留所有勾選」
+  _showMissingScopeModal(missingScopes) {
+    const modal = document.getElementById('modal-missing-scope');
+    if (!modal) {
+      // Fallback: 沒 modal 用 alert (極舊版 PWA)
+      alert('⚠️ 你在 Google 登入時取消勾選了「Drive 雲端硬碟」權限，BroTrip 看不到你的群組。\n\n請登出後重登，並保留 Google 跳出的所有勾選。');
+      Auth.logout();
+      location.reload();
+      return;
+    }
+    // 填要授權的 scope 名稱
+    const listEl = document.getElementById('missing-scope-list');
+    if (listEl) {
+      const scopeNames = {
+        'https://www.googleapis.com/auth/drive': '📂 Google 雲端硬碟',
+        'https://www.googleapis.com/auth/spreadsheets': '📊 Google 試算表',
+      };
+      listEl.innerHTML = missingScopes.map(s => `<li>${scopeNames[s] || s}</li>`).join('');
+    }
+    modal.classList.remove('hidden');
+  },
+
+  // v3.5.7: 偵測 in-app browser (LINE/FB/IG/Messenger/WebView 等)
+  //   這些 browser 對 Google OAuth 支援差 → 用戶會看到 "origin parameter is required" 錯誤
+  //   回傳人類可讀 name (例 "LINE") 或 null (= 一般瀏覽器)
+  _detectInAppBrowser() {
+    const ua = navigator.userAgent || '';
+    if (/Line\//i.test(ua)) return 'LINE';
+    if (/FBAN|FBAV|FB_IAB|FB4A/.test(ua)) return 'Facebook';
+    if (/Instagram/i.test(ua)) return 'Instagram';
+    if (/MessengerForiOS|Messenger/i.test(ua)) return 'Messenger';
+    if (/Twitter/i.test(ua)) return 'Twitter';
+    if (/MicroMessenger/i.test(ua)) return 'WeChat';
+    // iOS WebView (沒帶 Safari 標識) — 大多 in-app browser 都中
+    if (/iPhone|iPad|iPod/.test(ua) && !/Safari\//.test(ua) && !/CriOS|FxiOS|EdgiOS/.test(ua)) return 'iOS WebView';
+    // Android WebView (沒帶 Chrome 完整版本)
+    if (/Android/.test(ua) && /; wv\)/.test(ua)) return 'Android WebView';
+    return null;
+  },
+
+  // v3.5.7: 第一次 init 時若偵測到 in-app browser + 還沒登入 → 顯示提示 modal
+  _maybeShowInAppBrowserModal() {
+    if (Auth.isLoggedIn()) return;  // 已登入過就不擋 (重訪場景)
+    const detected = this._detectInAppBrowser();
+    if (!detected) return;
+    // localStorage 紀錄已 dismiss 過就不再 nag
+    try {
+      if (localStorage.getItem('brotrip_inapp_dismissed') === '1') return;
+    } catch {}
+    const nameEl = document.getElementById('inapp-detected-name');
+    if (nameEl) nameEl.textContent = `${detected} 內建瀏覽器`;
+    const modal = document.getElementById('modal-inapp-browser');
+    if (modal) modal.classList.remove('hidden');
+  },
+
+  // v3.8.0: 角色判斷 — 當前用戶是否為當前 trip 的成員
+  //   true  → 「Trip 主角」：功能全開（加支出/日記/行程、否決票等）
+  //   false → 「圍觀群眾」（群組成員但沒去這 trip）：可看 + 留言 + 加願望
+  //
+  // 用法：const isMember = App.isCurrentTripMember();
+  isCurrentTripMember() {
+    if (!Auth.user || !Trips.current) return false;
+    try {
+      const members = (typeof Trips.getMembers === 'function')
+        ? Trips.getMembers()
+        : JSON.parse(Trips.current.members || '[]');
+      return Array.isArray(members) && members.includes(Auth.user.email);
+    } catch {
+      return false;
+    }
+  },
+
+  // v3.1.0: 偵測是否以 PWA standalone 模式執行
+  _isPWA() {
+    try {
+      if (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) return true;
+      // iOS Safari 的 PWA 特例（navigator.standalone）
+      if (window.navigator && window.navigator.standalone === true) return true;
+    } catch {}
+    return false;
+  },
+
+  // v3.1.0: PWA 模式下 show login screen 的 hint（解釋 PWA storage 獨立、會自動找回群組）
+  _updatePwaLoginHint() {
+    const hint = document.getElementById('pwa-first-login-hint');
+    if (!hint) return;
+    if (this._isPWA()) {
+      hint.classList.remove('hidden');
+    } else {
+      hint.classList.add('hidden');
+    }
+  },
+
+  // M4.3: 從 URL 偵測 ?invite=xxx，存到 localStorage 後 reload 也能用
+  _checkInviteFromUrl() {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const inviteCode = params.get('invite');
+      if (inviteCode) {
+        localStorage.setItem('brotrip_pending_invite', inviteCode);
+        // 清掉 URL 參數避免 reload 重複觸發
+        const url = new URL(window.location.href);
+        url.searchParams.delete('invite');
+        window.history.replaceState({}, '', url.toString());
+      }
+    } catch (err) {
+      console.warn('Invite URL check failed:', err);
+    }
+  },
+
+  // Phase 2: 登入完成後依群組狀態分流
+  async afterLogin() {
+    // M4.3: 處理 pending invite（從連結來的）— 優先級最高
+    const pendingInvite = localStorage.getItem('brotrip_pending_invite');
+    if (pendingInvite) {
+      localStorage.removeItem('brotrip_pending_invite');
+      // 先決定底層畫面（有群組 → 主畫面；無 → 無群組畫面）
+      if (Groups.active()) {
+        await this.showMainApp();
+      } else {
+        this.showNoGroupScreen();
+      }
+      // 然後彈出 join modal 預填邀請碼
+      setTimeout(() => {
+        this.openJoinGroupModal();
+        const input = document.querySelector('#join-group-form textarea[name="code"]');
+        if (input) input.value = pendingInvite;
+        this.toast('🎉 偵測到邀請連結！按「加入」即可');
+      }, 300);
+      return;
+    }
+
+    // M4.5 + v3.1.0 + v3.1.3 + v3.7.0: 每次 afterLogin 都跑 autoDetect 同步 Drive 群組
+    //   - 自己建的（_detectOwnedGroups 掃 BroTrip/<group>/ 子資料夾）
+    //   - 被邀請加入的（_detectSharedGroups 掃 not 'me' in owners 的 BroTrip-Data）
+    // v3.7.0: 第一次 autoDetect 若 0 結果 + 本地也是空 → 等 2 秒 retry 一次
+    //         原因：朋友剛被邀請完，Drive permission 可能還沒 propagate (race condition)
+    //         有朋友遇到的「登入後找不到群組」就是這個 bug
+    if (Auth.user) {
+      try {
+        const before = Groups.list.length;
+        if (before === 0) this.toast('🔍 從 Google Drive 找你的群組...');
+        let detected = await Groups.autoDetectGroups();
+
+        // v3.7.0: race condition fix — 沒找到群組就再試一次
+        if (detected.length === 0 && before === 0) {
+          this.toast('⏳ 第一次有點慢，再試一次...');
+          await new Promise(r => setTimeout(r, 2500));
+          detected = await Groups.autoDetectGroups();
+        }
+
+        if (detected.length > 0) {
+          const ownerCount = detected.filter(g => g.role === 'owner').length;
+          const memberCount = detected.filter(g => g.role === 'member').length;
+          let msg = `✨ 找回 ${detected.length} 個群組`;
+          if (before > 0) msg = `✨ 同步到 ${detected.length} 個新群組`;
+          if (ownerCount && memberCount) {
+            msg += `（你建的 ${ownerCount}、被邀請 ${memberCount}）`;
+          } else if (memberCount) {
+            msg += '（被邀請加入的）';
+          }
+          this.toast(msg);
+        }
+      } catch (err) {
+        console.warn('Auto-detect failed:', err);
+      }
+    }
+
+    // 無群組（新用戶 / TGL legacy 被刪光 / autoDetect 失敗）→ 顯示無群組畫面
+    if (!Groups.active()) {
+      this.showNoGroupScreen();
+      return;
+    }
+    // 有群組 → 進主畫面
+    await this.showMainApp();
+  },
+
+  // Phase 2: 無群組畫面（建立 / 加入）
+  showNoGroupScreen() {
+    document.getElementById('login-screen').classList.add('hidden');
+    document.getElementById('app').classList.add('hidden');
+    document.getElementById('no-group-screen').classList.remove('hidden');
+    // 清掉殘留的 error banner（避免上次 404 提示停在最上面）
+    const banner = document.getElementById('global-error-banner');
+    if (banner) banner.classList.add('hidden');
+  },
+
+  // Phase 2: 打開建立群組 modal
+  openCreateGroupModal() {
+    const modal = document.getElementById('modal-create-group');
+    if (!modal) return;
+    // 重置表單
+    const form = document.getElementById('create-group-form');
+    if (form) form.reset();
+    document.getElementById('create-group-progress').classList.add('hidden');
+    document.getElementById('create-group-submit').disabled = false;
+    modal.classList.remove('hidden');
+  },
+
+  // Phase 2: 處理建立群組表單 submit
+  async handleCreateGroupSubmit(e) {
+    e.preventDefault();
+    const form = e.target;
+    const name = (form.elements.name.value || '').trim();
+    if (!name) {
+      this.toast('請輸入群組名稱');
+      return;
+    }
+
+    const submitBtn = document.getElementById('create-group-submit');
+    const progress = document.getElementById('create-group-progress');
+    const stepText = document.getElementById('create-group-step');
+    submitBtn.disabled = true;
+    progress.classList.remove('hidden');
+
+    try {
+      const newGroup = await Groups.create(name, (step, total, msg) => {
+        if (stepText) stepText.textContent = `${step}/${total} — ${msg}`;
+      });
+
+      // 關閉 modal
+      document.getElementById('modal-create-group').classList.add('hidden');
+      this.toast(`✅ 群組「${newGroup.name}」建立完成！`);
+
+      // 顯示邀請碼
+      this.showInviteCodeModal(newGroup);
+
+      // 如果這是第一個群組（剛從 no-group-screen 進來），直接切去 app
+      const noGroupScreen = document.getElementById('no-group-screen');
+      if (noGroupScreen && !noGroupScreen.classList.contains('hidden')) {
+        noGroupScreen.classList.add('hidden');
+        await this.showMainApp();
+      } else {
+        // 已經在 app 內，切到新群組 + reload 資料
+        // M2 不做 dropdown 切換，所以這裡先 reload 整頁
+        // 之後 M3 加上 dropdown 後可以軟切換
+        setTimeout(() => {
+          if (confirm('新群組已建立！要切過去使用嗎？（會 reload app）')) {
+            location.reload();
+          }
+        }, 500);
+      }
+    } catch (err) {
+      progress.classList.add('hidden');
+      submitBtn.disabled = false;
+      this.toast('建立失敗：' + (err.message || '未知錯誤'));
+      console.error('Create group error:', err);
+    }
+  },
+
+  // ===== M5.1: 群組封存 toggle =====
+  handleToggleArchive() {
+    const g = Groups.active();
+    if (!g) return;
+    const next = !g.archived;
+    const verb = next ? '封存' : '取消封存';
+    if (!confirm(`確定要${verb}「${g.name}」?\n\n${next ? '封存後會從切換 dropdown 隱藏，可隨時取消封存復原。資料不會刪除。' : '取消封存會讓群組回到 dropdown 顯示。'}`)) return;
+    Groups.setArchived(g.groupId, next);
+    this.toast(`✅ 已${verb}「${g.name}」`);
+    if (next) {
+      // 封存後自動切到下一個 active（在 Groups.setArchived 內已做）
+      setTimeout(() => location.reload(), 800);
+    } else {
+      this.updateGroupInfo();
+    }
+  },
+
+  // ===== M5.0: 群組切換 dropdown =====
+  openGroupSwitcher() {
+    const modal = document.getElementById('modal-group-switcher');
+    if (!modal) return;
+    const listEl = document.getElementById('group-switcher-list');
+    if (!listEl) return;
+
+    const allGroups = Groups.all();
+    const activeGroups = allGroups.filter(g => !g.archived);
+    const archivedGroups = allGroups.filter(g => g.archived);
+    const activeId = Groups.activeId;
+
+    const renderRow = (g) => {
+      const isCurrent = g.groupId === activeId;
+      const roleLabel = g.role === 'owner' ? '👑 owner' : '👤 member';
+      const archivedLabel = g.archived ? ' · 已封存' : '';
+      return `
+        <div class="group-switcher-row ${isCurrent ? 'current' : ''}">
+          <div class="group-switcher-info">
+            <span class="group-name">${isCurrent ? '✅ ' : '📁 '}${this.escapeHtml(g.name)}</span>
+            <small>${isCurrent ? '當前' : '可切換'} · ${roleLabel}${archivedLabel}</small>
+          </div>
+          ${isCurrent
+            ? `<button type="button" disabled>當前</button>`
+            : `<button type="button" data-group-id="${this.escapeAttr(g.groupId)}">→ 切換</button>`
+          }
+        </div>
+      `;
+    };
+
+    let html = '';
+    if (allGroups.length === 0) {
+      html = '<p class="hint" style="text-align:center; padding:20px;">還沒有任何群組<br>點下方按鈕建立或加入</p>';
+    } else {
+      html = activeGroups.map(renderRow).join('');
+      if (archivedGroups.length > 0) {
+        html += `
+          <details style="margin-top:12px;">
+            <summary style="cursor:pointer; color:var(--text-light); font-size:13px; padding:8px 0;">📦 已封存 (${archivedGroups.length})</summary>
+            <div style="margin-top:8px;">
+              ${archivedGroups.map(renderRow).join('')}
+            </div>
+          </details>
+        `;
+      }
+    }
+    listEl.innerHTML = html;
+
+    // 綁定切換 buttons
+    listEl.querySelectorAll('button[data-group-id]').forEach(btn => {
+      btn.addEventListener('click', () => this.switchToGroup(btn.dataset.groupId));
+    });
+
+    modal.classList.remove('hidden');
+  },
+
+  async switchToGroup(groupId) {
+    if (!groupId) return;
+    if (Groups.activeId === groupId) {
+      document.getElementById('modal-group-switcher').classList.add('hidden');
+      return;
+    }
+    const target = Groups.list.find(g => g.groupId === groupId);
+    if (!target) return;
+    Groups.setActive(groupId);
+    this.toast(`切換到「${target.name}」...`);
+    // 完整 reload 切換 — 確保所有 cache / state 重置乾淨
+    setTimeout(() => location.reload(), 400);
+  },
+
+  // ===== M5.0: 邀請連結 native Web Share =====
+  // 手機優先用 navigator.share（跳 native sheet），否則 fallback 到複製剪貼簿
+  async shareOrCopyText(text, opts = {}) {
+    const { shareTitle = 'BroTrip 群組邀請', shareText = '來加入我們的出遊群組', copyToast = '已複製', noShareApi = false } = opts;
+    // v3.1.2: noShareApi=true 強制走 clipboard
+    //   原因：iOS Safari 的 navigator.share({url: <非 URL 字串>}) 會把字串當「相對路徑」
+    //         自動 prefix 當前 origin，導致純邀請碼 'eyJ...' 變 'https://.../brotrip/eyJ...'
+    //         接收端拿到這個畸形連結看起來像 URL 但點開沒效。
+    //   只有「真的是 URL」的場景（複製邀請連結）才可以走 Web Share API。
+    // 偵測 Web Share API（多數 mobile + 部分桌機 Safari 支援）
+    if (!noShareApi && navigator.share && navigator.canShare && navigator.canShare({ url: text })) {
+      try {
+        await navigator.share({ title: shareTitle, text: shareText, url: text });
+        this.toast('✅ 已分享');
+        return;
+      } catch (err) {
+        if (err.name === 'AbortError') return;  // 用戶取消
+        console.warn('Web Share failed, fallback to clipboard:', err);
+      }
+    }
+    // Fallback: clipboard
+    try {
+      await navigator.clipboard.writeText(text);
+      this.toast('✅ ' + copyToast);
+    } catch (err) {
+      // 最後 fallback: execCommand
+      try {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+        this.toast('✅ ' + copyToast);
+      } catch (err2) {
+        this.toast('複製失敗，請手動選取');
+        console.error(err2);
+      }
+    }
+  },
+
+  // ===== M4.4: 退出 / 刪除 / 管理成員 =====
+
+  async openManageMembersModal() {
+    const g = Groups.active();
+    if (!g) return;
+    const modal = document.getElementById('modal-manage-members');
+    if (!modal) return;
+    document.getElementById('manage-members-group-name').textContent = g.name;
+    document.getElementById('manage-members-owner-note').textContent =
+      g.role === 'owner' ? '你是 owner，可以踢成員' : '只有 owner 能踢人，你只能看';
+
+    const listEl = document.getElementById('manage-members-list');
+    listEl.innerHTML = '<p class="hint">載入中...</p>';
+    modal.classList.remove('hidden');
+
+    // 確保最新成員資料
+    try {
+      await Members.loadAll();
+    } catch (err) {
+      console.warn(err);
+    }
+
+    const all = Members.all();
+    if (all.length === 0) {
+      listEl.innerHTML = '<p class="hint">（無成員資料）</p>';
+      return;
+    }
+
+    listEl.innerHTML = all.map(m => {
+      const isSelf = m.email === Auth.user.email;
+      const canKick = g.role === 'owner' && !isSelf;
+      const joined = m.joined_at ? new Date(m.joined_at).toLocaleDateString() : '';
+      return `
+        <div class="member-manage-row" style="display:flex; align-items:center; padding:10px; border:1px solid var(--border); border-radius:6px; margin-bottom:8px;">
+          <div style="flex:1; min-width:0;">
+            <div style="font-weight:600;">${this.escapeHtml(m.name)} ${isSelf ? '<span style="color:var(--text-muted); font-weight:normal;">(你)</span>' : ''}</div>
+            <div style="font-size:12px; color:var(--text-muted); overflow:hidden; text-overflow:ellipsis;">${this.escapeHtml(m.email)}</div>
+            ${joined ? `<div style="font-size:11px; color:var(--text-muted);">加入：${joined}</div>` : ''}
+          </div>
+          ${canKick ? `<button type="button" class="btn-kick-member" data-email="${this.escapeAttr(m.email)}" style="padding:6px 12px; background:transparent; border:1px solid #ef4444; color:#ef4444; border-radius:6px; cursor:pointer;">踢出</button>` : ''}
+        </div>
+      `;
+    }).join('');
+
+    // 綁定踢出按鈕
+    listEl.querySelectorAll('.btn-kick-member').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const email = btn.dataset.email;
+        const member = all.find(m => m.email === email);
+        if (!member) return;
+        if (!confirm(`確定要把「${member.name}」(${email}) 踢出群組嗎？\n\n會:\n1. 從 Members 名單移除\n2. 撤銷 Drive 權限（資料夾 + Sheet + photos 全部）\n\n他們的歷史紀錄（trip/支出/日記）會保留`)) return;
+        try {
+          btn.disabled = true;
+          btn.textContent = '處理中...';
+          const result = await Groups.kickMember(g.groupId, email);
+
+          // v3.8.8: 同 handleLeaveGroup — folder 撤銷成功 = 完整成功
+          const folderResult = result.driveResults.find(r => r.name === '群組資料夾');
+          const folderDeleted = folderResult && folderResult.status === 'deleted';
+          console.log('[Kick Member] driveResults:', result.driveResults);
+
+          if (folderDeleted) {
+            this.toast(`✅ 已踢出「${member.name}」，Drive 權限已撤銷`);
+          } else {
+            const driveUrl = `https://drive.google.com/drive/folders/${g.folderId}`;
+            const msg = `⚠️ 已從 Members 移除「${member.name}」\n\n但自動撤銷 Drive 權限失敗，請手動：\n${driveUrl}\n\n要直接開 Drive 嗎？`;
+            if (confirm(msg)) window.open(driveUrl, '_blank');
+          }
+          await this.openManageMembersModal();
+        } catch (err) {
+          this.toast('踢出失敗：' + (err.message || '未知錯誤'));
+          btn.disabled = false;
+          btn.textContent = '踢出';
+        }
+      });
+    });
+  },
+
+  async handleLeaveGroup() {
+    const g = Groups.active();
+    if (!g) return;
+    if (g.role === 'owner') {
+      this.toast('你是 owner，請改用「💀 刪除整個群組」');
+      return;
+    }
+    if (!confirm(`確定退出「${g.name}」?\n\n會撤銷你的 Drive 存取權限，並從你的 app 移除這個群組。\n你之前的紀錄會留給其他人看。`)) return;
+    try {
+      this.toast('退出中...');
+      const result = await Groups.leave(g.groupId);
+
+      // v3.8.8: UX 簡化 — folder 撤銷成功就視為完整成功
+      //   sheet/photos 是繼承 folder 的 ACL，folder 撤了就自動失效
+      //   它們的 404 'File not found' 是預期行為 (因為 list permissions 已沒權限)
+      //   不該彈窗嚇用戶 — 改進 console log
+      const folderResult = result.driveResults.find(r => r.name === '群組資料夾');
+      const folderDeleted = folderResult && folderResult.status === 'deleted';
+
+      // Detailed log (給 debug 用，不在 UI 顯示)
+      console.log('[Leave Group] driveResults:', result.driveResults);
+
+      if (folderDeleted) {
+        // 主動作成功 — 簡單 toast 即可
+        this.toast(`✅ 已退出「${g.name}」，Drive 權限已撤銷`);
+      } else {
+        // folder 也失敗 — 才需要警告用戶手動處理
+        const driveUrl = `https://drive.google.com/drive/folders/${g.folderId}`;
+        const msg = `⚠️ 已從 app 移除「${g.name}」\n\n但自動撤銷 Drive 權限失敗，請手動移除：\n${driveUrl}\n\n要直接開 Drive 嗎？`;
+        if (confirm(msg)) window.open(driveUrl, '_blank');
+      }
+      setTimeout(() => location.reload(), 800);
+    } catch (err) {
+      this.toast('退出失敗：' + (err.message || '未知錯誤'));
+      console.error(err);
+    }
+  },
+
+  async handleDeleteGroup() {
+    const g = Groups.active();
+    if (!g) return;
+    if (g.role !== 'owner') {
+      this.toast('只有 owner 可以刪除群組（你是 member，請用「🚪 退出此群組」）');
+      return;
+    }
+    if (!confirm(`⚠️ 第一次確認\n\n刪除「${g.name}」會:\n1. 刪掉整個 Drive 資料夾 BroTrip/${g.name}/\n2. 包含所有 Sheet 資料、照片、日記\n3. 所有成員都會看不到\n4. 不可復原！\n\n要繼續嗎？`)) return;
+
+    // 二次確認 + 要打字
+    const confirmText = prompt(`⚠️ 最後確認\n\n輸入「DELETE ${g.name}」確認刪除：`);
+    if (confirmText !== `DELETE ${g.name}`) {
+      this.toast('輸入不符，取消刪除');
+      return;
+    }
+
+    try {
+      this.toast('刪除中...');
+      await Groups.deleteGroup(g.groupId);
+      this.toast(`💀 已刪除「${g.name}」`);
+      setTimeout(() => location.reload(), 1000);
+    } catch (err) {
+      this.toast('刪除失敗：' + (err.message || '未知錯誤'));
+      console.error(err);
+    }
+  },
+
+  // Phase 2 → v3.6.1: 顯示邀請連結 + 純邀請碼 modal (async — Workers 拿 8 字短碼)
+  async showInviteCodeModal(group) {
+    const codeEl = document.getElementById('invite-code-text');
+    const linkEl = document.getElementById('invite-link-text');
+    const modal = document.getElementById('modal-invite-code');
+    if (!modal) return;
+
+    // 先 show modal + loading state
+    if (codeEl) codeEl.value = '⏳ 產生短碼中...';
+    if (linkEl) linkEl.value = '⏳ 產生中...';
+    modal.classList.remove('hidden');
+
+    try {
+      // 已 cached shortCode → 瞬間 (~0ms)；沒 cached → POST Workers (~300ms)
+      const code = await Groups.encodeInvite(group);
+      const link = await Groups.buildInviteLink(group);
+      if (codeEl) codeEl.value = code;
+      if (linkEl) linkEl.value = link;
+    } catch (err) {
+      console.error('showInviteCodeModal failed:', err);
+      if (codeEl) codeEl.value = '❌ 產生失敗 — Workers 可能暫時無法存取';
+      if (linkEl) linkEl.value = '';
+      this.toast('邀請碼產生失敗：' + (err.message || '未知錯誤'));
+    }
+  },
+
+  // ===== M3: 加入群組流程 =====
+
+  openJoinGroupModal() {
+    const modal = document.getElementById('modal-join-group');
+    if (!modal) return;
+    const form = document.getElementById('join-group-form');
+    if (form) form.reset();
+    document.getElementById('join-group-permission-banner').classList.add('hidden');
+    document.getElementById('join-group-progress').classList.add('hidden');
+    document.getElementById('join-group-submit').disabled = false;
+    this._pendingJoinCode = null;
+    modal.classList.remove('hidden');
+  },
+
+  async handleJoinGroupSubmit(e) {
+    e.preventDefault();
+    const code = (e.target.elements.code.value || '').trim();
+    if (!code) { this.toast('請貼上邀請碼'); return; }
+    await this._tryJoin(code);
+  },
+
+  async _tryJoin(code) {
+    const submitBtn = document.getElementById('join-group-submit');
+    const progress = document.getElementById('join-group-progress');
+    const banner = document.getElementById('join-group-permission-banner');
+    const stepText = document.getElementById('join-group-step');
+
+    submitBtn.disabled = true;
+    banner.classList.add('hidden');
+    progress.classList.remove('hidden');
+    stepText.textContent = '驗證邀請碼 + 嘗試讀取群組...';
+
+    try {
+      const newGroup = await Groups.joinByInvite(code);
+      // 加入成功！
+      progress.classList.add('hidden');
+      this.toast(`✅ 加入「${newGroup.name}」成功！`);
+
+      // 跳設定 display_name dialog（預設帶 Gmail 名）
+      const defaultName = Auth.user && Auth.user.name ? Auth.user.name : '';
+      this.openDisplayNameModal(newGroup, defaultName, async (name) => {
+        // v3.1.0: 改用 setMyDisplayName（內含「存在 → update / 不存在 → append」邏輯）
+        // 修復 bug：之前無條件 appendRow，朋友在瀏覽器加入後又用 PWA 加入 → Members row 重複
+        try {
+          await this.setMyDisplayName(name);
+        } catch (err) {
+          console.warn('Failed to write Members row:', err);
+        }
+        // 關 join modal、切換到主畫面
+        document.getElementById('modal-join-group').classList.add('hidden');
+        const noGroupScreen = document.getElementById('no-group-screen');
+        if (noGroupScreen && !noGroupScreen.classList.contains('hidden')) {
+          noGroupScreen.classList.add('hidden');
+          await this.showMainApp();
+        } else {
+          // 設定 tab 加入時，問用戶是否切過去
+          setTimeout(() => {
+            if (confirm(`已加入「${newGroup.name}」，要切到該群組嗎？（會 reload）`)) {
+              location.reload();
+            }
+          }, 300);
+        }
+      });
+    } catch (err) {
+      progress.classList.add('hidden');
+      submitBtn.disabled = false;
+
+      if (err.code === 'PERMISSION_DENIED') {
+        // 自動開 Drive folder 觸發 Google 的 request access UI
+        const driveUrl = `https://drive.google.com/drive/folders/${err.folderId}`;
+        window.open(driveUrl, '_blank');
+        // 顯示說明 banner
+        document.getElementById('join-owner-email').textContent = err.ownerEmail || '（不明）';
+        // v3.8.1: 顯示朋友當前登入 Gmail，幫她判斷是否登入用錯帳號
+        const currentEmailEl = document.getElementById('join-current-email');
+        if (currentEmailEl) {
+          currentEmailEl.textContent = (Auth.user && Auth.user.email) || '(未知)';
+        }
+        banner.classList.remove('hidden');
+        // 暫存邀請碼供重試
+        this._pendingJoinCode = code;
+        return;
+      }
+      this.toast('加入失敗：' + (err.message || '未知錯誤'));
+      console.error('Join error:', err);
+    }
+  },
+
+  // 設定 display_name modal（建立群組 + 加入後 + 設定 tab 都用同一個）
+  openDisplayNameModal(group, defaultName, onConfirm) {
+    const modal = document.getElementById('modal-display-name');
+    if (!modal) return;
+    document.getElementById('display-name-group').textContent = group.name;
+    const input = modal.querySelector('input[name="name"]');
+    input.value = defaultName || '';
+    const form = document.getElementById('display-name-form');
+    // 移除舊的 listener（避免重複觸發）
+    const newForm = form.cloneNode(true);
+    form.parentNode.replaceChild(newForm, form);
+    newForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const name = (e.target.elements.name.value || '').trim();
+      if (!name) { this.toast('名稱不能空白'); return; }
+      modal.classList.add('hidden');
+      try { await onConfirm(name); } catch (err) {
+        console.error(err);
+        this.toast('儲存失敗：' + (err.message || '未知錯誤'));
+      }
+    });
+    // re-bind cancel
+    newForm.querySelectorAll('.modal-close, .btn-cancel').forEach(btn => {
+      btn.addEventListener('click', () => modal.classList.add('hidden'));
+    });
+    modal.classList.remove('hidden');
+    input.focus();
+    input.select();
+  },
+
+  // 我在當前群組的 display_name（從 Members sheet 讀，沒有就用 Gmail 名）
+  async getMyDisplayName() {
+    try {
+      const rows = await API.getSheet('Members');
+      const list = API.rowsToObjects(rows);
+      const me = list.find(m => m.email === Auth.user.email);
+      if (me && me.display_name) return me.display_name;
+    } catch (err) {
+      console.warn('getMyDisplayName failed:', err);
+    }
+    return Auth.user && Auth.user.name ? Auth.user.name : Auth.user.email.split('@')[0];
+  },
+
+  // 改我在當前群組的 display_name
+  async setMyDisplayName(newName) {
+    const rows = await API.getSheet('Members');
+    const idx = rows.findIndex((r, i) => i > 0 && r[0] === Auth.user.email);
+    const row = [Auth.user.email, newName, new Date().toISOString()];
+    if (idx > 0) {
+      // 已存在 → updateRow（沿用現有的 updateRow API）
+      const range = `Members!A${idx + 1}:C${idx + 1}`;
+      await API.sheetsRequest(`/values/${encodeURIComponent(range)}?valueInputOption=RAW`, {
+        method: 'PUT',
+        body: JSON.stringify({ values: [row] }),
+      });
+    } else {
+      await API.appendRow('Members', row);
+    }
+  },
+
+  bindUI() {
+    // v3.8.2: login + no-group screen 顯示版本號 + 強制更新按鈕
+    //   解決朋友卡在這兩個畫面無法升級的痛點
+    const versionStr = (typeof CONFIG !== 'undefined') ? CONFIG.VERSION : '?';
+    const loginVerLabel = document.getElementById('login-version-label');
+    const nogroupVerLabel = document.getElementById('nogroup-version-label');
+    if (loginVerLabel) loginVerLabel.textContent = versionStr;
+    if (nogroupVerLabel) nogroupVerLabel.textContent = versionStr;
+    const loginForceUpdate = document.getElementById('login-force-update-btn');
+    const nogroupForceUpdate = document.getElementById('nogroup-force-update-btn');
+    const triggerUpdate = () => this.checkUpdate();
+    if (loginForceUpdate) loginForceUpdate.addEventListener('click', triggerUpdate);
+    if (nogroupForceUpdate) nogroupForceUpdate.addEventListener('click', triggerUpdate);
+
+    document.getElementById('login-btn').addEventListener('click', async () => {
+      try {
+        // v3.8.1: URL 帶 ?switch=1 表示用戶剛從「換帳號重登」過來 → 強制 Google 帳戶選擇器
+        const forceSelectAccount = new URLSearchParams(window.location.search).get('switch') === '1';
+        const result = await Auth.login({ forceSelectAccount });
+
+        // v3.8.4: 登入完成立刻 toast 顯示當前 Gmail (朋友一眼看到自己用什麼帳號)
+        if (result && result.email) {
+          this.toast(`✅ 已用 ${result.email} 登入`);
+        }
+
+        // v3.8.4: 檢查 OAuth scope — 朋友可能在同意畫面取消勾選 Drive
+        //   → token 仍會給但所有 Drive API 都 403 → autoDetect 看不到群組
+        //   → 但看起來像「BroTrip 壞了」(真凶其實是 scope 沒勾)
+        if (result && result.missingScopes && result.missingScopes.length > 0) {
+          this._showMissingScopeModal(result.missingScopes);
+          return;  // 不繼續走 afterLogin，先解決 scope 問題
+        }
+
+        await this.afterLogin();
+      } catch (err) {
+        const msg = err.error_description || err.error || err.message || '請重試';
+        this.toast('登入失敗：' + msg);
+        console.error('Login error:', err);
+      }
+    });
+
+    // Phase 2: 無群組畫面的建立按鈕
+    const createGroupBtn = document.getElementById('create-group-btn');
+    if (createGroupBtn) {
+      createGroupBtn.addEventListener('click', () => this.openCreateGroupModal());
+    }
+    // v3.7.0: 無群組畫面「重新搜尋」醒目按鈕 — 解決朋友登入後找不到群組的痛點
+    const noGroupResearchBtn = document.getElementById('no-group-research-btn');
+    if (noGroupResearchBtn) {
+      noGroupResearchBtn.addEventListener('click', async () => {
+        const btn = noGroupResearchBtn;
+        const orig = btn.textContent;
+        btn.disabled = true;
+        btn.textContent = '🔄 搜尋中...';
+        try {
+          this.toast('🔍 從 Google Drive 搜尋你的群組...');
+          const detected = await Groups.autoDetectGroups();
+          if (detected.length === 0) {
+            // 再試一次（race condition fix 同上）
+            await new Promise(r => setTimeout(r, 2500));
+            const detected2 = await Groups.autoDetectGroups();
+            if (detected2.length === 0) {
+              this.toast('🤔 還是沒找到。可能你沒被邀請過，請貼邀請碼或建群組');
+              btn.disabled = false;
+              btn.textContent = orig;
+              return;
+            }
+          }
+          this.toast(`✨ 找回 ${Groups.list.length} 個群組！正在進入...`);
+          setTimeout(() => location.reload(), 800);
+        } catch (err) {
+          console.error('research failed:', err);
+          this.toast('搜尋失敗：' + (err.message || '未知錯誤'));
+          btn.disabled = false;
+          btn.textContent = orig;
+        }
+      });
+    }
+    const noGroupLogout = document.getElementById('no-group-logout');
+    if (noGroupLogout) {
+      noGroupLogout.addEventListener('click', (e) => {
+        e.preventDefault();
+        if (confirm('登出？')) { Auth.logout(); location.reload(); }
+      });
+    }
+
+    // v3.4.0 M6.3.4: 設定 tab 的「附近 wish 推播」按鈕
+    const geoNotifyBtn = document.getElementById('settings-geo-notify-btn');
+    if (geoNotifyBtn) {
+      geoNotifyBtn.addEventListener('click', async () => {
+        if (typeof GeoNotify === 'undefined') return;
+        const pref = GeoNotify.getPref();
+        if (pref === 'unsupported') {
+          this.toast('你的瀏覽器/裝置不支援推播');
+          return;
+        }
+        if (pref === 'granted') {
+          // 已啟用 → 詢問是否關閉
+          if (confirm('附近推播已啟用。要關閉嗎？')) {
+            GeoNotify.stop();
+            GeoNotify.setPref('declined');
+            this.toast('已關閉推播');
+            this._updateGeoNotifyStatusUI();
+          }
+        } else {
+          // 未啟用 / declined → 重新請求 permission
+          geoNotifyBtn.disabled = true;
+          try {
+            const result = await GeoNotify.requestPermissions();
+            if (result === 'granted') {
+              GeoNotify.start();
+              this.toast('🔔 已啟用！');
+            } else {
+              this.toast('未授權（請到瀏覽器設定確認定位/通知權限）');
+            }
+            this._updateGeoNotifyStatusUI();
+          } catch (err) {
+            console.error(err);
+          } finally {
+            geoNotifyBtn.disabled = false;
+          }
+        }
+      });
+    }
+
+    // v3.1.3: 設定 tab 的「從 Drive 重新偵測群組」按鈕
+    // 用於：換裝置 / 在另一個 session 建了新群組 / 被新邀請加入時手動同步
+    const settingsResyncBtn = document.getElementById('settings-resync-groups-btn');
+    if (settingsResyncBtn) {
+      settingsResyncBtn.addEventListener('click', async () => {
+        settingsResyncBtn.disabled = true;
+        const span = settingsResyncBtn.querySelector('span');
+        const origText = span ? span.textContent : '';
+        if (span) span.textContent = '🔄 偵測中...';
+        try {
+          const before = Groups.list.length;
+          const detected = await Groups.autoDetectGroups();
+          const added = Groups.list.length - before;
+          if (added === 0) {
+            this.toast('✅ 沒有新群組，目前已經是最新狀態');
+          } else {
+            this.toast(`✨ 新增 ${added} 個群組（共 ${Groups.list.length} 個），reload 套用...`);
+            setTimeout(() => location.reload(), 800);
+          }
+        } catch (err) {
+          console.error('Resync failed:', err);
+          this.toast('偵測失敗：' + (err.message || '未知錯誤'));
+        } finally {
+          settingsResyncBtn.disabled = false;
+          if (span) span.textContent = origText;
+        }
+      });
+    }
+
+    // 設定 tab 的建立群組 / 顯示邀請碼按鈕
+    const settingsCreateBtn = document.getElementById('settings-create-group-btn');
+    if (settingsCreateBtn) {
+      settingsCreateBtn.addEventListener('click', () => this.openCreateGroupModal());
+    }
+    const settingsInviteBtn = document.getElementById('settings-show-invite-btn');
+    if (settingsInviteBtn) {
+      settingsInviteBtn.addEventListener('click', () => {
+        const g = Groups.active();
+        if (g) this.showInviteCodeModal(g);
+      });
+    }
+
+    // 建立群組表單
+    const createGroupForm = document.getElementById('create-group-form');
+    if (createGroupForm) {
+      createGroupForm.addEventListener('submit', (e) => this.handleCreateGroupSubmit(e));
+    }
+
+    // M5.0: Header 群組切換 pill
+    const groupSwitchBtn = document.getElementById('group-switch');
+    if (groupSwitchBtn) {
+      groupSwitchBtn.addEventListener('click', () => this.openGroupSwitcher());
+    }
+    // M5.0: 切換 modal 內的 entry buttons
+    const switcherCreateBtn = document.getElementById('switcher-create-btn');
+    if (switcherCreateBtn) {
+      switcherCreateBtn.addEventListener('click', () => {
+        document.getElementById('modal-group-switcher').classList.add('hidden');
+        this.openCreateGroupModal();
+      });
+    }
+    const switcherJoinBtn = document.getElementById('switcher-join-btn');
+    if (switcherJoinBtn) {
+      switcherJoinBtn.addEventListener('click', () => {
+        document.getElementById('modal-group-switcher').classList.add('hidden');
+        this.openJoinGroupModal();
+      });
+    }
+
+    // M3: 加入群組（無群組畫面 + 設定 tab 都用同一個 handler）
+    const joinGroupBtn = document.getElementById('join-group-btn');
+    if (joinGroupBtn) {
+      joinGroupBtn.addEventListener('click', () => this.openJoinGroupModal());
+    }
+    const settingsJoinBtn = document.getElementById('settings-join-group-btn');
+    if (settingsJoinBtn) {
+      settingsJoinBtn.addEventListener('click', () => this.openJoinGroupModal());
+    }
+    const joinForm = document.getElementById('join-group-form');
+    if (joinForm) {
+      joinForm.addEventListener('submit', (e) => this.handleJoinGroupSubmit(e));
+    }
+    // 「我已經有權限了 → 重試」按鈕
+    const joinRetryBtn = document.getElementById('join-retry-btn');
+    if (joinRetryBtn) {
+      joinRetryBtn.addEventListener('click', async () => {
+        if (this._pendingJoinCode) {
+          await this._tryJoin(this._pendingJoinCode);
+        }
+      });
+    }
+    // v3.8.1: 「換帳號重登」按鈕 — 朋友登入用錯 Gmail 時一鍵登出 + 強制 prompt='select_account'
+    const switchAccountBtn = document.getElementById('join-switch-account-btn');
+    if (switchAccountBtn) {
+      switchAccountBtn.addEventListener('click', async () => {
+        const inviteCode = this._pendingJoinCode || '';
+        if (!confirm('要登出並換帳號嗎？登出後會用 Google 帳戶選擇器，請選正確 Gmail 重新登入。\n\n當前的邀請碼會保留，登入後自動繼續加入流程。')) return;
+        try {
+          // 把當前邀請碼存到 localStorage，登入後 afterLogin 會自動繼續
+          if (inviteCode) localStorage.setItem('brotrip_pending_invite', inviteCode);
+          // 登出
+          try { Auth.logout(); } catch {}
+          // reload + 強制 select_account (重 register tokenClient 時 prompt='select_account')
+          location.href = location.pathname + '?switch=1';
+        } catch (err) {
+          console.error('switch account failed:', err);
+          this.toast('切換失敗：' + (err.message || err));
+        }
+      });
+    }
+    // 再開一次 Drive
+    const openDriveBtn = document.getElementById('join-open-drive-btn');
+    if (openDriveBtn) {
+      openDriveBtn.addEventListener('click', () => {
+        if (this._pendingJoinCode) {
+          const data = Groups.decodeInvite(this._pendingJoinCode);
+          if (data && data.folderId) {
+            window.open(`https://drive.google.com/drive/folders/${data.folderId}`, '_blank');
+          }
+        }
+      });
+    }
+    // M3: 改我在此群組的顯示名稱
+    const editDispBtn = document.getElementById('settings-edit-displayname-btn');
+    if (editDispBtn) {
+      editDispBtn.addEventListener('click', async () => {
+        const g = Groups.active();
+        if (!g) return;
+        const currentName = await this.getMyDisplayName();
+        this.openDisplayNameModal(g, currentName, async (name) => {
+          await this.setMyDisplayName(name);
+          this.toast(`✅ 已改為「${name}」`);
+          this.updateGroupInfo();
+        });
+      });
+    }
+
+    // M4.4: 管理成員 modal
+    const manageMembersBtn = document.getElementById('settings-manage-members-btn');
+    if (manageMembersBtn) {
+      manageMembersBtn.addEventListener('click', () => this.openManageMembersModal());
+    }
+
+    // M4.4: 退出此群組
+    const leaveGroupBtn = document.getElementById('settings-leave-group-btn');
+    if (leaveGroupBtn) {
+      leaveGroupBtn.addEventListener('click', () => this.handleLeaveGroup());
+    }
+
+    // M5.1: 封存/取消封存當前群組
+    const archiveBtn = document.getElementById('settings-archive-group-btn');
+    if (archiveBtn) {
+      archiveBtn.addEventListener('click', () => this.handleToggleArchive());
+    }
+
+    // M4.4: 刪除整個群組（owner only）
+    const deleteGroupBtn = document.getElementById('settings-delete-group-btn');
+    if (deleteGroupBtn) {
+      deleteGroupBtn.addEventListener('click', () => this.handleDeleteGroup());
+    }
+
+    // 重新命名當前群組
+    const renameGroupBtn = document.getElementById('settings-rename-group-btn');
+    if (renameGroupBtn) {
+      renameGroupBtn.addEventListener('click', async () => {
+        const g = Groups.active();
+        if (!g) return;
+        const newName = prompt(`重新命名群組\n當前：${g.name}\n\n輸入新名稱：`, g.name);
+        if (newName === null) return;  // 取消
+        const trimmed = (newName || '').trim();
+        if (!trimmed) { this.toast('名稱不能空白'); return; }
+        if (trimmed === g.name) return;
+        try {
+          this.toast('改名中...');
+          await Groups.rename(g.groupId, trimmed);
+          this.toast(`✅ 已改名為「${trimmed}」`);
+          this.updateGroupInfo();
+        } catch (err) {
+          this.toast('改名失敗：' + (err.message || '未知錯誤'));
+          console.error('Rename error:', err);
+        }
+      });
+    }
+
+    // 複製/分享邀請連結（M5.0: 用 native share or clipboard）
+    const copyInviteLinkBtn = document.getElementById('copy-invite-link-btn');
+    if (copyInviteLinkBtn) {
+      // 手機 hint 文案微調
+      if (navigator.share) {
+        copyInviteLinkBtn.innerHTML = '📤 分享邀請連結';
+      }
+      copyInviteLinkBtn.addEventListener('click', () => {
+        const ta = document.getElementById('invite-link-text');
+        if (!ta || !ta.value) return;
+        const g = Groups.active();
+        this.shareOrCopyText(ta.value, {
+          shareTitle: g ? `加入「${g.name}」BroTrip 群組` : 'BroTrip 群組邀請',
+          shareText: g ? `來加入「${g.name}」一起記錄出遊` : '來加入我們的出遊群組',
+          copyToast: '邀請連結已複製，直接貼到 LINE！',
+        });
+      });
+    }
+
+    // 複製純邀請碼（次要按鈕，藏在 details 內，純文字 fallback）
+    // v3.1.2: noShareApi=true 強制走 clipboard，避免 iOS Web Share 把純字串當相對路徑包成 origin/eyJ...
+    const copyInviteBtn = document.getElementById('copy-invite-btn');
+    if (copyInviteBtn) {
+      copyInviteBtn.addEventListener('click', () => {
+        const ta = document.getElementById('invite-code-text');
+        if (!ta || !ta.value) return;
+        this.shareOrCopyText(ta.value, {
+          copyToast: '邀請碼已複製',
+          noShareApi: true,
+        });
+      });
+    }
+
+    document.getElementById('logout-btn').addEventListener('click', () => {
+      if (confirm('登出？')) { Auth.logout(); location.reload(); }
+    });
+
+    document.querySelectorAll('.nav-btn').forEach(btn => {
+      btn.addEventListener('click', () => this.switchTab(btn.dataset.tab));
+    });
+
+    document.getElementById('fab').addEventListener('click', () => {
+      if (!Trips.current) { this.openModal('modal-trips'); return; }
+      // v3.8.0: 非 trip member 不能加支出/日記 (FAB 本身已隱藏，這是 safety net)
+      const isMember = this.isCurrentTripMember();
+      if (this.currentTab === 'expenses') {
+        if (!isMember) { this.toast('👁 你不是這個 trip 的成員，不能加支出'); return; }
+        this.openExpenseModal();
+      }
+      else if (this.currentTab === 'diaries') {
+        if (!isMember) { this.toast('👁 你不是這個 trip 的成員，不能加日記'); return; }
+        this.openDiaryModal();
+      }
+      else if (this.currentTab === 'wishlist') this.openWishlistAddModal();
+    });
+
+    document.getElementById('trip-switch').addEventListener('click', () => this.openTripsModal());
+    document.getElementById('new-trip-btn').addEventListener('click', () => {
+      this.closeModal('modal-trips');
+      this.openNewTripModal();
+    });
+
+    document.querySelectorAll('.modal-close, .btn-cancel').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const modal = btn.closest('.modal');
+        if (modal) modal.classList.add('hidden');
+      });
+    });
+    document.querySelectorAll('.modal').forEach(modal => {
+      modal.addEventListener('click', e => {
+        if (e.target === modal) modal.classList.add('hidden');
+      });
+    });
+
+    document.getElementById('expense-form').addEventListener('submit', e => this.handleExpenseSubmit(e));
+    document.getElementById('diary-form').addEventListener('submit', e => this.handleDiarySubmit(e));
+    document.getElementById('new-trip-form').addEventListener('submit', e => this.handleNewTripSubmit(e));
+    // v3.2.0 M6.1
+    const wishForm = document.getElementById('wishlist-add-form');
+    if (wishForm) wishForm.addEventListener('submit', e => this.handleWishlistAddSubmit(e));
+    // v3.9.2: 批次排行程按鈕
+    const wishBatchBtn = document.getElementById('wishlist-batch-btn');
+    if (wishBatchBtn) wishBatchBtn.addEventListener('click', () => this.openWishlistBatchModal());
+    const toggleWishMarkers = document.getElementById('toggle-wish-markers');
+    if (toggleWishMarkers) {
+      toggleWishMarkers.addEventListener('change', () => {
+        this._showWishMarkers = toggleWishMarkers.checked;
+        this.renderWishlistMarkers();
+      });
+    }
+    // v3.9.1: 分類篩選 chip — 點一下 toggle 該類型的顯示/隱藏（event delegation）
+    const wishTypeFilter = document.getElementById('wish-type-filter');
+    if (wishTypeFilter) {
+      wishTypeFilter.addEventListener('click', e => {
+        const chip = e.target.closest('.wish-type-chip');
+        if (!chip) return;
+        const t = chip.dataset.type;
+        if (!this._hiddenWishTypes) this._hiddenWishTypes = new Set();
+        if (this._hiddenWishTypes.has(t)) this._hiddenWishTypes.delete(t);
+        else this._hiddenWishTypes.add(t);
+        this._renderWishTypeFilter();
+        this.renderWishlistMarkers();
+      });
+    }
+
+    // v3.8.4: 缺少 OAuth scope modal — 「重新登入並授權」按鈕
+    const missingScopeRelogin = document.getElementById('missing-scope-relogin-btn');
+    if (missingScopeRelogin) {
+      missingScopeRelogin.addEventListener('click', async () => {
+        try {
+          // 完整登出 (revoke 舊 token) 然後 prompt='consent' 重新跳完整同意畫面
+          try { Auth.logout(); } catch {}
+          location.href = location.pathname + '?reauth=1';
+        } catch (err) {
+          console.error('relogin failed:', err);
+        }
+      });
+    }
+
+    // v3.5.7: in-app browser 提示 modal handlers
+    const inappCopyBtn = document.getElementById('inapp-copy-link-btn');
+    const inappContinueBtn = document.getElementById('inapp-continue-anyway-btn');
+    const inappCloseBtn = document.getElementById('inapp-modal-close-btn');
+    const inappModal = document.getElementById('modal-inapp-browser');
+    if (inappCopyBtn) {
+      inappCopyBtn.addEventListener('click', async () => {
+        const url = window.location.href;
+        try {
+          await navigator.clipboard.writeText(url);
+          this.toast('✅ 連結已複製，請開 Safari/Chrome 貼上');
+        } catch {
+          // Fallback: 顯示 URL 給用戶手動複製
+          prompt('複製這個連結，貼到 Safari/Chrome：', url);
+        }
+      });
+    }
+    const dismissInappModal = () => {
+      try { localStorage.setItem('brotrip_inapp_dismissed', '1'); } catch {}
+      if (inappModal) inappModal.classList.add('hidden');
+    };
+    if (inappContinueBtn) inappContinueBtn.addEventListener('click', dismissInappModal);
+    if (inappCloseBtn) inappCloseBtn.addEventListener('click', dismissInappModal);
+
+    // v3.4.0 M6.3: GeoNotify onboarding modal
+    const geoEnableBtn = document.getElementById('geo-notify-enable-btn');
+    const geoDeclineBtn = document.getElementById('geo-notify-decline-btn');
+    const geoModal = document.getElementById('modal-geo-notify-onboarding');
+    if (geoEnableBtn) {
+      geoEnableBtn.addEventListener('click', async () => {
+        geoEnableBtn.disabled = true;
+        const origText = geoEnableBtn.textContent;
+        geoEnableBtn.textContent = '⏳ 處理中...';
+        // v3.8.5: 加進度顯示 + timeout 防 iOS PWA silent hang
+        try {
+          const result = await GeoNotify.requestPermissions({
+            onProgress: (step) => { geoEnableBtn.textContent = `⏳ ${step}`; },
+          });
+          if (result === 'granted') {
+            this.toast('🔔 已開啟！走在路上經過 wish 會推播');
+            GeoNotify.start();
+          } else if (result === 'unsupported') {
+            this.toast('你的瀏覽器不支援推播，已關閉');
+          } else {
+            this.toast('已拒絕 (可能是定位權限沒給)。設定 tab 可以重新開啟');
+          }
+        } catch (err) {
+          console.error(err);
+          this.toast('開啟失敗：' + (err.message || err));
+        } finally {
+          geoEnableBtn.disabled = false;
+          geoEnableBtn.textContent = origText;
+          if (geoModal) geoModal.classList.add('hidden');
+        }
+      });
+    }
+    if (geoDeclineBtn) {
+      geoDeclineBtn.addEventListener('click', () => {
+        GeoNotify.setPref('declined');
+        if (geoModal) geoModal.classList.add('hidden');
+        this.toast('已關閉。設定 tab 可以再開');
+      });
+    }
+
+    // v3.4.0 M6.3: 接收 SW notification click 訊息 → 跳 wishlist tab + 高亮該 wish
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.addEventListener('message', (e) => {
+        const msg = e.data || {};
+        if (msg.type === 'wish-notify-click') {
+          this.switchTab('wishlist');
+          // 之後若有「scroll to + 高亮」需求可加 (target by wishId)
+          if (msg.wishId) this.toast(`📍 ${msg.wishId.slice(0, 8)}... 從通知跳過來的`);
+        }
+      });
+    }
+    // 處理「從 SW 開新窗，URL 帶 ?focus_wish」場景
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const focusWish = params.get('focus_wish');
+      if (focusWish) {
+        // 留待 afterLogin 完成後跳 tab；先存
+        this._pendingFocusWishId = focusWish;
+        params.delete('focus_wish');
+        const newSearch = params.toString();
+        history.replaceState({}, '', window.location.pathname + (newSearch ? '?' + newSearch : ''));
+      }
+    } catch {}
+
+    // Photo lightbox
+    const lightbox = document.getElementById('photo-lightbox');
+    document.getElementById('lightbox-close').addEventListener('click', () => lightbox.close());
+    lightbox.addEventListener('click', e => { if (e.target === lightbox) lightbox.close(); });
+    // 任何關閉路徑（button / 背景 / Escape）統一觸發 close event → 還原 viewport
+    lightbox.addEventListener('close', () => this._setViewportZoom(false));
+    document.getElementById('lightbox-img').addEventListener('error', async (e) => {
+      const li = e.target;
+      if (li.dataset.fallbackTried === '1') return;
+      li.dataset.fallbackTried = '1';
+      const id = li.dataset.photoId;
+      if (!id) return;
+      try { li.src = await API.fetchDriveBlobUrl(id); } catch (err) { console.warn(err); }
+    });
+    document.getElementById('lightbox-prev').addEventListener('click', () => {
+      if (this._lightboxIndex > 0) { this._lightboxIndex--; this.showLightboxPhoto(); }
+    });
+    document.getElementById('lightbox-next').addEventListener('click', () => {
+      if (this._lightboxIndex < this._lightboxPhotos.length - 1) { this._lightboxIndex++; this.showLightboxPhoto(); }
+    });
+    document.addEventListener('keydown', (e) => {
+      if (!lightbox.open) return;
+      if (e.key === 'ArrowLeft' && this._lightboxIndex > 0) { this._lightboxIndex--; this.showLightboxPhoto(); }
+      else if (e.key === 'ArrowRight' && this._lightboxIndex < this._lightboxPhotos.length - 1) { this._lightboxIndex++; this.showLightboxPhoto(); }
+      else if (e.key === 'Escape') lightbox.close();
+    });
+
+    // Expense list edit/delete + 點 row 任何地方都展開 edit modal（檢視或修改）
+    document.getElementById('expense-list').addEventListener('click', e => {
+      const editBtn = e.target.closest('[data-action="edit-expense"]');
+      const delBtn = e.target.closest('[data-action="delete-expense"]');
+      if (editBtn) { e.stopPropagation(); this.openExpenseModal(editBtn.dataset.id); return; }
+      if (delBtn) { e.stopPropagation(); this.deleteExpense(delBtn.dataset.id); return; }
+      const item = e.target.closest('.expense-item');
+      if (item && item.dataset.expenseId) {
+        this.openExpenseModal(item.dataset.expenseId);
+      }
+    });
+
+    // 全部結清按鈕（動態 render，用 delegation）
+    document.getElementById('settlement-content').addEventListener('click', async (ev) => {
+      // ⭐ v2.0.0 peer-to-peer 結算動作
+      const claimBtn = ev.target.closest('[data-action="claim-settlement"]');
+      if (claimBtn) {
+        await this.claimSettlement(claimBtn);
+        return;
+      }
+      const cancelBtn = ev.target.closest('[data-action="cancel-settlement"]');
+      if (cancelBtn) {
+        await this.cancelSettlement(cancelBtn.dataset.id);
+        return;
+      }
+      const confirmBtn = ev.target.closest('[data-action="confirm-settlement"]');
+      if (confirmBtn) {
+        await this.confirmSettlementClaim(confirmBtn.dataset.id);
+        return;
+      }
+      const rejectBtn = ev.target.closest('[data-action="reject-settlement"]');
+      if (rejectBtn) {
+        await this.rejectSettlementClaim(rejectBtn.dataset.id);
+        return;
+      }
+
+    });
+
+    // Dark mode toggle
+    document.getElementById('toggle-dark-btn').addEventListener('click', () => this.toggleDarkMode());
+
+    // 完全重置（救援按鈕）
+    document.getElementById('reset-app-btn').addEventListener('click', () => this.resetApp());
+
+    // 已結清解鎖 / 反悔重新鎖定
+    document.getElementById('expense-unlock-btn').addEventListener('click', () => this.unlockExpense());
+    document.getElementById('expense-relock-btn').addEventListener('click', () => this.relockExpense());
+
+    // Diary list edit/delete/pin + comment + photo lightbox + mention chips
+    document.getElementById('diary-list').addEventListener('click', e => {
+      const editBtn = e.target.closest('[data-action="edit-diary"]');
+      const delBtn = e.target.closest('[data-action="delete-diary"]');
+      const pinBtn = e.target.closest('[data-action="pin-diary"]');
+      const folderBtn = e.target.closest('[data-action="open-trip-folder"]');
+      const delCommentBtn = e.target.closest('[data-action="delete-comment"]');
+      const reactionBtn = e.target.closest('[data-action="toggle-reaction"]');
+      const sendBtn = e.target.closest('.comment-send');
+      // Note: mention-chip click handler 已移除（v1.7.5 改用 @autocomplete dropdown）
+      if (editBtn) { e.stopPropagation(); this.openDiaryModal(editBtn.dataset.id); return; }
+      if (delBtn) { e.stopPropagation(); this.deleteDiary(delBtn.dataset.id); return; }
+      if (pinBtn) { e.stopPropagation(); this.togglePin(pinBtn.dataset.id); return; }
+      if (folderBtn) { e.stopPropagation(); this.openTripPhotosFolder(folderBtn.dataset.id); return; }
+      if (delCommentBtn) { e.stopPropagation(); this.deleteComment(delCommentBtn.dataset.id); return; }
+      if (reactionBtn) { e.stopPropagation(); this.toggleReaction(reactionBtn.dataset.id, reactionBtn.dataset.emoji); return; }
+      if (sendBtn) {
+        e.stopPropagation();
+        const wrap = sendBtn.closest('.comment-input-wrap');
+        const input = wrap.querySelector('.comment-input');
+        this.submitComment(wrap.dataset.diaryId, input.value, input);
+        return;
+      }
+      const img = e.target.closest('.diary-photos img');
+      if (img && img.dataset.photoId) {
+        const card = img.closest('.diary-item');
+        const allImgs = Array.from(card.querySelectorAll('.diary-photos img'));
+        const ids = allImgs.map(im => im.dataset.photoId);
+        const startIdx = ids.indexOf(img.dataset.photoId);
+        this.openLightbox(ids, Math.max(0, startIdx));
+      }
+    });
+
+    document.getElementById('diary-list').addEventListener('keypress', e => {
+      if (e.key === 'Enter' && e.target.classList.contains('comment-input')) {
+        e.preventDefault();
+        const wrap = e.target.closest('.comment-input-wrap');
+        this.submitComment(wrap.dataset.diaryId, e.target.value, e.target);
+      }
+    });
+
+    // Trip list
+    document.getElementById('trip-list').addEventListener('click', e => {
+      const editBtn = e.target.closest('[data-action="edit-trip"]');
+      const deleteBtn = e.target.closest('[data-action="delete-trip"]');
+      if (editBtn) {
+        e.stopPropagation();
+        this.closeModal('modal-trips');
+        this.openEditTripModal(editBtn.dataset.tripId);
+        return;
+      }
+      if (deleteBtn) {
+        e.stopPropagation();
+        this.confirmDeleteTrip(deleteBtn.dataset.tripId);
+        return;
+      }
+      const selectArea = e.target.closest('[data-action="select-trip"]');
+      if (selectArea) {
+        Trips.setCurrent(selectArea.dataset.tripId);
+        this.closeModal('modal-trips');
+        Expenses._filter();
+        Diaries._filter();
+        this.renderAll();
+        this.refreshAll();
+      }
+    });
+
+    // Diary filter
+    document.getElementById('filter-authors').addEventListener('click', e => {
+      const chip = e.target.closest('.filter-chip');
+      if (!chip) return;
+      const email = chip.dataset.email;
+      const idx = this._diaryFilter.authors.indexOf(email);
+      if (idx >= 0) this._diaryFilter.authors.splice(idx, 1);
+      else this._diaryFilter.authors.push(email);
+      chip.classList.toggle('active');
+      this.renderDiaries();
+      this.updateFilterSummary();
+    });
+    document.getElementById('filter-date-from').addEventListener('change', e => {
+      this._diaryFilter.dateFrom = e.target.value;
+      this._syncDateFieldLabel('from');
+      this.renderDiaries();
+      this.updateFilterSummary();
+    });
+    document.getElementById('filter-date-to').addEventListener('change', e => {
+      this._diaryFilter.dateTo = e.target.value;
+      this._syncDateFieldLabel('to');
+      this.renderDiaries();
+      this.updateFilterSummary();
+    });
+    // 關鍵字搜尋（debounce 200ms 避免每打一字就 re-render 全部）
+    const kwInput = document.getElementById('filter-keyword');
+    if (kwInput) {
+      kwInput.addEventListener('input', e => {
+        clearTimeout(this._kwTimer);
+        const val = e.target.value;
+        this._kwTimer = setTimeout(() => {
+          this._diaryFilter.keyword = val;
+          this.renderDiaries();
+          this.updateFilterSummary();
+        }, 200);
+      });
+    }
+    document.getElementById('filter-clear').addEventListener('click', () => {
+      this._diaryFilter = { authors: [], dateFrom: '', dateTo: '', keyword: '' };
+      document.querySelectorAll('#filter-authors .filter-chip').forEach(c => c.classList.remove('active'));
+      document.getElementById('filter-date-from').value = '';
+      document.getElementById('filter-date-to').value = '';
+      this._syncDateFieldLabel('from');
+      this._syncDateFieldLabel('to');
+      const kw = document.getElementById('filter-keyword');
+      if (kw) kw.value = '';
+      this.renderDiaries();
+      this.updateFilterSummary();
+    });
+
+    // Nicknames edit
+    document.getElementById('nicknames-list').addEventListener('click', async (e) => {
+      const btn = e.target.closest('.btn-edit-nickname');
+      if (!btn) return;
+      const email = btn.dataset.email;
+      const current = Nicknames.get(email);
+      const targetName = Members.getName(email) || email;
+      const newNick = prompt(`給 ${targetName} 取暱稱（清空 = 移除）：`, current);
+      if (newNick === null) return;
+      try {
+        await Nicknames.set(email, newNick);
+        this.toast('✅ 暱稱已更新');
+        this.renderNicknamesUI();
+        this.renderSettlement();
+        this.renderExpenses();
+        this.renderDiaryFilters();
+        this.renderDiaries();
+      } catch (err) {
+        console.error(err);
+        this.toast('更新失敗：' + err.message);
+      }
+    });
+
+    // Settings
+    document.getElementById('check-update-btn').addEventListener('click', () => this.checkUpdate());
+    document.getElementById('open-sheet-btn').addEventListener('click', () => {
+      // Phase 2: 從 active group 取 sheet/folder ID
+      const g = Groups.active();
+      if (g) window.open(`https://docs.google.com/spreadsheets/d/${g.sheetId}/`, '_blank');
+    });
+    document.getElementById('open-drive-btn').addEventListener('click', () => {
+      const g = Groups.active();
+      if (g) window.open(`https://drive.google.com/drive/folders/${g.folderId}`, '_blank');
+    });
+
+    // Trip ID auto slug
+    const tripIdInput = document.querySelector('#new-trip-form [name="trip_id"]');
+    const tripNameInput = document.querySelector('#new-trip-form [name="name"]');
+    tripNameInput.addEventListener('input', () => {
+      if (!tripIdInput.dataset.touched) {
+        const year = new Date().getFullYear();
+        const slug = tripNameInput.value.toLowerCase()
+          .replace(/[^\w\s-]/g, '')
+          .replace(/\s+/g, '-')
+          .slice(0, 30);
+        if (slug) tripIdInput.value = `${year}-${slug}`;
+      }
+    });
+    tripIdInput.addEventListener('focus', () => { tripIdInput.dataset.touched = '1'; });
+
+    // Expense form: split + payer realtime
+    const expenseForm = document.getElementById('expense-form');
+    expenseForm.addEventListener('input', e => {
+      if (e.target.matches('[name="amount"], #split-rows input')) this.updateSplitPreview();
+      if (e.target.matches('[name="amount"], #payer-rows input')) this.updatePayerPreview();
+    });
+    expenseForm.addEventListener('change', e => {
+      if (e.target.matches('#split-rows input[type="checkbox"]')) this.updateSplitPreview();
+    });
+
+    // 加 payer 按鈕
+    document.getElementById('add-payer-btn').addEventListener('click', () => this.addPayerRow());
+    // 刪 payer (event delegation)
+    document.getElementById('payer-rows').addEventListener('click', e => {
+      const btn = e.target.closest('.remove-payer');
+      if (btn) {
+        btn.closest('.payer-row').remove();
+        this.updatePayerPreview();
+      }
+    });
+
+    // === Mention autocomplete ===
+    // 日記 textarea
+    const diaryTextarea = document.querySelector('#diary-form [name="content"]');
+    if (diaryTextarea) {
+      diaryTextarea.addEventListener('input', () => this.handleMentionInput(diaryTextarea));
+      diaryTextarea.addEventListener('keydown', (e) => this.handleMentionKey(e));
+    }
+    // 留言 input（用 delegation 抓 dynamic 元素）
+    document.getElementById('diary-list').addEventListener('input', (e) => {
+      if (e.target.classList.contains('comment-input')) this.handleMentionInput(e.target);
+    });
+    document.getElementById('diary-list').addEventListener('keydown', (e) => {
+      if (e.target.classList.contains('comment-input')) this.handleMentionKey(e);
+    });
+    // 點 dropdown 外面就關（用 mousedown 比 click 早，避免 blur 先觸發）
+    document.addEventListener('mousedown', (e) => {
+      if (!this._mentionState) return;
+      if (e.target.closest('#mention-dropdown')) return;
+      if (e.target === this._mentionState.inputEl) return;
+      this.closeMentionDropdown();
+    });
+
+    // ===== 預計行程 =====
+    const newItinBtn = document.getElementById('new-itinerary-btn');
+    if (newItinBtn) newItinBtn.addEventListener('click', () => this.openNewItineraryModal());
+
+    const itinForm = document.getElementById('itinerary-form');
+    if (itinForm) itinForm.addEventListener('submit', e => this.handleItinerarySubmit(e));
+
+    // waypoint 動態加 / 上下移動 / 移除
+    const addWpBtn = document.getElementById('add-waypoint-btn');
+    if (addWpBtn) addWpBtn.addEventListener('click', () => {
+      // 把當前 input 值同步到暫存（input 沒選 place 也保留 typed 文字方便用戶調整順序時不丟）
+      this._syncWaypointInputs();
+      this._itineraryWaypoints.push({ name: '', address: '', lat: null, lng: null, place_id: '' });
+      this.renderWaypointRows();
+    });
+
+    document.getElementById('waypoint-rows').addEventListener('click', e => {
+      const btn = e.target.closest('[data-action^="wp-"]');
+      if (!btn) return;
+      this._syncWaypointInputs();
+      const idx = parseInt(btn.dataset.idx, 10);
+      const wps = this._itineraryWaypoints;
+      if (btn.dataset.action === 'wp-up' && idx > 0) {
+        [wps[idx - 1], wps[idx]] = [wps[idx], wps[idx - 1]];
+      } else if (btn.dataset.action === 'wp-down' && idx < wps.length - 1) {
+        [wps[idx], wps[idx + 1]] = [wps[idx + 1], wps[idx]];
+      } else if (btn.dataset.action === 'wp-remove' && wps.length > 2) {
+        wps.splice(idx, 1);
+      }
+      this.renderWaypointRows();
+    });
+
+    // 行程列表 click：取消選擇 / 用 Google Maps 開 / 刪除 / 載入到地圖
+    document.getElementById('itinerary-list').addEventListener('click', e => {
+      const clearBtn = e.target.closest('[data-action="clear-itinerary"]');
+      if (clearBtn) { e.stopPropagation(); this.clearItinerarySelection(); return; }
+      const gmapsBtn = e.target.closest('[data-action="open-in-gmaps"]');
+      if (gmapsBtn) { e.stopPropagation(); this.openItineraryInGoogleMaps(gmapsBtn.dataset.id); return; }
+      const delBtn = e.target.closest('[data-action="delete-itinerary"]');
+      if (delBtn) { e.stopPropagation(); this.deleteItinerary(delBtn.dataset.id); return; }
+      const item = e.target.closest('.itinerary-item');
+      if (item) this.showItineraryOnMap(item.dataset.id);
+    });
+
+    // 通知 bell + modal
+    document.getElementById('notif-bell').addEventListener('click', () => this.openNotifModal());
+    document.getElementById('mark-all-read-btn').addEventListener('click', () => {
+      Notifications.markAllRead();
+      this.updateNotifBadge();
+      this.renderNotifList();
+    });
+    document.getElementById('notif-list').addEventListener('click', (e) => {
+      const item = e.target.closest('.notif-item');
+      if (!item) return;
+      const type = item.dataset.type;
+      const refId = item.dataset.refId;
+      if (!refId) return;
+
+      Notifications.markAllRead();
+      this.updateNotifBadge();
+      this.closeModal('modal-notifications');
+
+      // Route 依 type（用 cache 立刻顯示）
+      if (type === 'mention' || type === 'comment' || type === 'comment-mention') {
+        this.openDiaryFromMap(refId);
+      } else if (type === 'trip-add') {
+        // refId = trip_id
+        const trip = Trips.list.find(t => t.trip_id === refId);
+        if (trip) {
+          Trips.setCurrent(refId);
+          Expenses._filter();
+          Diaries._filter();
+          this.renderAll();
+        }
+      } else if (type === 'expense-split') {
+        // refId = expense_id
+        const expense = Expenses.allList.find(e => e.id === refId);
+        if (expense) {
+          // 切到該 trip
+          if (!Trips.current || Trips.current.trip_id !== expense.trip_id) {
+            Trips.setCurrent(expense.trip_id);
+            Expenses._filter();
+            Diaries._filter();
+            this.renderAll();
+          }
+          this.switchTab('expenses');
+          setTimeout(() => this.openExpenseModal(refId), 200);
+        } else {
+          this.switchTab('expenses');
+        }
+      } else if (type === 'expense-settle') {
+        // refId = trip_id（legacy：舊「強制全部結清」發的通知，功能已於 v3.9.6 移除，收端跳轉保留讓歷史通知可點）
+        const trip = Trips.list.find(t => t.trip_id === refId);
+        if (trip) {
+          Trips.setCurrent(refId);
+          Expenses._filter();
+          Diaries._filter();
+          this.renderAll();
+          this.switchTab('expenses');
+        }
+      } else if (type === 'itinerary-add') {
+        // refId = itinerary_id
+        this.switchTab('map');
+        setTimeout(() => this.showItineraryOnMap(refId), 300);
+      } else if (type === 'settlement-claim' || type === 'settlement-confirm' || type === 'settlement-reject') {
+        // 跳到結算頁面（在 expenses tab 上方）
+        const s = (typeof Settlements !== 'undefined') ? Settlements.allList.find(x => x.id === refId) : null;
+        if (s && (!Trips.current || Trips.current.trip_id !== s.trip_id)) {
+          Trips.setCurrent(s.trip_id);
+          Expenses._filter();
+          Diaries._filter();
+          this.renderAll();
+        }
+        this.switchTab('expenses');
+        setTimeout(() => {
+          const settleEl = document.getElementById('settlement-content');
+          if (settleEl) settleEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }, 200);
+      }
+      // v3.4.0 M6.4: wishlist 通知 → 跳 wishlist tab，切到對應 trip
+      else if (type === 'wish-vote' || type === 'wish-rejected' || type === 'wish-force-restore') {
+        const wish = (typeof Wishlist !== 'undefined') ? Wishlist.allList.find(w => w.id === refId) : null;
+        if (wish && (!Trips.current || Trips.current.trip_id !== wish.trip_id)) {
+          Trips.setCurrent(wish.trip_id);
+          Expenses._filter();
+          Diaries._filter();
+          if (typeof Wishlist !== 'undefined') Wishlist._filter();
+          this.renderAll();
+        }
+        this.switchTab('wishlist');
+      }
+
+      // 背景拉最新資料（cache 可能過時），拿到後自動 re-render
+      // 不 await：navigate 立刻完成，refreshAll 完成後畫面會自動更新
+      this.refreshAll().catch(err => console.warn('post-notif refresh failed:', err));
+    });
+  },
+
+  initPullToRefresh() {
+    const indicator = document.getElementById('pull-indicator');
+    if (!indicator) return;
+    let startY = 0;
+    let pulling = false;
+    const threshold = 60;
+    document.addEventListener('touchstart', (e) => {
+      if (document.querySelector('.modal:not(.hidden), dialog[open]')) return;
+      // 地圖頁停用下拉：跟 Google Maps 互動（拖移/縮放）衝突且無意義
+      if (this.currentTab === 'map') return;
+      if (window.scrollY === 0) { startY = e.touches[0].clientY; pulling = true; }
+    }, { passive: true });
+    document.addEventListener('touchmove', (e) => {
+      if (!pulling) return;
+      const dy = e.touches[0].clientY - startY;
+      if (dy > 10 && dy < 150) {
+        indicator.classList.add('show');
+        const triggered = dy >= threshold;
+        indicator.classList.toggle('triggered', triggered);
+        indicator.textContent = triggered ? '🔄 放開重新整理' : '⬇︎ 下拉重新整理...';
+      } else if (dy <= 0) indicator.classList.remove('show');
+    }, { passive: true });
+    document.addEventListener('touchend', () => {
+      if (!pulling) return;
+      const wasTriggered = indicator.classList.contains('triggered');
+      pulling = false;
+      indicator.classList.remove('show', 'triggered');
+      if (wasTriggered) {
+        indicator.classList.add('show');
+        indicator.textContent = '重新整理中...';
+        this.softRefresh(indicator);
+      }
+    });
+  },
+
+  toggleDarkMode() {
+    const current = document.documentElement.dataset.theme || 'light';
+    const next = current === 'dark' ? 'light' : 'dark';
+    document.documentElement.dataset.theme = next;
+    localStorage.setItem('brotrip_theme', next);
+    this.updateThemeUI();
+  },
+
+  updateThemeUI() {
+    const current = document.documentElement.dataset.theme || 'light';
+    const el = document.getElementById('theme-current');
+    if (el) el.textContent = current === 'dark' ? '深色 🌙' : '淺色 ☀';
+  },
+
+  updateVersionInfo() {
+    const el = document.getElementById('version-info');
+    if (!el) return;
+    el.textContent = `BroTrip ${CONFIG.VERSION}`;
+    if ('caches' in window) {
+      caches.keys().then(names => {
+        const cur = names.find(n => n.startsWith('brotrip-')) || 'none';
+        el.textContent = `BroTrip ${CONFIG.VERSION} | cache: ${cur}`;
+      });
+    }
+    this.updateGroupInfo();
+    this.updateDebugInfo();
+  },
+
+  // M5.1: 群組統計 dashboard
+  updateGroupStats() {
+    const tripsEl = document.getElementById('stat-trips');
+    const membersEl = document.getElementById('stat-members');
+    const expensesEl = document.getElementById('stat-expenses');
+    const diariesEl = document.getElementById('stat-diaries');
+    if (!tripsEl) return;  // 設定 tab 沒開時不算
+
+    const tripCount = (Trips.list || []).length;
+    const memberCount = Members.list.length || Members.all().length;
+    const diaryCount = (Diaries.allList || []).length;
+    // 總花費（所有 trip 的 expenses 加總，以 TWD 為主，其他幣別簡單相加示意）
+    const allExpenses = Expenses.allList || [];
+    const byCurrency = {};
+    allExpenses.forEach(e => {
+      const cur = e.currency || 'TWD';
+      const amt = parseFloat(e.amount) || 0;
+      byCurrency[cur] = (byCurrency[cur] || 0) + amt;
+    });
+    const expenseStr = Object.entries(byCurrency)
+      .map(([cur, amt]) => `${cur} ${amt.toLocaleString()}`)
+      .join(', ') || '0';
+
+    tripsEl.textContent = tripCount;
+    membersEl.textContent = memberCount;
+    expensesEl.textContent = expenseStr;
+    diariesEl.textContent = diaryCount;
+  },
+
+  // Phase 2: 設定 tab 顯示當前群組名 + 角色 + 我的 display_name + Header pill
+  updateGroupInfo() {
+    const nameEl = document.getElementById('current-group-name');
+    const roleEl = document.getElementById('current-group-role');
+    const dispEl = document.getElementById('my-display-name');
+    const headerPill = document.getElementById('group-switch');
+    const g = Groups.active();
+    if (nameEl) nameEl.textContent = g ? g.name : '無';
+    if (roleEl) roleEl.textContent = g ? (g.role === 'owner' ? '👑 owner' : '👤 member') : '-';
+    // M5.0: Header 上的群組切換 pill
+    if (headerPill) {
+      // 計算未封存的群組數量（封存的不算進切換選項）
+      const activeCount = Groups.list.filter(x => !x.archived).length;
+      const indicator = activeCount > 1 ? '▾' : '';  // 只有 1 個群組時不顯示箭頭
+      headerPill.textContent = g ? `🏠 ${g.name} ${indicator}` : '🏠 -';
+    }
+    // M5.1: 封存按鈕 label 切換
+    const archiveLabel = document.getElementById('archive-toggle-label');
+    if (archiveLabel) {
+      archiveLabel.textContent = (g && g.archived) ? '取消封存此群組' : '封存此群組';
+    }
+    // M3: async 抓 display name
+    if (dispEl && g) {
+      this.getMyDisplayName().then(name => { dispEl.textContent = name; });
+    }
+  },
+
+  async updateDebugInfo() {
+    const el = document.getElementById('debug-info');
+    if (!el) return;
+    const ua = navigator.userAgent || '?';
+    const isAndroid = /Android/i.test(ua);
+    const isIOS = /iPad|iPhone|iPod/.test(ua);
+    const platform = isAndroid ? '🤖 Android' : (isIOS ? '🍎 iOS' : '💻 Desktop');
+    const swStatus = ('serviceWorker' in navigator)
+      ? (await navigator.serviceWorker.getRegistration() ? '✓ 已註冊' : '✗ 未註冊')
+      : '不支援';
+    const onLine = navigator.onLine ? '✓ 上線' : '✗ 離線';
+    const tripsCount = (typeof Trips !== 'undefined') ? Trips.list.length : '?';
+    const expensesCount = (typeof Expenses !== 'undefined') ? Expenses.allList.length : '?';
+    const diariesCount = (typeof Diaries !== 'undefined') ? Diaries.allList.length : '?';
+
+    // v3.6.1: 群組相關資訊
+    const groupsCount = (typeof Groups !== 'undefined') ? Groups.list.length : 0;
+    const activeGroup = (typeof Groups !== 'undefined') ? Groups.active() : null;
+    const groupShortCode = activeGroup && activeGroup.shortCode ? activeGroup.shortCode : '(尚未產生)';
+    const groupShortCodeColor = activeGroup && activeGroup.shortCode ? '#10b981' : 'var(--text-light)';
+
+    // v3.6.1: Workers backend 資訊
+    const workersUrl = (typeof CONFIG !== 'undefined' && CONFIG.WORKERS_URL) ? CONFIG.WORKERS_URL : '';
+    const workersUrlShort = workersUrl.replace(/^https?:\/\//, '').replace(/\/$/, '') || '(未設定)';
+
+    const lastErr = this._lastError ? `<div style="color:#ef4444;">❌ ${this.escapeHtml(this._lastError)}</div>` : '';
+    el.innerHTML = `
+      <div class="debug-row"><span>Email:</span> <code>${this.escapeHtml(Auth.user ? Auth.user.email : '(未登入)')}</code></div>
+      <div class="debug-row"><span>App version:</span> <code>${CONFIG.VERSION}</code></div>
+      <div class="debug-row"><span>平台:</span> <code>${platform}</code></div>
+      <div class="debug-row"><span>SW:</span> <code>${swStatus}</code></div>
+      <div class="debug-row"><span>網路:</span> <code>${onLine}</code></div>
+      <div class="debug-row"><span>Trips/Expenses/Diaries:</span> <code>${tripsCount}/${expensesCount}/${diariesCount}</code></div>
+      <div class="debug-row"><span>群組數:</span> <code>${groupsCount}</code></div>
+      <div class="debug-row"><span>當前群組短碼:</span> <code style="color:${groupShortCodeColor};">${this.escapeHtml(groupShortCode)}</code></div>
+      <div class="debug-row"><span>Workers backend:</span> <code style="font-size:11px;">${this.escapeHtml(workersUrlShort)}</code></div>
+      <div class="debug-row"><span>Workers 狀態:</span> <code id="debug-workers-status">⏳ 檢查中...</code></div>
+      ${lastErr}
+    `;
+
+    // v3.6.1: 非同步 check Workers /health (3 秒 timeout)
+    if (workersUrl) {
+      try {
+        const controller = new AbortController();
+        const tid = setTimeout(() => controller.abort(), 3000);
+        const resp = await fetch(workersUrl + '/health', { signal: controller.signal });
+        clearTimeout(tid);
+        const statusEl = document.getElementById('debug-workers-status');
+        if (statusEl) {
+          if (resp.ok) {
+            statusEl.textContent = '✅ 正常';
+            statusEl.style.color = '#10b981';
+          } else {
+            statusEl.textContent = `❌ HTTP ${resp.status}`;
+            statusEl.style.color = '#ef4444';
+          }
+        }
+      } catch (err) {
+        const statusEl = document.getElementById('debug-workers-status');
+        if (statusEl) {
+          statusEl.textContent = err.name === 'AbortError' ? '⚠️ timeout (3s)' : '❌ 連線失敗';
+          statusEl.style.color = '#ef4444';
+        }
+      }
+    } else {
+      const statusEl = document.getElementById('debug-workers-status');
+      if (statusEl) {
+        statusEl.textContent = '(未設定 — 用 base64 fallback)';
+        statusEl.style.color = 'var(--text-light)';
+      }
+    }
+  },
+
+  // 重置：清 SW + login，但保留 data cache（暱稱/日記/支出）
+  // 為什麼保留 data cache：避免「剛改完東西、按重置、sheet 還沒 propagate」的資料消失
+  // 真要 wipe data cache 也行（Sheet 是 source of truth，下次 fetch 會 restore）
+  async resetApp() {
+    if (!confirm('🚨 重置 BroTrip\n\n會清掉：\n• Service Worker (拿最新 code)\n• 登入狀態 (要重登)\n• UI 偏好 (主題/當前 trip)\n\n保留：\n• 暱稱、日記、支出等本地快取 (避免剛改的東西消失)\n\n確定？')) return;
+    this.toast('重置中...');
+    // SW caches (code)
+    if ('caches' in window) {
+      try {
+        const names = await caches.keys();
+        await Promise.all(names.map(n => caches.delete(n)));
+      } catch {}
+    }
+    // 只清 非 cache 的 brotrip_* keys（保留 brotrip_cache_v*_*）
+    try {
+      const cachePrefix = (typeof Cache !== 'undefined') ? Cache.PREFIX : 'brotrip_cache_';
+      Object.keys(localStorage).forEach(k => {
+        if (k.startsWith('brotrip_') && !k.startsWith(cachePrefix) && !k.startsWith('brotrip_cache_')) {
+          localStorage.removeItem(k);
+        }
+      });
+    } catch {}
+    // Unregister SW
+    if ('serviceWorker' in navigator) {
+      try {
+        const regs = await navigator.serviceWorker.getRegistrations();
+        await Promise.all(regs.map(r => r.unregister()));
+      } catch {}
+    }
+    // Revoke OAuth token
+    try { Auth.logout(); } catch {}
+    setTimeout(() => {
+      window.location.href = window.location.pathname + '?t=' + Date.now();
+    }, 600);
+  },
+
+  async checkUpdate() {
+    this.toast('檢查新版本中...');
+    if ('serviceWorker' in navigator) {
+      try {
+        const regs = await navigator.serviceWorker.getRegistrations();
+        await Promise.all(regs.map(r => r.update()));
+      } catch {}
+    }
+    if ('caches' in window) {
+      try {
+        const names = await caches.keys();
+        await Promise.all(names.map(n => caches.delete(n)));
+      } catch {}
+    }
+    // 不清資料 cache（Sheets API eventual consistency 風險）：
+    // 剛改的暱稱可能還沒 propagate 到 Sheet read。若這時清 cache + reload，
+    // Phase 2 fetch 回的是舊資料 → 本地剛改的東西就消失。
+    // 保留 cache + 靠 Nicknames.loadAll 的 merge by updated_at 自然保住本地最新狀態。
+    setTimeout(() => { window.location.href = window.location.pathname + '?t=' + Date.now(); }, 800);
+  },
+
+  async softRefresh(indicator) {
+    // M4.5: 沒群組時 pull-to-refresh 直接顯示提示，不要去打 Sheets API（會炸）
+    if (!Groups.active()) {
+      if (indicator) {
+        indicator.textContent = '請先建立或加入群組';
+        setTimeout(() => indicator.classList.remove('show'), 1500);
+      }
+      return;
+    }
+    try {
+      if (!Trips.current) await Trips.loadAll();
+      else await this.refreshAll();
+      if (indicator) {
+        indicator.textContent = '✅ 已更新';
+        setTimeout(() => indicator.classList.remove('show'), 800);
+      }
+    } catch (err) {
+      console.error(err);
+      if (indicator) {
+        indicator.textContent = '❌ 更新失敗';
+        setTimeout(() => indicator.classList.remove('show'), 1500);
+      }
+    }
+  },
+
+  async initOrRefreshMap() {
+    const mapEl = document.getElementById('trip-map');
+    const emptyEl = document.getElementById('trip-map-empty');
+    const diariesWithCoords = Diaries.list.map(d => {
+      if (d.location && d.location.startsWith('{')) {
+        try {
+          const info = JSON.parse(d.location);
+          if (info && info.lat && info.lng) return { ...info, diary: d };
+        } catch {}
+      }
+      return null;
+    }).filter(Boolean);
+
+    // 永遠載入並建立地圖（即使沒日記座標，也讓行程功能能用）
+    try { await Maps.load(); }
+    catch (err) {
+      mapEl.innerHTML = `<div class="list-empty">地圖載入失敗：${err.message}</div>`;
+      return;
+    }
+
+    mapEl.style.display = '';
+    // 沒日記座標+沒行程 → 顯示空態提示在地圖下方但仍建地圖
+    const hasItineraries = (typeof Itineraries !== 'undefined') && Itineraries.list.length > 0;
+    if (diariesWithCoords.length === 0 && !hasItineraries) {
+      emptyEl.classList.remove('hidden');
+    } else {
+      emptyEl.classList.add('hidden');
+    }
+
+    // 預設中心：第一個日記座標 → 第一個行程第一個點 → 台北 101 (fallback)
+    let defaultCenter = { lat: 25.0339, lng: 121.5645 };
+    if (diariesWithCoords.length > 0) {
+      defaultCenter = { lat: diariesWithCoords[0].lat, lng: diariesWithCoords[0].lng };
+    } else if (hasItineraries) {
+      const firstItin = Itineraries.list[0];
+      const wps = Itineraries.getWaypoints(firstItin);
+      if (wps.length > 0) defaultCenter = { lat: wps[0].lat, lng: wps[0].lng };
+    }
+
+    if (!this._map) {
+      this._map = new google.maps.Map(mapEl, {
+        zoom: 12,
+        center: defaultCenter,
+        mapTypeControl: false, streetViewControl: false, fullscreenControl: false,
+      });
+    } else {
+      // map 已存在但 viewport 改變（PWA resize / dark mode 切換）→ 觸發 resize 避免灰屏
+      google.maps.event.trigger(this._map, 'resize');
+    }
+    if (this._mapMarkers) this._mapMarkers.forEach(m => m.setMap(null));
+    this._mapMarkers = [];
+
+    // 沒日記座標時直接 return（不畫 markers，但 _map 已建立讓行程功能可用）
+    if (diariesWithCoords.length === 0) return;
+
+    let activeInfo = null;
+    const bounds = new google.maps.LatLngBounds();
+    diariesWithCoords.forEach(loc => {
+      const marker = new google.maps.Marker({
+        position: { lat: loc.lat, lng: loc.lng },
+        map: this._map,
+        title: loc.name,
+      });
+      // v3.5.2: InfoWindow 強制深色文字（白底）— 避免繼承 dark mode 變看不見
+      const content = `
+        <div style="max-width:240px; font-family:inherit; cursor:pointer; color:#1f2937; line-height:1.45;" onclick="App.openDiaryFromMap('${loc.diary.id}')">
+          <div style="font-weight:700; font-size:14px; color:#111827;">${this.escapeHtml(loc.diary.mood || '')} ${this.escapeHtml(this.nameOf(loc.diary.author))}</div>
+          <div style="font-size:12px; color:#4b5563; margin-top:2px;">${loc.diary.date} · ${this.escapeHtml(loc.name)}</div>
+          <div style="margin-top:6px; font-size:13px; white-space:pre-wrap; color:#1f2937;">${this.escapeHtml((loc.diary.content || '').slice(0, 200))}${(loc.diary.content || '').length > 200 ? '...' : ''}</div>
+          <div style="margin-top:8px; color:#1d4ed8; font-size:12px; font-weight:700;">點此查看完整日記 →</div>
+        </div>
+      `;
+      const info = new google.maps.InfoWindow({ content });
+      marker.addListener('click', () => {
+        if (activeInfo) activeInfo.close();
+        info.open(this._map, marker);
+        activeInfo = info;
+      });
+      bounds.extend({ lat: loc.lat, lng: loc.lng });
+      this._mapMarkers.push(marker);
+    });
+
+    if (diariesWithCoords.length > 1) this._map.fitBounds(bounds);
+    else {
+      this._map.setCenter({ lat: diariesWithCoords[0].lat, lng: diariesWithCoords[0].lng });
+      this._map.setZoom(14);
+    }
+
+    // v3.2.0 M6.1: 加 wishlist markers（toggle on 時）
+    this.renderWishlistMarkers();
+  },
+
+  // v3.2.0 M6.1
+  _wishMarkers: null,
+  _showWishMarkers: true,
+  _hiddenWishTypes: null,   // v3.9.1: 被分類篩選關掉的類型 Set
+
+  // v3.9.1: 產生「分類顏色」的地圖大頭針 icon（SVG data URI）
+  //   白色內圈讓中間的 emoji label 清楚；anchor 在針尖、labelOrigin 在圓心
+  _wishPinIcon(color) {
+    const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="34" height="44" viewBox="0 0 34 44">'
+      + '<path d="M17 1C8.2 1 1 8 1 16.6 1 27.6 17 43 17 43s16-15.4 16-26.4C33 8 25.8 1 17 1z" fill="' + color + '" stroke="#ffffff" stroke-width="2"/>'
+      + '<circle cx="17" cy="16" r="9.5" fill="#ffffff"/></svg>';
+    return {
+      url: 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(svg),
+      scaledSize: new google.maps.Size(34, 44),
+      anchor: new google.maps.Point(17, 44),
+      labelOrigin: new google.maps.Point(17, 16),
+    };
+  },
+
+  // v3.9.1: 渲染地圖上方「分類篩選列」（同時當圖例 — 顏色對應大頭針）
+  //   只列地圖上實際有的分類；點一下 toggle 顯示/隱藏該類，方便找特定類型
+  _renderWishTypeFilter() {
+    const el = document.getElementById('wish-type-filter');
+    if (!el || typeof Wishlist === 'undefined') return;
+    const items = (typeof Wishlist.getMappable === 'function') ? Wishlist.getMappable() : [];
+    // 沒開願望標記 / 沒地點 / 只有一種分類 → 不需要篩選列
+    if (!this._showWishMarkers || items.length === 0) {
+      el.innerHTML = ''; el.style.display = 'none'; return;
+    }
+    const counts = {};
+    items.forEach(w => { const t = w.type || 'other'; counts[t] = (counts[t] || 0) + 1; });
+    const types = Wishlist.TYPES.filter(t => counts[t]);
+    if (types.length <= 1) { el.innerHTML = ''; el.style.display = 'none'; return; }
+    if (!this._hiddenWishTypes) this._hiddenWishTypes = new Set();
+    el.style.display = 'flex';
+    el.innerHTML = types.map(t => {
+      const active = !this._hiddenWishTypes.has(t);
+      const color = (Wishlist.TYPE_COLOR && Wishlist.TYPE_COLOR[t]) || '#6b7280';
+      // v3.9.3: chip 只顯示 emoji + 數字（不顯示中文，避免換行）；中文放 title / aria-label
+      const emoji = (Wishlist.TYPE_EMOJI && Wishlist.TYPE_EMOJI[t]) || '📍';
+      const label = (Wishlist.TYPE_LABEL && Wishlist.TYPE_LABEL[t]) || t;
+      return '<button type="button" class="wish-type-chip ' + (active ? 'active' : '') +
+        '" data-type="' + t + '" style="--chip-color:' + color + ';" title="' + this.escapeAttr(label) + '" aria-label="' + this.escapeAttr(label) + '">' +
+        emoji + ' <span class="wish-type-count">' + counts[t] + '</span></button>';
+    }).join('');
+  },
+
+  renderWishlistMarkers() {
+    this._renderWishTypeFilter();   // 同步分類篩選列（自己處理顯示/隱藏）
+    if (this._wishMarkers) this._wishMarkers.forEach(m => m.setMap(null));
+    this._wishMarkers = [];
+    if (!this._showWishMarkers) return;
+    if (!this._map || typeof Wishlist === 'undefined') return;
+
+    const items = Wishlist.getMappable();
+    items.forEach(w => {
+      const lat = parseFloat(w.lat);
+      const lng = parseFloat(w.lng);
+      if (isNaN(lat) || isNaN(lng)) return;
+
+      // v3.9.1: 改用「分類」決定顏色 + emoji（餐廳/景點…一眼分辨，比較好找）；
+      //   狀態改用透明度表示：visited 去過了 → 淡掉；planned/promoted → 清楚。
+      //   被分類篩選關掉的類型 → 不畫。
+      if (this._hiddenWishTypes && this._hiddenWishTypes.has(w.type || 'other')) return;
+      const color = (Wishlist.TYPE_COLOR && (Wishlist.TYPE_COLOR[w.type] || Wishlist.TYPE_COLOR.other)) || '#6b7280';
+      const emoji = (Wishlist.TYPE_EMOJI && Wishlist.TYPE_EMOJI[w.type]) || '📍';
+      const opacity = (w.status === 'visited') ? 0.5 : 1.0;
+
+      const marker = new google.maps.Marker({
+        position: { lat, lng },
+        map: this._map,
+        title: w.name,
+        icon: this._wishPinIcon(color),
+        label: { text: emoji, fontSize: '14px' },
+        opacity,
+      });
+
+      const typeLabel = (Wishlist.TYPE_LABEL && Wishlist.TYPE_LABEL[w.type]) || '📍';
+      const addedBy = this.nameOf(w.added_by) || (w.added_by || '').split('@')[0];
+      const statusText = w.status === 'visited' ? '✓ 已去過' :
+                         w.status === 'promoted' ? '📌 已排進行程' :
+                         '🌱 候選中';
+      // v3.5.2: InfoWindow 強制白底深色，所有文字 explicit 設色 — 避免繼承 dark mode 變看不見
+      // 「在 Google Maps 開啟」按鈕用 place_id 優先、lat/lng fallback
+      const gmUrl = this._buildGoogleMapsUrl(w);
+      const content = `
+        <div style="max-width:260px; font-family:inherit; color:#1f2937; line-height:1.45;">
+          <div style="font-weight:700; font-size:14px; color:#111827;">${typeLabel} ${this.escapeHtml(w.name)}</div>
+          ${w.address ? `<div style="font-size:12px; color:#4b5563; margin-top:3px;">${this.escapeHtml(w.address)}</div>` : ''}
+          ${w.source_note ? `<div style="font-size:12px; color:#1d4ed8; margin-top:6px; font-weight:500;">💬 ${this.escapeHtml(w.source_note)}</div>` : ''}
+          <div style="font-size:11px; color:#6b7280; margin-top:6px;">${this.escapeHtml(addedBy)} 加的 · <span style="color:#374151; font-weight:500;">${statusText}</span></div>
+          <div style="margin-top:10px; display:flex; flex-wrap:wrap; gap:6px;">
+            ${gmUrl ? `
+              <a href="${gmUrl}" target="_blank" rel="noopener"
+                 style="padding:5px 10px; background:#f3f4f6; color:#1f2937; text-decoration:none; border:1px solid #d1d5db; border-radius:6px; cursor:pointer; font-size:12px; font-weight:500;">
+                🗺️ Google Maps
+              </a>` : ''}
+            ${w.status === 'planned' ? `
+              <button onclick="App._wishMarkerAction('visited','${w.id}')"
+                      style="padding:5px 10px; background:#3b82f6; color:#fff; border:none; border-radius:6px; cursor:pointer; font-size:12px; font-weight:500;">
+                ✓ 已去過
+              </button>
+              <button onclick="App._wishMarkerAction('promote','${w.id}')"
+                      style="padding:5px 10px; background:#10b981; color:#fff; border:none; border-radius:6px; cursor:pointer; font-size:12px; font-weight:500;">
+                ➕ 進行程
+              </button>
+            ` : ''}
+          </div>
+        </div>
+      `;
+      const info = new google.maps.InfoWindow({ content });
+      marker.addListener('click', () => info.open(this._map, marker));
+      this._wishMarkers.push(marker);
+    });
+  },
+
+  // InfoWindow 的 onclick 動作 → 跑 wish action → re-render markers
+  async _wishMarkerAction(action, id) {
+    try {
+      await this._handleWishAction(action, id);
+      this.renderWishlistMarkers();
+    } catch (err) {
+      console.error('wish marker action err:', err);
+    }
+  },
+
+  openDiaryFromMap(id) {
+    this.switchTab('diaries');
+    setTimeout(() => {
+      const target = document.querySelector(`.diary-item[data-diary-id="${id}"]`);
+      if (target) {
+        target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        target.classList.add('highlight-flash');
+        setTimeout(() => target.classList.remove('highlight-flash'), 2500);
+      }
+    }, 150);
+  },
+
+  // ===== 預計行程 =====
+
+  renderItineraries() {
+    const el = document.getElementById('itinerary-list');
+    if (!el || typeof Itineraries === 'undefined') return;
+
+    // v3.8.0: 非 trip member 隱藏「+ 新增」行程按鈕 (沒去的人不規劃路線)
+    const isMember = this.isCurrentTripMember();
+    const newItinBtn = document.getElementById('new-itinerary-btn');
+    if (newItinBtn) newItinBtn.style.display = isMember ? '' : 'none';
+
+    const list = Itineraries.list;
+    if (list.length === 0) {
+      el.innerHTML = isMember
+        ? '<div style="text-align:center; color:var(--text-light); padding:14px; font-size:13px;">還沒有行程，點 + 新增規劃一條路線</div>'
+        : '<div style="text-align:center; color:var(--text-light); padding:14px; font-size:13px;">還沒有行程</div>';
+      return;
+    }
+    el.innerHTML = list.map(itin => {
+      const wps = Itineraries.getWaypoints(itin);
+      const modeIcon = { DRIVING: '🚗', TRANSIT: '🚆', WALKING: '🚶', BICYCLING: '🚴' }[itin.travel_mode] || '🚗';
+      const isMine = Auth.user && itin.author === Auth.user.email;
+      const isActive = this._activeItineraryId === itin.id;
+      const summary = wps.map(w => w.name).slice(0, 3).join(' → ') + (wps.length > 3 ? ` → ...(+${wps.length - 3})` : '');
+      // active 時顯示 ● 點 + 「取消」按鈕；點 item 本身也能 toggle 取消
+      return `
+        <div class="itinerary-item ${isActive ? 'active' : ''}" data-id="${this.escapeAttr(itin.id)}">
+          <div class="itinerary-info">
+            <div class="itinerary-name">${isActive ? '<span class="itinerary-active-dot">●</span> ' : ''}${modeIcon} ${this.escapeHtml(itin.name)}</div>
+            <div class="itinerary-meta">${this.escapeHtml(this.nameOf(itin.author))} · ${wps.length} 個地點 · ${this.escapeHtml(summary)}</div>
+          </div>
+          <div class="itinerary-actions">
+            ${isActive ? `<button data-action="clear-itinerary" type="button" title="取消選擇，回到日記模式" class="itinerary-clear-btn">✕ 取消</button>` : ''}
+            <button data-action="open-in-gmaps" data-id="${this.escapeAttr(itin.id)}" type="button" title="用 Google Maps 開（含完整導航）">🗺</button>
+            ${isMine ? `<button data-action="delete-itinerary" data-id="${this.escapeAttr(itin.id)}" type="button" title="刪除">🗑</button>` : ''}
+          </div>
+        </div>
+      `;
+    }).join('');
+
+    // 綁定捲動偵測（只綁一次），並更新底部「下面還有」提示
+    if (!this._itinScrollBound) {
+      el.addEventListener('scroll', () => this._updateItineraryScrollHint());
+      this._itinScrollBound = true;
+    }
+    this._updateItineraryScrollHint();
+  },
+
+  // 偵測預計行程清單是否還有沒看到的項目（沒捲到底）→ 顯示底部下拉提示。
+  // 解決「行程/願望加進去了，但清單要往下捲才看得到，大家以為沒進去」的問題。
+  _updateItineraryScrollHint() {
+    const el = document.getElementById('itinerary-list');
+    const wrap = el && el.closest('.itinerary-scroll-wrap');
+    if (!el || !wrap) return;
+    const hasMore = el.scrollHeight - el.scrollTop - el.clientHeight > 8;
+    wrap.classList.toggle('has-more', hasMore);
+  },
+
+  // 把日期 input（YYYY-MM-DD）轉成單行雙位數文字（2026/05/30）顯示在自訂欄位上。
+  // input.value 一律是補零的 YYYY-MM-DD，拆開就有雙位數月份/日期。
+  _syncDateFieldLabel(which) {
+    const input = document.getElementById('filter-date-' + which);
+    const text = document.getElementById('filter-date-' + which + '-text');
+    if (!input || !text) return;
+    if (input.value) {
+      const p = input.value.split('-');
+      text.textContent = p[0] + '/' + p[1] + '/' + p[2];
+      text.classList.remove('placeholder');
+    } else {
+      text.textContent = (which === 'from') ? '起始' : '結束';
+      text.classList.add('placeholder');
+    }
+  },
+
+  openNewItineraryModal() {
+    if (!Trips.current) { this.toast('先選一個 trip'); return; }
+    // v3.8.0: 非 trip member 不能規劃行程 (safety net — button 已隱藏)
+    if (!this.isCurrentTripMember()) {
+      this.toast('👁 你不是這個 trip 的成員，不能加行程');
+      return;
+    }
+    const form = document.getElementById('itinerary-form');
+    form.reset();
+    this._itineraryWaypoints = [
+      { name: '', address: '', lat: null, lng: null, place_id: '' },
+      { name: '', address: '', lat: null, lng: null, place_id: '' },
+    ];
+    this.renderWaypointRows();
+    this.openModal('modal-itinerary');
+  },
+
+  // 把當前 DOM input 的值同步回 _itineraryWaypoints[i].name（避免重排時丟字）
+  _syncWaypointInputs() {
+    const inputs = document.querySelectorAll('#waypoint-rows .waypoint-input');
+    inputs.forEach((input, i) => {
+      if (this._itineraryWaypoints[i]) {
+        this._itineraryWaypoints[i].name = input.value;
+      }
+    });
+  },
+
+  renderWaypointRows() {
+    const container = document.getElementById('waypoint-rows');
+    const wps = this._itineraryWaypoints;
+    container.innerHTML = wps.map((w, i) => `
+      <div class="waypoint-row" data-idx="${i}">
+        <span class="waypoint-num">${i + 1}</span>
+        <input type="text" class="waypoint-input" placeholder="搜尋地點..." value="${this.escapeAttr(w.name)}" autocomplete="off">
+        ${i > 0 ? `<button type="button" class="waypoint-up" data-action="wp-up" data-idx="${i}" title="往上">↑</button>` : '<span style="width:24px;"></span>'}
+        ${i < wps.length - 1 ? `<button type="button" class="waypoint-down" data-action="wp-down" data-idx="${i}" title="往下">↓</button>` : '<span style="width:24px;"></span>'}
+        ${wps.length > 2 ? `<button type="button" class="waypoint-remove" data-action="wp-remove" data-idx="${i}" title="移除">✕</button>` : ''}
+      </div>
+    `).join('');
+
+    // 每個 input 綁 Places Autocomplete
+    container.querySelectorAll('.waypoint-input').forEach((input, i) => {
+      Maps.attachAutocomplete(input, (place) => {
+        this._itineraryWaypoints[i] = place;
+        input.value = place.name;
+      });
+    });
+  },
+
+  async handleItinerarySubmit(e) {
+    e.preventDefault();
+    const form = e.target;
+    const name = form.elements['name'].value.trim();
+    const travelMode = form.elements['travel_mode'].value;
+    // 過濾掉沒選 place（lat 為 null）的 waypoints
+    const wps = this._itineraryWaypoints.filter(w => w.lat && w.lng);
+    if (wps.length < 2) { this.toast('至少要 2 個有效地點'); return; }
+    const submitBtn = form.querySelector('[type="submit"]');
+    submitBtn.disabled = true;
+    submitBtn.textContent = '儲存中...';
+    try {
+      const itin = await Itineraries.create({ name, waypoints: wps, travel_mode: travelMode });
+      this.toast('✅ 行程已新增');
+      this.closeModal('modal-itinerary');
+      this.renderItineraries();
+      // 自動載入到地圖
+      this.showItineraryOnMap(itin.id);
+    } catch (err) {
+      console.error(err);
+      this.toast('新增失敗：' + err.message);
+    } finally {
+      submitBtn.disabled = false;
+      submitBtn.textContent = '儲存行程';
+    }
+  },
+
+  async deleteItinerary(id) {
+    const itin = Itineraries.list.find(x => x.id === id);
+    if (!itin) return;
+    if (!confirm(`刪除行程「${itin.name}」？`)) return;
+    try {
+      await Itineraries.delete(id);
+      this.toast('✅ 已刪除');
+      if (this._activeItineraryId === id) {
+        this._activeItineraryId = null;
+        this.clearItineraryRoute();
+      }
+      this.renderItineraries();
+    } catch (err) {
+      this.toast('刪除失敗：' + err.message);
+    }
+  },
+
+  clearItineraryRoute() {
+    if (this._itineraryRenderer) {
+      this._itineraryRenderer.setMap(null);
+      this._itineraryRenderer = null;
+    }
+  },
+
+  // 取消行程選擇 → 清路線 + 重新顯示日記 markers
+  async clearItinerarySelection() {
+    this.clearItineraryRoute();
+    this._activeItineraryId = null;
+    // 重新跑 initOrRefreshMap 把日記 markers 畫回來
+    await this.initOrRefreshMap();
+    this.renderItineraries();
+    this.toast('已取消行程選擇，回到日記模式');
+  },
+
+  // 點行程 → 切到地圖顯示路線。如果點到當前 active 行程則 toggle 取消
+  async showItineraryOnMap(id) {
+    const itin = Itineraries.list.find(x => x.id === id);
+    if (!itin) return;
+
+    // Toggle：點當前 active 那個 → 取消選擇，回到日記 markers 模式
+    if (this._activeItineraryId === id) {
+      await this.clearItinerarySelection();
+      return;
+    }
+
+    const wps = Itineraries.getWaypoints(itin);
+    // v3.9.2: 0 個地點才擋；1 個地點 → 顯示單一標記（不畫路線）。
+    //   修正「用願望建的新行程只有 1 個點 → 之前被擋住顯示不出來」的 bug。
+    if (wps.length === 0) { this.toast('這個行程還沒有地點'); return; }
+
+    // 切到地圖 tab + await 等地圖完全就緒（之前 switchTab 是 sync 不 await initOrRefreshMap → _map 還沒建好就 return）
+    this.switchTab('map');
+    await this.initOrRefreshMap();
+    if (!this._map) { this.toast('地圖尚未就緒，請再試一次'); return; }
+
+    // 清掉日記 markers（讓畫面只剩行程路線+其標記，比較清楚）
+    if (this._mapMarkers) {
+      this._mapMarkers.forEach(m => m.setMap(null));
+      this._mapMarkers = [];
+    }
+    this.clearItineraryRoute();
+
+    // v3.9.2: 只有 1 個地點 → 沒有路線可算，直接放單一標記 + 置中（reuse fallback）
+    if (wps.length === 1) {
+      this._itineraryRenderer = this._renderItineraryFallback(wps, itin.name);
+      this._activeItineraryId = id;
+      this.toast(`📍 ${itin.name}（單一地點，再加一個就能規劃路線）`, 5000);
+      this.renderItineraries();
+      return;
+    }
+
+    const service = new google.maps.DirectionsService();
+    const renderer = new google.maps.DirectionsRenderer({
+      map: this._map,
+      suppressMarkers: false,
+      polylineOptions: { strokeColor: '#3b82f6', strokeWeight: 6, strokeOpacity: 0.85 },
+    });
+    this._itineraryRenderer = renderer;
+    this._activeItineraryId = id;
+
+    const origin = { lat: wps[0].lat, lng: wps[0].lng };
+    const destination = { lat: wps[wps.length - 1].lat, lng: wps[wps.length - 1].lng };
+    const middleWps = wps.slice(1, -1).map(w => ({
+      location: new google.maps.LatLng(w.lat, w.lng),
+      stopover: true,
+    }));
+
+    service.route({
+      origin,
+      destination,
+      waypoints: middleWps,
+      travelMode: google.maps.TravelMode[itin.travel_mode] || google.maps.TravelMode.DRIVING,
+      optimizeWaypoints: false,
+    }, (result, status) => {
+      if (status === 'OK') {
+        renderer.setDirections(result);
+        // 算總時間/距離 → toast 顯示
+        let totalDist = 0, totalDur = 0;
+        result.routes[0].legs.forEach(leg => {
+          totalDist += leg.distance.value;
+          totalDur += leg.duration.value;
+        });
+        const km = (totalDist / 1000).toFixed(1);
+        const mins = Math.round(totalDur / 60);
+        const dur = mins >= 60 ? `${Math.floor(mins / 60)} 小時 ${mins % 60} 分` : `${mins} 分鐘`;
+        this.toast(`📍 ${itin.name}：${km} 公里 · 約 ${dur}`, 5000);
+        this.renderItineraries(); // 更新 active 樣式
+      } else {
+        // 常見錯誤：TRANSIT 在台灣的小範圍可能 ZERO_RESULTS、
+        // API key 沒開 Directions API 會 REQUEST_DENIED (要去 Google Cloud Console 啟用) 等
+        // → fallback：自己畫直線 + numbered markers 至少讓用戶看到地點
+        console.warn('Directions failed:', status, '— fallback to manual markers + Google Maps deep link. If REQUEST_DENIED, enable Directions API in Google Cloud Console.');
+        renderer.setMap(null);
+        this._itineraryRenderer = this._renderItineraryFallback(wps, itin.name);
+        this.toast('請按 🗺 用 Google Maps 看完整路線', 5000);
+        this.renderItineraries();
+      }
+    });
+  },
+
+  // 路線算不出來時的降級顯示：手動畫 markers + 連線 + fitBounds
+  _renderItineraryFallback(wps, name) {
+    const markers = [];
+    const path = [];
+    const bounds = new google.maps.LatLngBounds();
+    wps.forEach((w, i) => {
+      const pos = { lat: w.lat, lng: w.lng };
+      const marker = new google.maps.Marker({
+        position: pos,
+        map: this._map,
+        // 單一地點不標號碼（沒有順序意義），多地點才標 1/2/3…
+        label: wps.length > 1 ? { text: String(i + 1), color: 'white', fontWeight: 'bold' } : undefined,
+        title: wps.length > 1 ? `${i + 1}. ${w.name}` : w.name,
+      });
+      markers.push(marker);
+      path.push(pos);
+      bounds.extend(pos);
+    });
+    // v3.9.2: 只有 1 點 → polyline 無意義、fitBounds 會爆縮到最大；改置中 + 固定 zoom
+    let polyline = null;
+    if (wps.length > 1) {
+      polyline = new google.maps.Polyline({
+        path,
+        strokeColor: '#3b82f6',
+        strokeWeight: 4,
+        strokeOpacity: 0.7,
+        map: this._map,
+      });
+      this._map.fitBounds(bounds, { top: 50, bottom: 50, left: 50, right: 50 });
+    } else {
+      this._map.setCenter(path[0]);
+      this._map.setZoom(15);
+    }
+    // 回傳 fake renderer：setMap(null) 時清掉 markers + polyline
+    return {
+      setMap(map) {
+        if (map === null) {
+          markers.forEach(m => m.setMap(null));
+          polyline.setMap(null);
+        }
+      },
+      setDirections() {},
+    };
+  },
+
+  // 用 Google Maps 開啟行程（手機跳 app、桌面跳 web）
+  openItineraryInGoogleMaps(id) {
+    const itin = Itineraries.list.find(x => x.id === id);
+    if (!itin) return;
+    const wps = Itineraries.getWaypoints(itin);
+    if (wps.length === 0) { this.toast('這個行程還沒有地點'); return; }
+    // v3.9.2: 只有 1 個地點 → 沒有「路線」，改用單一地點搜尋 URL 開啟
+    if (wps.length === 1) {
+      const url = this._buildGoogleMapsUrl(wps[0]);
+      if (url) window.open(url, '_blank');
+      return;
+    }
+    // Google Maps 通用 URL（dir/?api=1）— 自動跳手機 app 或開 web
+    const modeMap = { DRIVING: 'driving', TRANSIT: 'transit', WALKING: 'walking', BICYCLING: 'bicycling' };
+    const params = new URLSearchParams({
+      api: '1',
+      origin: `${wps[0].lat},${wps[0].lng}`,
+      destination: `${wps[wps.length - 1].lat},${wps[wps.length - 1].lng}`,
+      travelmode: modeMap[itin.travel_mode] || 'driving',
+    });
+    // 中途點（最多 9 個 free，用 | 分隔）
+    if (wps.length > 2) {
+      const middle = wps.slice(1, -1).map(w => `${w.lat},${w.lng}`).join('|');
+      params.set('waypoints', middle);
+    }
+    const url = `https://www.google.com/maps/dir/?${params.toString()}`;
+    window.open(url, '_blank');
+  },
+
+  openLightbox(photoIds, startIdx) {
+    this._lightboxPhotos = photoIds;
+    this._lightboxIndex = startIdx;
+    this.showLightboxPhoto();
+    document.getElementById('photo-lightbox').showModal();
+    // lightbox 期間允許 pinch zoom 看照片細節
+    this._setViewportZoom(true);
+  },
+
+  // 舊日記（v1.3.0 之前）沒記 folder URL → 點 📁 時 fallback 連到該 trip 整個照片資料夾
+  async openTripPhotosFolder(diaryId) {
+    const d = Diaries.allList.find(x => x.id === diaryId);
+    if (!d) { this.toast('找不到該日記'); return; }
+    // 同步開 placeholder tab 避免 popup blocker（await 後再 window.open 會被擋）
+    const w = window.open('about:blank', '_blank');
+    try {
+      // Phase 2: photos folder 從 active group 取
+      const tripFolderId = await API.ensureFolder(d.trip_id, Groups.active().photosFolderId);
+      const url = `https://drive.google.com/drive/folders/${tripFolderId}`;
+      if (w) w.location = url;
+      else window.location.href = url; // 用戶擋彈出視窗 → 直接跳當前頁
+    } catch (err) {
+      if (w) w.close();
+      console.error(err);
+      this.toast('開啟資料夾失敗：' + err.message);
+    }
+  },
+
+  // 動態切換 viewport：lightbox 開啟允許放大、平常維持禁止避免 input focus auto-zoom
+  _setViewportZoom(allow) {
+    const meta = document.querySelector('meta[name="viewport"]');
+    if (!meta) return;
+    if (allow) {
+      meta.setAttribute('content', 'width=device-width, initial-scale=1.0, viewport-fit=cover');
+    } else {
+      meta.setAttribute('content', 'width=device-width, initial-scale=1.0, maximum-scale=1.0, viewport-fit=cover');
+    }
+  },
+
+  showLightboxPhoto() {
+    if (!this._lightboxPhotos.length) return;
+    const id = this._lightboxPhotos[this._lightboxIndex];
+    const li = document.getElementById('lightbox-img');
+    li.dataset.photoId = id;
+    delete li.dataset.fallbackTried;
+    // size=0 → lh3 原始檔（=s0）。原因：lh3 大尺寸縮圖（≥800px）會把 EXIF 方向標籤
+    //   拔掉又不套用旋轉，手機側拍照（EXIF≠1）會躺著；只有原始檔保有方向碼，
+    //   讓瀏覽器靠 image-orientation:from-image 自動轉正。lightbox 本來就是點開看大圖 +
+    //   pinch zoom 看細節，用原檔畫質也最好（格子縮圖才用 =s400 求快）。
+    li.src = API.driveImageUrl(id, 0);
+    document.getElementById('lightbox-prev').style.visibility = this._lightboxIndex > 0 ? '' : 'hidden';
+    document.getElementById('lightbox-next').style.visibility = this._lightboxIndex < this._lightboxPhotos.length - 1 ? '' : 'hidden';
+    const counter = document.getElementById('lightbox-counter');
+    if (this._lightboxPhotos.length > 1) {
+      counter.textContent = `${this._lightboxIndex + 1} / ${this._lightboxPhotos.length}`;
+      counter.style.display = '';
+    } else counter.style.display = 'none';
+  },
+
+  // ⭐ v2.0.2 token 失效時的降級版：只顯示 cache，不打 API（避免 401 一直噴）
+  async _showMainAppCacheOnly() {
+    document.getElementById('login-screen').classList.add('hidden');
+    document.getElementById('app').classList.remove('hidden');
+    const img = document.getElementById('user-avatar');
+    if (Auth.user && Auth.user.picture) { img.src = Auth.user.picture; img.style.display = ''; }
+    else img.style.display = 'none';
+    const hasCache = Trips.loadFromCache();
+    if (hasCache && Trips.current) {
+      Members.loadFromCache();
+      Nicknames.loadFromCache();
+      Expenses.loadFromCache();
+      Diaries.loadFromCache();
+      Comments.loadFromCache();
+      if (typeof Reactions !== 'undefined') Reactions.loadFromCache();
+      Notifications.loadFromCache();
+      if (typeof Itineraries !== 'undefined') Itineraries.loadFromCache();
+      if (typeof Settlements !== 'undefined') Settlements.loadFromCache();
+      this.renderAll();
+      this.updateNotifBadge();
+    }
+  },
+
+  async showMainApp() {
+    document.getElementById('login-screen').classList.add('hidden');
+    document.getElementById('app').classList.remove('hidden');
+
+    const img = document.getElementById('user-avatar');
+    if (Auth.user && Auth.user.picture) { img.src = Auth.user.picture; img.style.display = ''; }
+    else img.style.display = 'none';
+
+    // Phase 1: cache 瞬間渲染
+    const hasCache = Trips.loadFromCache();
+    if (hasCache && Trips.current) {
+      Members.loadFromCache();
+      Nicknames.loadFromCache();
+      Expenses.loadFromCache();
+      Diaries.loadFromCache();
+      Comments.loadFromCache();
+      if (typeof Reactions !== 'undefined') Reactions.loadFromCache();
+      Notifications.loadFromCache();
+      if (typeof Itineraries !== 'undefined') Itineraries.loadFromCache();
+      if (typeof Settlements !== 'undefined') Settlements.loadFromCache();
+      this.renderAll();
+      this.updateNotifBadge();
+    }
+
+    // Phase 2: 背景同步
+    try {
+      // M4.3: 清掉舊的 _lastError（避免上次 session 的 stale error 留在 debug）
+      this._lastError = null;
+      await this.ensureMemberRegistered();
+      // M4.2: 平行載入 Trips + Members
+      //   Members 一定要在 openNewTripModal 之前載入，否則新 trip 成員 checkbox 會空白
+      await Promise.all([Trips.loadAll(), Members.loadAll()]);
+      if (Trips.list.length === 0) {
+        this.toast('還沒有任何 trip，先建一個吧');
+        this.openNewTripModal();
+        return;
+      }
+      await this.refreshAll();
+    } catch (err) {
+      console.error('showMainApp Phase 2 failed:', err);
+      const msg = err.message || '未知錯誤';
+      this._lastError = msg;
+
+      // M4 fix: 404 (sheet 不存在) / 403 (沒權限) 都代表「群組壞掉了」
+      //   → 把壞掉的群組移除，回到無群組畫面讓用戶重建/重加入
+      const isBrokenGroup =
+        msg.includes('404') ||
+        msg.includes('not found') ||
+        msg.includes('Requested entity was not found') ||
+        msg.includes('403') ||
+        msg.includes('Forbidden') ||
+        msg.includes('permission');
+
+      if (isBrokenGroup && Groups.active()) {
+        const broken = Groups.active();
+        console.warn(`Group "${broken.name}" inaccessible, removing from list`);
+        Groups.remove(broken.groupId);
+        // 切到下一個群組（如果還有的話）reload；否則進無群組畫面
+        if (Groups.list.length > 0) {
+          this.toast(`群組「${broken.name}」無法存取（Drive 被刪 或 無權限），切到下一個群組`);
+          setTimeout(() => location.reload(), 1500);
+        } else {
+          this.toast(`群組「${broken.name}」無法存取，請重新建立或加入新群組`);
+          this.showNoGroupScreen();
+        }
+        return;
+      }
+
+      if (msg.includes('401') || msg.includes('Unauthorized')) {
+        // ⭐ v2.0.2 不再叫用戶重置，改用輕量續登 banner
+        this.showReauthBanner();
+      } else {
+        this.showErrorBanner('⚠️ 載入失敗：' + msg.slice(0, 150));
+      }
+    }
+  },
+
+  // 持久錯誤橫幅（toast 會消失，banner 留著）
+  showErrorBanner(msg) {
+    let banner = document.getElementById('global-error-banner');
+    if (!banner) {
+      banner = document.createElement('div');
+      banner.id = 'global-error-banner';
+      banner.className = 'global-error-banner';
+      document.body.insertBefore(banner, document.body.firstChild);
+    }
+    banner.innerHTML = `<div>${msg}</div><button type="button" id="error-banner-close" aria-label="關閉">✕</button>`;
+    banner.classList.remove('hidden');
+    const closeBtn = document.getElementById('error-banner-close');
+    if (closeBtn) {
+      closeBtn.addEventListener('click', () => banner.classList.add('hidden'));
+    }
+  },
+
+  // ⭐ v2.0.2 session 過期橫幅（取代全螢幕登入畫面 — 用戶看到 cache + 按一下續登）
+  showReauthBanner() {
+    if (document.getElementById('reauth-banner')) return;
+    const banner = document.createElement('div');
+    banner.id = 'reauth-banner';
+    banner.className = 'reauth-banner';
+    const name = Auth.user ? (Auth.user.name || Auth.user.email.split('@')[0]) : '你';
+    // v3.1.0: 加一句安心提示 — PWA 第一次登入或 session 過期時不會丟失群組
+    // v3.9.13: iPhone 主畫面 PWA 因 Apple 隱私限制，token 過期無法自動續期 → 偶爾要手動重連。
+    //   文案去焦慮（不講「session 過期」這種像出錯的詞），並對 PWA 明講「正常現象、資料不會不見」
+    const isPwa = this._isPWA && this._isPWA();
+    const extraHint = isPwa
+      ? '<div style="font-size:12px; opacity:0.9; margin-top:4px;">📱 加到主畫面的 App 偶爾要重連一下是正常的，你的資料都在雲端、不會不見</div>'
+      : '';
+    banner.innerHTML = `
+      <div>👋 歡迎回來 <strong>${this.escapeHtml(name)}</strong>！點一下重新連線就好，你的資料都在 ☁️${extraHint}</div>
+      <button type="button" id="reauth-btn">重新連線</button>
+    `;
+    document.body.insertBefore(banner, document.body.firstChild);
+    document.getElementById('reauth-btn').addEventListener('click', async () => {
+      const btn = document.getElementById('reauth-btn');
+      btn.disabled = true;
+      btn.textContent = '...';
+      try {
+        await Auth.login();
+        banner.remove();
+        this.toast('✅ 已重新連線，正在同步資料...');
+        // 重新跑 Phase 2 抓最新資料
+        try {
+          await this.ensureMemberRegistered();
+          await Trips.loadAll();
+          if (Trips.current) await this.refreshAll();
+        } catch (err) {
+          console.warn('post-reauth sync failed:', err);
+        }
+      } catch (err) {
+        console.error('reauth failed:', err);
+        btn.disabled = false;
+        btn.textContent = '重新連線';
+        this.toast('重新連線失敗：' + (err.message || err));
+      }
+    });
+  },
+
+  // 新版 SW 已啟用 → 提示用戶 reload（不強制 reload 避免打斷編輯）
+  showUpdateBanner() {
+    // 避免重複顯示（SW 一次更新有可能 fire 兩次）
+    if (document.getElementById('update-banner')) return;
+    const banner = document.createElement('div');
+    banner.id = 'update-banner';
+    banner.className = 'update-banner';
+    banner.innerHTML = `
+      <div>🆕 BroTrip 有新版！點此立刻使用最新功能</div>
+      <button type="button" id="update-reload-btn">重新整理</button>
+      <button type="button" id="update-dismiss-btn" aria-label="稍後">✕</button>
+    `;
+    document.body.insertBefore(banner, document.body.firstChild);
+    document.getElementById('update-reload-btn').addEventListener('click', () => {
+      window.location.reload();
+    });
+    document.getElementById('update-dismiss-btn').addEventListener('click', () => {
+      banner.remove();
+    });
+  },
+
+  async ensureMemberRegistered() {
+    try {
+      const rows = await API.getSheet('Members');
+      const members = API.rowsToObjects(rows);
+      const exists = members.some(m => m.email === Auth.user.email);
+      if (!exists) {
+        await API.appendRow('Members', [
+          Auth.user.email,
+          Auth.user.name || Auth.user.email.split('@')[0],
+          new Date().toISOString(),
+        ]);
+      }
+    } catch (err) { console.warn('Member register failed:', err); }
+  },
+
+  async refreshAll() {
+    if (!Trips.current) return;
+    // M4.3: 清掉舊的 _lastError
+    this._lastError = null;
+    await Promise.all([
+      Members.loadAll(),
+      Expenses.loadAll(), Diaries.loadAll(),
+      Nicknames.loadAll(), Comments.loadAll(),
+      Notifications.loadAll(),
+      typeof Itineraries !== 'undefined' ? Itineraries.loadAll() : Promise.resolve(),
+      typeof Settlements !== 'undefined' ? Settlements.loadAll() : Promise.resolve(),
+      typeof Wishlist !== 'undefined' ? Wishlist.loadAll() : Promise.resolve(),
+      typeof Reactions !== 'undefined' ? Reactions.loadAll() : Promise.resolve(),
+    ]);
+    this.renderAll();
+    this.updateNotifBadge();
+  },
+
+  renderAll() {
+    if (!Trips.current) return;
+    document.getElementById('trip-switch').textContent = `📍 ${Trips.current.name}`;
+    document.getElementById('trip-dates').textContent = `${Trips.current.start_date || ''} ~ ${Trips.current.end_date || ''}`;
+    this.renderSettlement();
+    this.renderExpenses();
+    this.renderDiaryFilters();
+    this.renderDiaries();
+    this.renderNicknamesUI();
+    this.renderItineraries();
+    this.renderWishlist();
+    this.updateDebugInfo();
+  },
+
+  // ===== Wishlist (v3.2.0 M6.1) =====
+
+  // 切到 wishlist tab 時呼叫：cache → render → 背景 fetch → re-render
+  async loadAndRenderWishlist() {
+    if (Wishlist.loadFromCache()) this.renderWishlist();
+    await Wishlist.loadAll();
+    this.renderWishlist();
+  },
+
+  // v3.5.0: filter / sort state (跨 render 保留)
+  _wishlistTypeFilter: 'all',
+  _wishlistAddedByFilter: 'all',  // 'all' | email
+  _wishlistSort: 'recent',         // 'recent' | 'distance' | 'name'
+  _wishlistDistanceMap: null,      // Map<wishId, meters> for current render
+
+  renderWishlist() {
+    const listEl = document.getElementById('wishlist-list');
+    const emptyEl = document.getElementById('wishlist-empty');
+    const tripHintEl = document.getElementById('wishlist-trip-hint');
+    const rejectedSection = document.getElementById('wishlist-rejected-section');
+    const rejectedListEl = document.getElementById('wishlist-rejected-list');
+    const rejectedCountEl = document.getElementById('wishlist-rejected-count');
+    if (!listEl) return;
+
+    if (tripHintEl) {
+      tripHintEl.textContent = Trips.current
+        ? `當前 trip：${Trips.current.name}（${Wishlist.list.length} 個 wish）`
+        : '請先建立或選擇一個 trip';
+    }
+
+    if (!Trips.current) {
+      listEl.innerHTML = '';
+      if (emptyEl) {
+        emptyEl.textContent = '請先建立或選擇一個 trip，wish 是綁在 trip 上的';
+        emptyEl.classList.remove('hidden');
+      }
+      if (rejectedSection) rejectedSection.classList.add('hidden');
+      return;
+    }
+
+    // 先 render added_by filter chips (動態 - 按當前 trip 有加 wish 的人)
+    this._renderAddedByFilterChips();
+
+    // Sync sort dropdown UI 跟 state
+    const sortSel = document.getElementById('wishlist-sort-select');
+    if (sortSel && sortSel.value !== this._wishlistSort) sortSel.value = this._wishlistSort;
+
+    // 套用兩層 filter
+    let filtered = Wishlist.filterByType(this._wishlistTypeFilter);
+    if (this._wishlistAddedByFilter !== 'all') {
+      filtered = filtered.filter(w => w.added_by === this._wishlistAddedByFilter);
+    }
+
+    // 套用 sort
+    filtered = this._sortWishlist(filtered);
+
+    // 分主列表 / 被否決區
+    const memberCount = (typeof Members !== 'undefined') ? (Members.all().length || 1) : 1;
+    const mainItems = filtered.filter(w => !Wishlist.isRejected(w, memberCount));
+    const rejectedItems = filtered.filter(w => Wishlist.isRejected(w, memberCount));
+
+    if (mainItems.length === 0 && rejectedItems.length === 0) {
+      listEl.innerHTML = '';
+      if (emptyEl) {
+        const hasFilter = this._wishlistTypeFilter !== 'all' || this._wishlistAddedByFilter !== 'all';
+        emptyEl.textContent = hasFilter ? '這個篩選沒有 wish' : '還沒有 wish — 按右下 ＋ 加你想去的地方';
+        emptyEl.classList.remove('hidden');
+      }
+    } else {
+      if (emptyEl) emptyEl.classList.add('hidden');
+    }
+
+    // 距離排序時加分組 heading
+    if (this._wishlistSort === 'distance') {
+      listEl.innerHTML = this._renderWishlistGroupedByDistance(mainItems, memberCount);
+    } else {
+      listEl.innerHTML = mainItems.map(w => this._wishlistCardHtml(w, memberCount)).join('');
+    }
+
+    if (rejectedItems.length > 0 && rejectedSection) {
+      rejectedSection.classList.remove('hidden');
+      if (rejectedCountEl) rejectedCountEl.textContent = rejectedItems.length;
+      if (rejectedListEl) rejectedListEl.innerHTML = rejectedItems.map(w => this._wishlistCardHtml(w, memberCount, true)).join('');
+    } else if (rejectedSection) {
+      rejectedSection.classList.add('hidden');
+    }
+
+    this._bindWishlistCardActions();
+  },
+
+  // v3.5.0: 渲染 added_by filter chips
+  _renderAddedByFilterChips() {
+    const wrap = document.getElementById('wishlist-addedby-filter');
+    if (!wrap) return;
+    // 列當前 trip 有加 wish 的所有 email + 統計筆數
+    const counts = {};
+    Wishlist.list.forEach(w => {
+      if (w.added_by) counts[w.added_by] = (counts[w.added_by] || 0) + 1;
+    });
+    const emails = Object.keys(counts).sort();
+    if (emails.length === 0) {
+      wrap.innerHTML = '';
+      return;
+    }
+    const total = Wishlist.list.length;
+    const myEmail = (Auth.user || {}).email;
+    const chips = [];
+    chips.push(`<button type="button" class="chip ${this._wishlistAddedByFilter === 'all' ? 'chip-active' : ''}" data-addedby="all">👥 全部 (${total})</button>`);
+    if (myEmail && counts[myEmail]) {
+      chips.push(`<button type="button" class="chip ${this._wishlistAddedByFilter === myEmail ? 'chip-active' : ''}" data-addedby="${this.escapeAttr(myEmail)}">我的 (${counts[myEmail]})</button>`);
+    }
+    emails.filter(e => e !== myEmail).forEach(email => {
+      const name = this.nameOf(email) || email.split('@')[0];
+      chips.push(`<button type="button" class="chip ${this._wishlistAddedByFilter === email ? 'chip-active' : ''}" data-addedby="${this.escapeAttr(email)}">${this.escapeHtml(name)} (${counts[email]})</button>`);
+    });
+    wrap.innerHTML = chips.join('');
+  },
+
+  // v3.5.0: 排序
+  _sortWishlist(items) {
+    const sort = this._wishlistSort;
+    if (sort === 'name') {
+      return [...items].sort((a, b) => (a.name || '').localeCompare(b.name || '', 'zh-Hant'));
+    }
+    if (sort === 'distance') {
+      // 用 cached 距離 (renderWishlist 前 caller 已經先準備好 _wishlistDistanceMap)
+      const map = this._wishlistDistanceMap || new Map();
+      return [...items].sort((a, b) => {
+        const da = map.has(a.id) ? map.get(a.id) : Infinity;
+        const db = map.has(b.id) ? map.get(b.id) : Infinity;
+        return da - db;
+      });
+    }
+    // 'recent': 按既有規則（_filter 已排好：planned 在前 + created_at 新→舊）
+    return items;
+  },
+
+  // v3.5.0: 距離分組 heading 渲染
+  _renderWishlistGroupedByDistance(items, memberCount) {
+    const map = this._wishlistDistanceMap || new Map();
+    const groups = {
+      near: { label: '📍 500m 內', items: [] },
+      mid: { label: '🚶 500m–2km', items: [] },
+      far: { label: '🚗 2km 以上', items: [] },
+      unknown: { label: '❓ 沒有座標', items: [] },
+    };
+    items.forEach(w => {
+      const d = map.has(w.id) ? map.get(w.id) : null;
+      if (d === null || d === undefined || d === Infinity) groups.unknown.items.push(w);
+      else if (d < 500) groups.near.items.push(w);
+      else if (d < 2000) groups.mid.items.push(w);
+      else groups.far.items.push(w);
+    });
+    let html = '';
+    for (const key of ['near', 'mid', 'far', 'unknown']) {
+      const g = groups[key];
+      if (g.items.length === 0) continue;
+      html += `<div class="wish-group-header">${g.label} (${g.items.length})</div>`;
+      html += g.items.map(w => this._wishlistCardHtml(w, memberCount)).join('');
+    }
+    return html;
+  },
+
+  // v3.5.0: 切到 distance 排序時呼叫一次，準備 _wishlistDistanceMap 後再 render
+  async _prepareWishlistDistances() {
+    this._wishlistDistanceMap = new Map();
+    if (typeof GeoNotify === 'undefined') return;
+    const pos = await GeoNotify.getLastKnownPosition();
+    if (!pos) {
+      // 拿不到位置 → 顯示 hint
+      const hintEl = document.getElementById('wishlist-distance-hint');
+      if (hintEl) hintEl.textContent = '⚠️ 拿不到你的位置（請授權定位）';
+      return;
+    }
+    // 算每個 wish 的距離
+    Wishlist.list.forEach(w => {
+      const lat = parseFloat(w.lat);
+      const lng = parseFloat(w.lng);
+      if (isNaN(lat) || isNaN(lng)) return;
+      const d = GeoNotify.distanceMeters(pos.lat, pos.lng, lat, lng);
+      this._wishlistDistanceMap.set(w.id, d);
+    });
+    const hintEl = document.getElementById('wishlist-distance-hint');
+    if (hintEl) hintEl.textContent = `📍 已用你當前位置計算`;
+  },
+
+  _wishlistCardHtml(w, memberCount, isRejectedView = false) {
+    const escape = s => this.escapeHtml(s || '');
+    const typeLabel = Wishlist.TYPE_LABEL[w.type] || '📍';
+    const addedByName = this.nameOf(w.added_by) || (w.added_by || '').split('@')[0];
+    const voters = Wishlist.getVoters(w);
+    const voteCount = voters.length;
+    const threshold = Wishlist.rejectionThreshold(memberCount);
+    const myEmail = (Auth.user || {}).email;
+    const isMine = w.added_by === myEmail;
+    const iVoted = voters.includes(myEmail);
+    const visited = w.status === 'visited';
+    const promoted = w.status === 'promoted';
+
+    const statusBadge = visited
+      ? '<span class="wish-badge wish-visited">✓ 已去過</span>'
+      : promoted
+        ? '<span class="wish-badge wish-promoted">📌 已排進行程</span>'
+        : '';
+
+    const voteBadgeClass = voteCount > 0 ? (voteCount >= threshold ? 'wish-vote-full' : 'wish-vote-some') : '';
+    const votersList = voters.length > 0
+      ? voters.map(e => this.nameOf(e) || e.split('@')[0]).join(', ')
+      : '';
+    const voteBadge = `<span class="wish-vote ${voteBadgeClass}" title="${escape(votersList)}">👎 ${voteCount}/${threshold}</span>`;
+
+    // 操作按鈕：依狀態 + 是否我加的 + v3.8.0 是否 trip 成員 顯示
+    // v3.8.0 角色規則:
+    //   非 trip 成員 (圍觀者) 可以：看、加 wish (透過 FAB)、刪自己加的
+    //   非 trip 成員 不可以：promote 進行程、標已去過/改回想去、投否決票/取消否決
+    //   原因：這些動作影響「實際出遊」流程，不該由沒去的人控制
+    const isMember = this.isCurrentTripMember();
+    const actions = [];
+    // v3.5.2: 跳 Google Maps（永遠在最前面，任何人都能用）
+    const gmUrl = this._buildGoogleMapsUrl(w);
+    if (gmUrl) {
+      actions.push(`<a class="btn-small wish-gmaps-btn" href="${gmUrl}" target="_blank" rel="noopener">🗺️ 地圖</a>`);
+    }
+    if (!visited && !isRejectedView && isMember) {
+      actions.push(`<button class="btn-small wish-action" data-action="promote" data-id="${w.id}">➕ 加進行程</button>`);
+      actions.push(`<button class="btn-small wish-action" data-action="visited" data-id="${w.id}">✓ 已去過</button>`);
+    }
+    if (visited && isMember) {
+      actions.push(`<button class="btn-small wish-action" data-action="reset" data-id="${w.id}">↺ 改回想去</button>`);
+    }
+    if (!isMine && !iVoted && !visited && isMember) {
+      actions.push(`<button class="btn-small btn-warn wish-action" data-action="vote" data-id="${w.id}">👎 否決</button>`);
+    }
+    if (!isMine && iVoted && isMember) {
+      actions.push(`<button class="btn-small wish-action" data-action="unvote" data-id="${w.id}">↺ 取消否決</button>`);
+    }
+    if (isMine && isRejectedView) {
+      // 強行恢復：加 wish 的人本來就是 owner，不論是否 trip member 都可救自己加的
+      actions.push(`<button class="btn-small wish-action" data-action="force-restore" data-id="${w.id}">💪 強行恢復</button>`);
+    }
+    if (isMine) {
+      // v3.8.3: 改備註 — 自己加的可改（圍觀者也行）
+      actions.push(`<button class="btn-small wish-action" data-action="edit-note" data-id="${w.id}">✏️ 改備註</button>`);
+      // 刪除自己加的：永遠允許 (圍觀者也能刪自己加的 wish)
+      actions.push(`<button class="btn-small btn-danger wish-action" data-action="delete" data-id="${w.id}">🗑️ 刪除</button>`);
+    }
+
+    // v3.5.0: 距離 badge（只在 distance 排序模式下顯示）
+    let distBadge = '';
+    if (this._wishlistSort === 'distance' && this._wishlistDistanceMap) {
+      const d = this._wishlistDistanceMap.get(w.id);
+      if (typeof d === 'number' && isFinite(d)) {
+        const distText = d < 1000 ? `${Math.round(d)}m` : `${(d / 1000).toFixed(1)}km`;
+        distBadge = `<span class="wish-dist" title="距離當前位置">📍 ${distText}</span>`;
+      }
+    }
+
+    return `
+      <div class="wish-card ${visited ? 'wish-card-done' : ''} ${isRejectedView ? 'wish-card-rejected' : ''}">
+        <div class="wish-card-header">
+          <span class="wish-type">${typeLabel}</span>
+          <strong class="wish-name">${escape(w.name)}</strong>
+          ${statusBadge}
+          ${voteCount > 0 || !isMine ? voteBadge : ''}
+          ${distBadge}
+        </div>
+        ${w.address ? `<div class="wish-address">📍 ${escape(w.address)}</div>` : ''}
+        ${w.source_note ? `<div class="wish-source">💬 ${escape(w.source_note)}</div>` : ''}
+        <div class="wish-meta">${escape(addedByName)} 加的</div>
+        <div class="wish-actions">${actions.join(' ')}</div>
+      </div>
+    `;
+  },
+
+  _bindWishlistCardActions() {
+    document.querySelectorAll('.wish-action').forEach(btn => {
+      // remove old listener by cloning
+      const fresh = btn.cloneNode(true);
+      btn.parentNode.replaceChild(fresh, btn);
+      fresh.addEventListener('click', async (e) => {
+        const action = fresh.dataset.action;
+        const id = fresh.dataset.id;
+        fresh.disabled = true;
+        try {
+          await this._handleWishAction(action, id);
+        } catch (err) {
+          this.toast('操作失敗：' + (err.message || '未知錯誤'));
+          console.error('wish action err:', err);
+        } finally {
+          fresh.disabled = false;
+        }
+      });
+    });
+    // type filter chips
+    document.querySelectorAll('#wishlist-type-filter .chip').forEach(chip => {
+      const fresh = chip.cloneNode(true);
+      chip.parentNode.replaceChild(fresh, chip);
+      fresh.addEventListener('click', () => {
+        this._wishlistTypeFilter = fresh.dataset.type;
+        document.querySelectorAll('#wishlist-type-filter .chip').forEach(c => {
+          c.classList.toggle('chip-active', c.dataset.type === this._wishlistTypeFilter);
+        });
+        this.renderWishlist();
+      });
+    });
+
+    // v3.5.0: added_by filter chips (動態 - 每次 renderAddedByFilterChips 重生 → 直接綁)
+    document.querySelectorAll('#wishlist-addedby-filter .chip').forEach(chip => {
+      chip.addEventListener('click', () => {
+        this._wishlistAddedByFilter = chip.dataset.addedby;
+        this.renderWishlist();
+      });
+    });
+
+    // v3.5.0: sort dropdown (只綁一次 — 第一次 bind 後 dataset 標記)
+    const sortSel = document.getElementById('wishlist-sort-select');
+    if (sortSel && !sortSel.dataset.wishSortBound) {
+      sortSel.dataset.wishSortBound = '1';
+      sortSel.addEventListener('change', async () => {
+        this._wishlistSort = sortSel.value;
+        if (sortSel.value === 'distance') {
+          // 顯示「計算中」
+          const hintEl = document.getElementById('wishlist-distance-hint');
+          if (hintEl) hintEl.textContent = '⏳ 取得位置中...';
+          await this._prepareWishlistDistances();
+        } else {
+          // 切回非距離排序 → 清掉 hint
+          const hintEl = document.getElementById('wishlist-distance-hint');
+          if (hintEl) hintEl.textContent = '';
+          this._wishlistDistanceMap = null;
+        }
+        this.renderWishlist();
+      });
+    }
+  },
+
+  async _handleWishAction(action, id) {
+    const wish = Wishlist.allList.find(w => w.id === id);
+    if (!wish) { this.toast('找不到該筆 wish'); return; }
+    const myEmail = Auth.user.email;
+    switch (action) {
+      case 'visited':
+        await Wishlist.markVisited(id);
+        this.toast(`✓ 標記「${wish.name}」已去過`);
+        break;
+      case 'promote':
+        // v3.3.0 (M6.2.2): 開 modal 讓用戶選「加進哪個 itinerary」或「建新行程」
+        this.openWishlistPromoteModal(wish);
+        return; // modal handler 會自己負責 toast/re-render
+      case 'reset':
+        await Wishlist.resetToPlanned(id);
+        this.toast(`↺ 「${wish.name}」改回想去`);
+        break;
+      case 'vote':
+        await Wishlist.vote(id, myEmail);
+        this.toast(`👎 已否決「${wish.name}」`);
+        break;
+      case 'unvote':
+        await Wishlist.unvote(id, myEmail);
+        this.toast(`↺ 取消否決「${wish.name}」`);
+        break;
+      case 'force-restore':
+        if (!confirm(`強行恢復「${wish.name}」會清掉所有否決票，確定嗎？`)) return;
+        await Wishlist.forceRestore(id);
+        this.toast(`💪 「${wish.name}」已恢復`);
+        break;
+      case 'delete':
+        if (!confirm(`刪除「${wish.name}」？無法復原`)) return;
+        await Wishlist.remove(id);
+        this.toast(`🗑️ 已刪除「${wish.name}」`);
+        break;
+      // v3.8.3: 改備註 (推薦來源、為什麼想去等)
+      case 'edit-note': {
+        const currentNote = wish.source_note || '';
+        const newNote = prompt(`改備註：「${wish.name}」\n\n(例：Paul 推薦 / IG @xxx / 米其林必比登 / 留空清除)`, currentNote);
+        if (newNote === null) return; // 用戶按取消
+        if (newNote.trim() === currentNote.trim()) {
+          this.toast('備註沒有改變');
+          return;
+        }
+        await Wishlist.updateNote(id, newNote);
+        this.toast(newNote.trim() ? `✏️ 備註已更新` : `✏️ 已清除備註`);
+        break;
+      }
+      default:
+        console.warn('unknown wish action:', action);
+    }
+    this.renderWishlist();
+  },
+
+  // === 新增 Wish modal ===
+
+  async openWishlistAddModal() {
+    if (!Trips.current) { this.toast('請先建立或選擇一個 trip'); return; }
+    const modal = document.getElementById('modal-wishlist-add');
+    if (!modal) return;
+    const form = document.getElementById('wishlist-add-form');
+    form.reset();
+    // 清掉 hidden 欄
+    ['place_id', 'lat', 'lng', 'address'].forEach(n => { form.elements[n].value = ''; });
+    document.getElementById('wishlist-place-selected-hint').textContent = '';
+
+    // 綁 Google Maps Autocomplete（只綁一次）
+    const placeInput = document.getElementById('wishlist-place-input');
+    try {
+      await Maps.load();
+      if (!placeInput.dataset.acAttached) {
+        Maps.attachAutocomplete(placeInput, (place) => {
+          // 填 hidden 欄
+          form.elements['place_id'].value = place.place_id || '';
+          form.elements['lat'].value = place.lat || '';
+          form.elements['lng'].value = place.lng || '';
+          form.elements['address'].value = place.address || '';
+          placeInput.value = place.name || place.address || '';
+          document.getElementById('wishlist-place-selected-hint').textContent = `✓ 已選：${place.address || place.name}`;
+        });
+        placeInput.dataset.acAttached = '1';
+      }
+    } catch (err) {
+      console.warn('Maps autocomplete 未啟用，可手動輸入：', err.message);
+    }
+
+    modal.classList.remove('hidden');
+    setTimeout(() => placeInput.focus(), 100);
+  },
+
+  // v3.3.0 M6.2.3: 在日記 modal 內渲染當前 trip 的 wishlist chips
+  // v3.8.6: 限制 5 個 chips + 加搜尋按鈕 (避免 wish 多時爆畫面)
+  //   - 預設顯示「最近加的 5 個」
+  //   - 超過 5 個 → 加「🔍 搜尋全部 N 個」按鈕跳搜尋 modal
+  _renderDiaryWishlistChips() {
+    const wrap = document.getElementById('diary-wishlist-chips');
+    const listEl = document.getElementById('diary-wishlist-chips-list');
+    if (!wrap || !listEl) return;
+    if (typeof Wishlist === 'undefined' || !Trips.current) {
+      wrap.style.display = 'none';
+      return;
+    }
+    // 只列 planned / promoted（未去過），按 created_at desc 排序
+    const candidates = Wishlist.list
+      .filter(w => w.status === 'planned' || w.status === 'promoted')
+      .sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''));
+    if (candidates.length === 0) {
+      wrap.style.display = 'none';
+      return;
+    }
+    wrap.style.display = '';
+
+    const LIMIT = 5;
+    const limited = candidates.slice(0, LIMIT);
+    const hasMore = candidates.length > LIMIT;
+
+    let html = limited.map(w => {
+      const typeIcon = (Wishlist.TYPE_LABEL && Wishlist.TYPE_LABEL[w.type]) || '📍';
+      const shortType = typeIcon.split(' ')[0];
+      return `<button type="button" class="chip diary-wish-chip" data-wish-id="${this.escapeHtml(w.id)}">${shortType} ${this.escapeHtml(w.name)}</button>`;
+    }).join('');
+
+    // 搜尋按鈕 (永遠顯示，讓用戶知道完整數量；超過 5 個強調搜尋)
+    if (hasMore) {
+      html += `<button type="button" id="diary-wish-search-btn" class="chip" style="background:var(--primary); color:white; font-weight:600;">🔍 搜尋全部 ${candidates.length} 個</button>`;
+    } else if (candidates.length > 0) {
+      html += `<button type="button" id="diary-wish-search-btn" class="chip" style="border-style:dashed;">🔍 在 ${candidates.length} 個內搜尋</button>`;
+    }
+
+    listEl.innerHTML = html;
+
+    // 綁點擊 chips
+    listEl.querySelectorAll('.diary-wish-chip').forEach(btn => {
+      btn.addEventListener('click', () => this._pickDiaryWish(btn.dataset.wishId));
+    });
+    // 綁搜尋按鈕
+    const searchBtn = document.getElementById('diary-wish-search-btn');
+    if (searchBtn) searchBtn.addEventListener('click', () => this._openDiaryWishlistSearch());
+  },
+
+  // v3.8.6: 點 chip 或 modal 內選一個 → 帶入 diary location
+  _pickDiaryWish(wid) {
+    const wish = Wishlist.list.find(w => w.id === wid);
+    if (!wish) return;
+    const form = document.getElementById('diary-form');
+    const locInput = form.elements['location'];
+    locInput.value = wish.address ? `${wish.name}（${wish.address}）` : wish.name;
+    if (wish.lat && wish.lng) {
+      this._selectedPlace = {
+        place_id: wish.place_id || '',
+        name: wish.name,
+        address: wish.address || '',
+        lat: parseFloat(wish.lat),
+        lng: parseFloat(wish.lng),
+      };
+    }
+    this._pendingDiaryWishId = wish.id;
+    // 視覺反饋：highlight chosen chip (僅針對外層 chips, modal 內選不需要)
+    document.querySelectorAll('.diary-wish-chip').forEach(c => c.classList.remove('chip-active'));
+    const chosenChip = document.querySelector(`.diary-wish-chip[data-wish-id="${wid.replace(/"/g, '\\"')}"]`);
+    if (chosenChip) chosenChip.classList.add('chip-active');
+    this.toast(`💡 已帶入「${wish.name}」，存日記後會自動標已去過`);
+  },
+
+  // v3.8.6: 開搜尋 modal 列出全部 candidates
+  _openDiaryWishlistSearch() {
+    if (typeof Wishlist === 'undefined') return;
+    const modal = document.getElementById('modal-diary-wishlist-search');
+    const listEl = document.getElementById('diary-wish-search-list');
+    const searchInput = document.getElementById('diary-wish-search-input');
+    if (!modal || !listEl || !searchInput) return;
+
+    const candidates = Wishlist.list
+      .filter(w => w.status === 'planned' || w.status === 'promoted')
+      .sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''));
+
+    const render = (filtered) => {
+      if (filtered.length === 0) {
+        listEl.innerHTML = '<div style="text-align:center; padding:20px; color:var(--text-light);">沒有符合的 wish</div>';
+        return;
+      }
+      listEl.innerHTML = filtered.map(w => {
+        const typeIcon = (Wishlist.TYPE_LABEL && Wishlist.TYPE_LABEL[w.type]) || '📍';
+        const addedBy = this.nameOf(w.added_by) || (w.added_by || '').split('@')[0];
+        return `
+          <button type="button" class="diary-wish-search-item" data-wish-id="${this.escapeAttr(w.id)}" style="display:flex; flex-direction:column; align-items:flex-start; width:100%; padding:10px 12px; background:var(--card); border:1px solid var(--border); border-radius:8px; margin-bottom:6px; text-align:left; cursor:pointer;">
+            <div style="font-size:14px; font-weight:600; color:var(--text);">${typeIcon} ${this.escapeHtml(w.name)}</div>
+            ${w.address ? `<div style="font-size:11px; color:var(--text-light); margin-top:2px;">📍 ${this.escapeHtml(w.address)}</div>` : ''}
+            <div style="font-size:11px; color:var(--text-light); margin-top:2px;">${this.escapeHtml(addedBy)} 加的${w.source_note ? ` · 💬 ${this.escapeHtml(w.source_note)}` : ''}</div>
+          </button>
+        `;
+      }).join('');
+      listEl.querySelectorAll('.diary-wish-search-item').forEach(btn => {
+        btn.addEventListener('click', () => {
+          this._pickDiaryWish(btn.dataset.wishId);
+          modal.classList.add('hidden');
+        });
+      });
+    };
+
+    // input filter
+    searchInput.value = '';
+    render(candidates);
+    searchInput.oninput = () => {
+      const q = searchInput.value.trim().toLowerCase();
+      if (!q) { render(candidates); return; }
+      const filtered = candidates.filter(w => {
+        const haystack = `${w.name} ${w.address || ''} ${w.source_note || ''}`.toLowerCase();
+        return haystack.includes(q);
+      });
+      render(filtered);
+    };
+
+    modal.classList.remove('hidden');
+    setTimeout(() => searchInput.focus(), 100);
+  },
+
+  // v3.3.0 M6.2.2: Wishlist → Itinerary promote modal
+  openWishlistPromoteModal(wish) {
+    if (!Trips.current) { this.toast('沒有當前 trip'); return; }
+    if (!wish || !wish.lat || !wish.lng) {
+      this.toast('該 wish 沒有座標，無法加進行程');
+      return;
+    }
+    const modal = document.getElementById('modal-wishlist-promote');
+    if (!modal) return;
+
+    // 顯示要 promote 的 wish 資訊
+    const typeLabel = (Wishlist.TYPE_LABEL && Wishlist.TYPE_LABEL[wish.type]) || '📍';
+    document.getElementById('wishlist-promote-target-info').innerHTML =
+      `<strong style="color:var(--text);">${typeLabel} ${this.escapeHtml(wish.name)}</strong>` +
+      (wish.address ? `<br><small style="color:var(--text-light);">${this.escapeHtml(wish.address)}</small>` : '');
+
+    // 填 itinerary dropdown — 只列當前 trip 的
+    const select = document.getElementById('wishlist-promote-itinerary-select');
+    const existingItins = (typeof Itineraries !== 'undefined') ? Itineraries.list : [];
+    select.innerHTML = '<option value="__new__">➕ 建立新行程（用這 wish 當第一個地點）</option>' +
+      existingItins.map(i => {
+        const wpCount = Itineraries.getWaypoints(i).length;
+        return `<option value="${this.escapeHtml(i.id)}">📋 ${this.escapeHtml(i.name)} (${wpCount} 個地點)</option>`;
+      }).join('');
+
+    // 新行程名稱 section 顯隱控制
+    const newSection = document.getElementById('wishlist-promote-new-itin-section');
+    const newNameInput = document.getElementById('wishlist-promote-new-name');
+    const newModeInput = document.getElementById('wishlist-promote-new-mode');
+    newNameInput.value = `${wish.name} 行程`;
+
+    // 清掉舊 listener（clone trick）
+    const freshSelect = select.cloneNode(true);
+    freshSelect.innerHTML = select.innerHTML;
+    freshSelect.value = '__new__';
+    select.parentNode.replaceChild(freshSelect, select);
+
+    // v3.4.1 fix: refresh 用 freshSelect.value 而非外部閉包的 select (那是已被 replaceChild 的舊節點)
+    // 同時把「新行程」section 內欄位 disabled 起來 — 避免 hidden 後表單仍包含值
+    const refreshNewSection = () => {
+      const isNew = freshSelect.value === '__new__';
+      newSection.classList.toggle('hidden', !isNew);
+      newNameInput.disabled = !isNew;
+      newModeInput.disabled = !isNew;
+    };
+    freshSelect.addEventListener('change', refreshNewSection);
+    refreshNewSection();
+
+    // submit button
+    const submitBtn = document.getElementById('wishlist-promote-submit-btn');
+    const freshSubmit = submitBtn.cloneNode(true);
+    submitBtn.parentNode.replaceChild(freshSubmit, submitBtn);
+    freshSubmit.addEventListener('click', async () => {
+      freshSubmit.disabled = true;
+      try {
+        const choice = freshSelect.value;
+        if (choice === '__new__') {
+          const name = newNameInput.value.trim();
+          const mode = document.getElementById('wishlist-promote-new-mode').value;
+          await Itineraries.createFromWish(wish, { name, travel_mode: mode });
+        } else {
+          await Itineraries.addWaypointFromWish(choice, wish);
+        }
+        // 不論哪條路徑都標 promoted
+        await Wishlist.promote(wish.id);
+        this.toast(`📌 「${wish.name}」已加進行程`);
+        modal.classList.add('hidden');
+        this.renderWishlist();
+        this.renderItineraries();
+        // 如果在地圖 tab → 重新渲染 markers
+        if (this.currentTab === 'map') this.renderWishlistMarkers();
+      } catch (err) {
+        this.toast(err.message || '加入失敗');
+        console.error('promote error:', err);
+      } finally {
+        freshSubmit.disabled = false;
+      }
+    });
+
+    modal.classList.remove('hidden');
+  },
+
+  // v3.9.2: 批次排行程 — 一次勾選多個願望加進同一個 itinerary
+  _batchSelected: null,
+  openWishlistBatchModal() {
+    if (!Trips.current) { this.toast('沒有當前 trip'); return; }
+    const modal = document.getElementById('modal-wishlist-batch');
+    if (!modal) return;
+
+    // 候選：planned / promoted 且有座標（行程需要 lat/lng）
+    const candidates = Wishlist.list
+      .filter(w => (w.status === 'planned' || w.status === 'promoted') && w.lat && w.lng)
+      .sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''));
+    if (candidates.length === 0) {
+      this.toast('沒有可排的願望（要有座標、還沒去過）');
+      return;
+    }
+    this._batchSelected = new Set();
+
+    const listEl = document.getElementById('wishlist-batch-list');
+    const countEl = document.getElementById('wishlist-batch-count');
+    const updateCount = () => { countEl.textContent = `已選 ${this._batchSelected.size} 個`; };
+
+    listEl.innerHTML = candidates.map(w => {
+      const typeLabel = (Wishlist.TYPE_LABEL && Wishlist.TYPE_LABEL[w.type]) || '📍';
+      return `
+        <label class="batch-item">
+          <input type="checkbox" class="batch-item-cb" value="${this.escapeAttr(w.id)}">
+          <span class="batch-item-body">
+            <span class="batch-item-name">${typeLabel} ${this.escapeHtml(w.name)}</span>
+            ${w.address ? `<span class="batch-item-sub">📍 ${this.escapeHtml(w.address)}</span>` : ''}
+          </span>
+        </label>`;
+    }).join('');
+    listEl.querySelectorAll('.batch-item-cb').forEach(cb => {
+      cb.addEventListener('change', () => {
+        if (cb.checked) this._batchSelected.add(cb.value);
+        else this._batchSelected.delete(cb.value);
+        updateCount();
+      });
+    });
+    updateCount();
+
+    // 全選 / 全不選（clone 清舊 listener）
+    const selectAllBtn = document.getElementById('wishlist-batch-selectall');
+    const freshSelectAll = selectAllBtn.cloneNode(true);
+    selectAllBtn.parentNode.replaceChild(freshSelectAll, selectAllBtn);
+    freshSelectAll.addEventListener('click', () => {
+      const cbs = [...listEl.querySelectorAll('.batch-item-cb')];
+      const allChecked = cbs.every(c => c.checked);
+      cbs.forEach(c => {
+        c.checked = !allChecked;
+        if (c.checked) this._batchSelected.add(c.value);
+        else this._batchSelected.delete(c.value);
+      });
+      updateCount();
+    });
+
+    // 行程下拉（同 promote modal：新建 or 既有）
+    const select = document.getElementById('wishlist-batch-itinerary-select');
+    const existingItins = (typeof Itineraries !== 'undefined') ? Itineraries.list : [];
+    select.innerHTML = '<option value="__new__">➕ 建立新行程</option>' +
+      existingItins.map(i => {
+        const wpCount = Itineraries.getWaypoints(i).length;
+        return `<option value="${this.escapeAttr(i.id)}">📋 ${this.escapeHtml(i.name)} (${wpCount} 個地點)</option>`;
+      }).join('');
+    const freshSelect = select.cloneNode(true);
+    freshSelect.innerHTML = select.innerHTML;
+    freshSelect.value = '__new__';
+    select.parentNode.replaceChild(freshSelect, select);
+
+    const newSection = document.getElementById('wishlist-batch-new-section');
+    const newNameInput = document.getElementById('wishlist-batch-new-name');
+    const newModeInput = document.getElementById('wishlist-batch-new-mode');
+    newNameInput.value = '';
+    const refreshNew = () => {
+      const isNew = freshSelect.value === '__new__';
+      newSection.classList.toggle('hidden', !isNew);
+      newNameInput.disabled = !isNew;
+      newModeInput.disabled = !isNew;
+    };
+    freshSelect.addEventListener('change', refreshNew);
+    refreshNew();
+
+    // submit（clone 清舊 listener）
+    const submitBtn = document.getElementById('wishlist-batch-submit-btn');
+    const freshSubmit = submitBtn.cloneNode(true);
+    submitBtn.parentNode.replaceChild(freshSubmit, submitBtn);
+    freshSubmit.addEventListener('click', async () => {
+      const picked = candidates.filter(w => this._batchSelected.has(w.id));
+      if (picked.length === 0) { this.toast('先勾選至少一個願望'); return; }
+      freshSubmit.disabled = true;
+      try {
+        const choice = freshSelect.value;
+        if (choice === '__new__') {
+          const name = newNameInput.value.trim();
+          const mode = newModeInput.value;
+          await Itineraries.createFromWishes(picked, { name, travel_mode: mode });
+        } else {
+          await Itineraries.addWaypointsFromWishes(choice, picked);
+        }
+        // 全部標 promoted（逐筆，數量不會多）
+        for (const w of picked) {
+          try { await Wishlist.promote(w.id); } catch (e) { console.warn('promote failed:', e); }
+        }
+        this.toast(`📌 已把 ${picked.length} 個願望排進行程`);
+        modal.classList.add('hidden');
+        this.renderWishlist();
+        this.renderItineraries();
+        if (this.currentTab === 'map') this.renderWishlistMarkers();
+      } catch (err) {
+        this.toast(err.message || '加入失敗');
+        console.error('batch promote error:', err);
+      } finally {
+        freshSubmit.disabled = false;
+      }
+    });
+
+    modal.classList.remove('hidden');
+  },
+
+  async handleWishlistAddSubmit(e) {
+    e.preventDefault();
+    const form = e.target;
+    const submitBtn = form.querySelector('button[type="submit"]');
+    submitBtn.disabled = true;
+    try {
+      const name = form.elements['place'].value.trim();
+      if (!name) { this.toast('地點名稱必填'); return; }
+      const wish = await Wishlist.add({
+        placeId: form.elements['place_id'].value,
+        name,
+        address: form.elements['address'].value,
+        lat: form.elements['lat'].value ? parseFloat(form.elements['lat'].value) : '',
+        lng: form.elements['lng'].value ? parseFloat(form.elements['lng'].value) : '',
+        type: form.elements['type'].value,
+        sourceNote: form.elements['source_note'].value,
+      });
+      this.toast(`💡 已加入「${wish.name}」`);
+      document.getElementById('modal-wishlist-add').classList.add('hidden');
+      this.renderWishlist();
+    } catch (err) {
+      this.toast(err.message || '新增失敗');
+      console.error('wishlist add error:', err);
+    } finally {
+      submitBtn.disabled = false;
+    }
+  },
+
+  switchTab(tab) {
+    this.currentTab = tab;
+    document.querySelectorAll('.nav-btn').forEach(btn => btn.classList.toggle('active', btn.dataset.tab === tab));
+    document.getElementById('tab-expenses').classList.toggle('hidden', tab !== 'expenses');
+    document.getElementById('tab-diaries').classList.toggle('hidden', tab !== 'diaries');
+    document.getElementById('tab-map').classList.toggle('hidden', tab !== 'map');
+    document.getElementById('tab-wishlist').classList.toggle('hidden', tab !== 'wishlist');
+    document.getElementById('tab-settings').classList.toggle('hidden', tab !== 'settings');
+    // v3.8.0: FAB 顯示考慮 trip 成員身份
+    //   - wishlist tab → 任何群組成員可加 wish (圍觀者也行)
+    //   - expenses/diaries tab → 只有 trip member 能加 (沒去就別記帳/發日記)
+    const isMember = this.isCurrentTripMember();
+    const showFab =
+      (tab === 'wishlist') ||
+      ((tab === 'expenses' || tab === 'diaries') && isMember);
+    document.getElementById('fab').style.display = showFab ? '' : 'none';
+
+    // v3.8.0: 角色提示 banner — 在 4 個內容 tab 對非 member 顯示
+    const roleBanner = document.getElementById('role-banner');
+    if (roleBanner) {
+      const showBanner = !isMember && Trips.current &&
+        ['expenses', 'diaries', 'map', 'wishlist'].includes(tab);
+      roleBanner.classList.toggle('hidden', !showBanner);
+    }
+    if (tab === 'map') {
+      this.initOrRefreshMap();
+      // tab 顯示後才量得到高度 → 下一幀更新預計行程捲動提示
+      requestAnimationFrame(() => this._updateItineraryScrollHint());
+    }
+    // v3.2.0: 切到 wishlist tab → load + render（lazy migration 在 loadAll 內處理）
+    if (tab === 'wishlist') {
+      this.loadAndRenderWishlist();
+      // v3.4.0 M6.3: 第一次進 wishlist tab → 跳 onboarding 問附近推播
+      this._maybeShowGeoNotifyOnboarding();
+    }
+    // v3.4.0 M6.3: tab lifecycle 啟停 watchPosition（省電）
+    this._updateGeoNotifyForTab(tab);
+    // M5.1: 切到設定 tab 時更新群組統計
+    if (tab === 'settings') {
+      this.updateGroupStats();
+      this._updateGeoNotifyStatusUI();
+    }
+  },
+
+  // v3.4.0 M6.3: 切到 wishlist/map 啟動推播；切走停止
+  _updateGeoNotifyForTab(tab) {
+    if (typeof GeoNotify === 'undefined') return;
+    if (GeoNotify.getPref() !== 'granted') return;
+    const relevantTabs = ['wishlist', 'map', 'expenses', 'diaries'];
+    if (relevantTabs.includes(tab)) {
+      GeoNotify.start();
+    } else {
+      GeoNotify.stop();
+    }
+  },
+
+  // v3.5.2: 產 Google Maps deep link
+  //   優先 place_id (最精準)，沒 place_id 用 lat/lng，都沒 fallback 搜尋名稱
+  //   target=_blank 在 iOS PWA 會嘗試開 Google Maps app (有裝)，沒裝走 web
+  _buildGoogleMapsUrl(w) {
+    if (!w) return '';
+    if (w.place_id) {
+      // search?api=1 with query + query_place_id 是 Google 官方建議格式
+      const q = encodeURIComponent(w.name || '');
+      return `https://www.google.com/maps/search/?api=1&query=${q}&query_place_id=${encodeURIComponent(w.place_id)}`;
+    }
+    if (w.lat && w.lng) {
+      return `https://www.google.com/maps?q=${w.lat},${w.lng}`;
+    }
+    if (w.name) {
+      return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(w.name + (w.address ? ' ' + w.address : ''))}`;
+    }
+    return '';
+  },
+
+  // v3.4.0 M6.3: 設定 tab 推播 button 狀態顯示
+  _updateGeoNotifyStatusUI() {
+    const labelEl = document.getElementById('geo-notify-btn-label');
+    const statusEl = document.getElementById('geo-notify-btn-status');
+    if (!labelEl || !statusEl || typeof GeoNotify === 'undefined') return;
+    const pref = GeoNotify.getPref();
+    const running = GeoNotify.isRunning();
+    if (pref === 'unsupported') {
+      labelEl.textContent = '🔔 附近 wish 推播';
+      statusEl.textContent = '⚠️ 此裝置/瀏覽器不支援';
+      statusEl.style.color = 'var(--text-light)';
+    } else if (pref === 'granted') {
+      labelEl.textContent = '🔔 附近 wish 推播（已啟用）';
+      statusEl.textContent = running ? `✅ 運行中 · 走在 wish 500m 內會推` : '⏸ 已授權但暫停 (切到非 wish/地圖 tab 會自動暫停省電)';
+      statusEl.style.color = running ? '#10b981' : 'var(--text-light)';
+    } else if (pref === 'declined') {
+      labelEl.textContent = '🔔 附近 wish 推播（已關閉）';
+      statusEl.textContent = '點此重新開啟（會請求權限）';
+      statusEl.style.color = 'var(--text-light)';
+    } else {
+      labelEl.textContent = '🔔 開啟附近 wish 推播';
+      statusEl.textContent = '走在 wish 500m 內自動提醒';
+      statusEl.style.color = 'var(--text-light)';
+    }
+  },
+
+  // v3.4.0 M6.3: onboarding (只跳一次)
+  _maybeShowGeoNotifyOnboarding() {
+    if (typeof GeoNotify === 'undefined') return;
+    const pref = GeoNotify.getPref();
+    if (pref !== 'unset') return; // 已決定過（granted / declined / unsupported）
+    if (!GeoNotify.isSupported()) return;
+    // 至少要有 wishlist 才有意義
+    if (!Trips.current || !Wishlist.list || Wishlist.list.length === 0) return;
+    const modal = document.getElementById('modal-geo-notify-onboarding');
+    if (!modal) return;
+    modal.classList.remove('hidden');
+  },
+
+  // ===== Renders =====
+
+  renderSettlement() {
+    const el = document.getElementById('settlement-content');
+    const result = Expenses.settle();
+    const currencies = Object.keys(result);
+    const hasUnsettled = currencies.some(c => result[c].length > 0);
+    const totals = {};
+    Expenses.list.forEach(e => {
+      const amount = parseFloat(e.amount);
+      if (!amount || isNaN(amount)) return;
+      const cur = e.currency || 'TWD';
+      totals[cur] = (totals[cur] || 0) + amount;
+    });
+    const hasExpense = Object.keys(totals).length > 0;
+    if (!hasExpense) {
+      el.innerHTML = '<div style="color:var(--text-light);text-align:center;padding:8px;">還沒有支出 💸</div>';
+      return;
+    }
+    const totalLine = Object.entries(totals).map(([c, v]) => `${c} ${v.toLocaleString()}`).join(' + ');
+    let html = `<div style="font-size:13px;color:var(--text-light);margin-bottom:10px;padding-bottom:8px;border-bottom:1px dashed var(--border);">💵 總花費 ${totalLine}</div>`;
+    // ⭐ v2.0.0: 待我確認的轉帳（最上面顯眼提醒）
+    const pendingForMe = (typeof Settlements !== 'undefined') ? Settlements.getPendingForMe() : [];
+    if (pendingForMe.length > 0) {
+      html += `<div class="pending-claims-section">`;
+      html += `<div class="pending-claims-title">💳 待我確認的轉帳 (${pendingForMe.length})</div>`;
+      pendingForMe.forEach(s => {
+        html += `
+          <div class="pending-claim-row">
+            <div class="pending-claim-info">
+              <strong>${this.escapeHtml(this.nameOf(s.from_email))}</strong> 說已給你
+              <span class="pending-claim-amount">${this.escapeHtml(s.currency || 'TWD')} ${parseFloat(s.amount).toLocaleString()}</span>
+              ${s.note ? `<small>（${this.escapeHtml(s.note)}）</small>` : ''}
+            </div>
+            <div class="pending-claim-actions">
+              <button data-action="confirm-settlement" data-id="${this.escapeAttr(s.id)}" type="button" class="btn-confirm">✓ 收到</button>
+              <button data-action="reject-settlement" data-id="${this.escapeAttr(s.id)}" type="button" class="btn-reject">❌ 沒收到</button>
+            </div>
+          </div>
+        `;
+      });
+      html += `</div>`;
+    }
+
+    if (!hasUnsettled) html += '<div style="color:var(--text-light);text-align:center;padding:8px;">✨ 大家都結清了！</div>';
+    else {
+      const myEmail = Auth.user ? Auth.user.email : '';
+      for (const currency of currencies) {
+        if (result[currency].length === 0) continue;
+        result[currency].forEach(t => {
+          // 該對的 pending（我作為 from 已按「我已付」等對方確認）
+          const pending = (typeof Settlements !== 'undefined')
+            ? Settlements.getPendingPair(t.from, t.to, currency) : null;
+          let btnHtml = '';
+          if (pending && pending.from_email === myEmail) {
+            btnHtml = `<button data-action="cancel-settlement" data-id="${this.escapeAttr(pending.id)}" type="button" class="btn-pending" title="點此撤回">⏳ 等對方確認</button>`;
+          } else if (t.from === myEmail) {
+            // 我是付款方且沒 pending → 顯示「我已付」按鈕
+            btnHtml = `<button data-action="claim-settlement" data-from="${this.escapeAttr(t.from)}" data-to="${this.escapeAttr(t.to)}" data-amount="${t.amount}" data-currency="${this.escapeAttr(currency)}" type="button" class="btn-claim">✅ 我已付</button>`;
+          }
+          html += `
+            <div class="settle-row">
+              <span><strong>${this.nameOf(t.from)}</strong> 給 <strong>${this.nameOf(t.to)}</strong></span>
+              <span class="settle-amount-actions">
+                <span>${currency} ${t.amount.toLocaleString()}</span>
+                ${btnHtml}
+              </span>
+            </div>
+          `;
+        });
+      }
+    }
+
+    // ⭐ v2.0.1 個人支出統計（每人實際分攤後的花費，含已結清，按金額多→少）
+    const perPerson = Expenses.getPerPersonSpending();
+    const perPersonCat = Expenses.getPerPersonByCategory();  // ⭐ v3.9.5 每人分類細項
+    const perPersonCurrencies = Object.keys(perPerson);
+    if (perPersonCurrencies.length > 0) {
+      html += `<details class="per-person-section"><summary>📊 個人支出統計（含已結清）</summary>`;
+      perPersonCurrencies.forEach(currency => {
+        const entries = Object.entries(perPerson[currency])
+          .filter(([_, amt]) => amt > 0.01)
+          .sort((a, b) => b[1] - a[1]); // 多 → 少
+        if (entries.length === 0) return;
+        const total = entries.reduce((s, [_, v]) => s + v, 0);
+        if (perPersonCurrencies.length > 1) {
+          html += `<div class="per-person-currency-label">${this.escapeHtml(currency)}</div>`;
+        }
+        entries.forEach(([email, amt]) => {
+          const isMe = Auth.user && email === Auth.user.email;
+          const pct = total > 0 ? Math.round((amt / total) * 100) : 0;
+          // ⭐ v3.9.5 該人各類別細項（多→少），點開人名才顯示
+          const catMap = (perPersonCat[currency] && perPersonCat[currency][email]) || {};
+          const catEntries = Object.entries(catMap)
+            .filter(([_, v]) => v > 0.01)
+            .sort((a, b) => b[1] - a[1]);
+          let catRows = '';
+          catEntries.forEach(([cat, camt]) => {
+            const cpct = amt > 0 ? Math.round((camt / amt) * 100) : 0;
+            catRows += `
+              <div class="pp-cat-row">
+                <span class="pp-cat-name">${this.escapeHtml(cat || '💊 其他')}</span>
+                <span class="pp-cat-bar-wrap"><span class="pp-cat-bar" style="width:${cpct}%"></span></span>
+                <span class="pp-cat-amount">${currency} ${camt.toLocaleString(undefined, { maximumFractionDigits: 2 })}</span>
+              </div>`;
+          });
+          html += `
+            <details class="pp-person">
+              <summary class="per-person-row ${isMe ? 'me' : ''}">
+                <span class="per-person-name"><span class="pp-caret">▸</span>${isMe ? ' 👤' : ''} ${this.escapeHtml(this.nameOf(email))}</span>
+                <span class="per-person-bar-wrap">
+                  <span class="per-person-bar" style="width:${pct}%"></span>
+                </span>
+                <span class="per-person-amount">${currency} ${amt.toLocaleString(undefined, { maximumFractionDigits: 2 })}</span>
+              </summary>
+              <div class="pp-cats">${catRows}</div>
+            </details>
+          `;
+        });
+        html += `<div class="per-person-total">小計 ${currency} ${total.toLocaleString(undefined, { maximumFractionDigits: 2 })}</div>`;
+      });
+      html += `</details>`;
+    }
+
+    el.innerHTML = html;
+  },
+
+  // ⭐ v2.0.0 Peer-to-peer 結算 actions
+
+  // A 按「我已付」 → 建 pending settlement → 通知 B
+  async claimSettlement(btn) {
+    const from = btn.dataset.from;
+    const to = btn.dataset.to;
+    const amount = parseFloat(btn.dataset.amount) || 0;
+    const currency = btn.dataset.currency || 'TWD';
+    if (from !== Auth.user.email) { this.toast('只能標記自己付的'); return; }
+    const note = prompt(`你已給 ${this.nameOf(to)} ${currency} ${amount.toLocaleString()} 了？\n\n可加備註（轉帳方式之類，可空白）：`, '');
+    if (note === null) return; // 取消
+    btn.disabled = true;
+    btn.textContent = '...';
+    try {
+      await Settlements.create({ to_email: to, amount, currency, note: note.trim() });
+      this.toast(`✅ 已記錄，等 ${this.nameOf(to)} 確認`, 4000);
+      this.renderSettlement();
+    } catch (err) {
+      console.error(err);
+      this.toast('失敗：' + err.message);
+      btn.disabled = false;
+    }
+  },
+
+  // A 撤回未確認的 settlement（如果按錯）
+  async cancelSettlement(id) {
+    const s = Settlements.list.find(x => x.id === id);
+    if (!s) return;
+    if (!confirm(`撤回這筆「我已付 ${s.currency} ${parseFloat(s.amount).toLocaleString()}」嗎？\n（如果還沒實際給錢、按錯了就撤回）`)) return;
+    try {
+      await Settlements.cancel(id);
+      this.toast('已撤回');
+      this.renderSettlement();
+    } catch (err) {
+      this.toast('撤回失敗：' + err.message);
+    }
+  },
+
+  // B 按「確認收到」
+  async confirmSettlementClaim(id) {
+    const s = Settlements.list.find(x => x.id === id);
+    if (!s) return;
+    if (!confirm(`確認收到 ${this.nameOf(s.from_email)} 的 ${s.currency} ${parseFloat(s.amount).toLocaleString()}？\n\n確認後就抵銷這筆債務（不可復原）。`)) return;
+    try {
+      await Settlements.confirm(id);
+      this.toast(`✅ 已確認，債務已抵銷`);
+      this.renderSettlement();
+    } catch (err) {
+      console.error(err);
+      this.toast('確認失敗：' + err.message);
+    }
+  },
+
+  // B 拒絕（沒收到）
+  async rejectSettlementClaim(id) {
+    const s = Settlements.list.find(x => x.id === id);
+    if (!s) return;
+    if (!confirm(`回報「沒收到 ${this.nameOf(s.from_email)} 的 ${s.currency} ${parseFloat(s.amount).toLocaleString()}」？\n\n會通知對方，這筆會被刪除（債務維持原樣）`)) return;
+    try {
+      await Settlements.cancel(id);
+      this.toast(`已通知 ${this.nameOf(s.from_email)}`);
+      this.renderSettlement();
+    } catch (err) {
+      this.toast('失敗：' + err.message);
+    }
+  },
+
+  nameOf(email) {
+    if (!email) return '?';
+    if (typeof Nicknames !== 'undefined') {
+      const nick = Nicknames.get(email);
+      if (nick) return nick;
+    }
+    // M4.2: Members.getName 內建 Auth.user 自我 fallback（沒寫死名單了）
+    const memberName = Members.getName(email);
+    if (memberName) return memberName;
+    if (Auth.user && email === Auth.user.email) return '我';
+    return email.split('@')[0];
+  },
+
+  renderExpenses() {
+    const el = document.getElementById('expense-list');
+    if (Expenses.list.length === 0) {
+      el.innerHTML = '<div class="list-empty">還沒有支出，點右下角 + 新增</div>';
+      return;
+    }
+    const sorted = [...Expenses.list].sort((a, b) => {
+      if (a.date !== b.date) return (b.date || '').localeCompare(a.date || '');
+      return (b.created_at || '').localeCompare(a.created_at || '');
+    });
+    // v3.9.15: 只有 trip 成員看得到編輯/刪除鈕；圍觀者唯讀（算一次，迴圈外）
+    const canEdit = this.isCurrentTripMember();
+    el.innerHTML = sorted.map(e => {
+      const amt = parseFloat(e.amount) || 0;
+      // 多付款人顯示
+      let payersStr = this.nameOf(e.payer);
+      try {
+        const payers = JSON.parse(e.payers || '[]');
+        if (Array.isArray(payers) && payers.length > 1) {
+          payersStr = payers.map(p => `${this.nameOf(p.email)}(${(parseFloat(p.amount) || 0).toLocaleString()})`).join(' + ');
+        }
+      } catch {}
+
+      const isSettled = String(e.settled).toUpperCase() === 'TRUE';
+      const settledBadge = isSettled ? '<span class="settled-badge">✅ 已結清</span>' : '';
+      // v3.9.15: 成員才有編輯/刪除鈕；圍觀者不顯示（仍可點整列開唯讀 modal 看明細）
+      const actions = canEdit ? `
+        <div class="item-actions">
+          <button data-action="edit-expense" data-id="${this.escapeAttr(e.id)}" type="button" title="編輯">✏️</button>
+          <button data-action="delete-expense" data-id="${this.escapeAttr(e.id)}" type="button" title="刪除">🗑</button>
+        </div>` : '';
+      return `
+        <div class="list-item expense-item ${isSettled ? 'settled' : ''}" data-expense-id="${this.escapeAttr(e.id)}">
+          <div class="row">
+            <span>${this.escapeHtml(e.category || '')} ${this.escapeHtml(e.description || '(無說明)')}</span>
+            <span class="expense-amount">${e.currency || 'TWD'} ${amt.toLocaleString()}</span>
+          </div>
+          <div class="row">
+            <div class="meta">${e.date} · 由 ${payersStr} 付 ${settledBadge}</div>
+            ${actions}
+          </div>
+        </div>
+      `;
+    }).join('');
+  },
+
+  renderDiaryFilters() {
+    const el = document.getElementById('filter-authors');
+    if (!el) return;
+    const allAuthors = [...new Set(Diaries.list.map(d => d.author))];
+    el.innerHTML = allAuthors.map(email => {
+      const active = this._diaryFilter.authors.includes(email);
+      return `<button type="button" class="filter-chip ${active ? 'active' : ''}" data-email="${this.escapeAttr(email)}">${this.nameOf(email)}</button>`;
+    }).join('');
+    this.updateFilterSummary();
+  },
+
+  updateFilterSummary() {
+    const el = document.getElementById('filter-summary');
+    if (!el) return;
+    const f = this._diaryFilter;
+    const active = (f.authors.length > 0 ? 1 : 0) + (f.dateFrom ? 1 : 0) + (f.dateTo ? 1 : 0) + (f.keyword ? 1 : 0);
+    if (active === 0) { el.textContent = ''; return; }
+    const filtered = this.applyDiaryFilter(Diaries.list);
+    el.textContent = `${active} 個篩選 · 顯示 ${filtered.length}/${Diaries.list.length}`;
+  },
+
+  applyDiaryFilter(list) {
+    const f = this._diaryFilter;
+    // 關鍵字小寫化一次，提升 filter 效率
+    const kw = (f.keyword || '').trim().toLowerCase();
+    return list.filter(d => {
+      if (f.authors.length > 0 && !f.authors.includes(d.author)) return false;
+      if (f.dateFrom && d.date < f.dateFrom) return false;
+      if (f.dateTo && d.date > f.dateTo) return false;
+      if (kw) {
+        // 搜尋範圍：content / mood / location_name / author 暱稱或本名
+        const hay = [
+          d.content || '',
+          d.mood || '',
+          d.location_name || '',
+          this.nameOf(d.author) || '',
+        ].join('\n').toLowerCase();
+        if (!hay.includes(kw)) return false;
+      }
+      return true;
+    });
+  },
+
+  renderDiaries() {
+    const el = document.getElementById('diary-list');
+    let list = this.applyDiaryFilter(Diaries.list);
+    list = [...list].sort((a, b) => {
+      const pa = String(a.pinned).toUpperCase() === 'TRUE';
+      const pb = String(b.pinned).toUpperCase() === 'TRUE';
+      if (pa !== pb) return pa ? -1 : 1;
+      return (b.created_at || '').localeCompare(a.created_at || '');
+    });
+    if (list.length === 0) {
+      const isFiltered = (this._diaryFilter.authors.length > 0 || this._diaryFilter.dateFrom || this._diaryFilter.dateTo || this._diaryFilter.keyword);
+      el.innerHTML = `<div class="list-empty">${isFiltered ? '篩選後沒有日記' : '還沒有日記，點右下角 + 新增'}</div>`;
+      return;
+    }
+    el.innerHTML = list.map(d => {
+      let photoIds = [];
+      try { photoIds = JSON.parse(d.photo_ids || '[]'); } catch {}
+      const photosHtml = photoIds.length ? `
+        <div class="diary-photos">
+          ${photoIds.map(id => `<img src="${API.driveImageUrl(id)}" alt="" loading="lazy" referrerpolicy="no-referrer" data-photo-id="${id}" onerror="App.handleImgError(this)">`).join('')}
+        </div>` : '';
+      let locHtml = '';
+      if (d.location) {
+        let info = null;
+        if (d.location.startsWith('{')) {
+          try { info = JSON.parse(d.location); } catch {}
+        }
+        if (info) {
+          const name = info.name || info.address || '';
+          let link = '';
+          // v3.8.7: 用 Google 推薦的 search API 格式 (place_id + name fallback)
+          //   舊版 `?q=place_id:XXX` 對某些 place_id 會「找不到結果」
+          //   新版 `search/?api=1&query=NAME&query_place_id=XXX` 失敗時自動 fallback name search
+          if (info.place_id && name) {
+            link = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(name)}&query_place_id=${encodeURIComponent(info.place_id)}`;
+          } else if (info.place_id) {
+            link = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(info.address || 'place')}&query_place_id=${encodeURIComponent(info.place_id)}`;
+          } else if (info.lat && info.lng) {
+            link = `https://www.google.com/maps/?q=${info.lat},${info.lng}`;
+          } else if (name) {
+            link = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(name)}`;
+          }
+          if (name) locHtml = link
+            ? ` · <a href="${link}" target="_blank" rel="noopener">📍 ${this.escapeHtml(name)}</a>`
+            : ` · 📍 ${this.escapeHtml(name)}`;
+        } else locHtml = ` · 📍 ${this.escapeHtml(d.location)}`;
+      }
+      // 📁 連結：新群組 sheet header 叫 drive_folder_url、legacy TGL 叫 url — 兩個鍵都認；
+      // 舊日記沒 url 但有 photos 也顯示，點下去 fallback 到 trip 資料夾
+      const driveUrl = d.drive_folder_url || d.url;
+      let driveLink = '';
+      if (driveUrl) {
+        driveLink = `<a href="${this.escapeAttr(driveUrl)}" target="_blank" rel="noopener" class="diary-drive-link" title="開啟 Drive 相簿資料夾">📁</a>`;
+      } else if (photoIds.length > 0) {
+        driveLink = `<button data-action="open-trip-folder" data-id="${this.escapeAttr(d.id)}" type="button" class="diary-drive-link" title="開啟 trip 照片資料夾（早期日記沒記 folder URL）">📁</button>`;
+      }
+      const isMine = Auth.user && d.author === Auth.user.email;
+      const isPinned = String(d.pinned).toUpperCase() === 'TRUE';
+      const actions = `
+        <div class="item-actions">
+          ${driveLink}
+          <button data-action="pin-diary" data-id="${this.escapeAttr(d.id)}" type="button" title="${isPinned ? '取消置頂' : '置頂'}">${isPinned ? '⭐' : '☆'}</button>
+          ${isMine ? `
+            <button data-action="edit-diary" data-id="${this.escapeAttr(d.id)}" type="button" title="編輯">✏️</button>
+            <button data-action="delete-diary" data-id="${this.escapeAttr(d.id)}" type="button" title="刪除">🗑</button>` : ''}
+        </div>`;
+      return `
+        <div class="diary-item ${isPinned ? 'pinned' : ''}" data-diary-id="${this.escapeAttr(d.id)}">
+          <div class="diary-header">
+            <div>
+              <span class="diary-mood">${this.escapeHtml(d.mood || '')}</span>
+              <strong>${this.nameOf(d.author)}</strong>
+            </div>
+            <div class="diary-meta">${d.date}${locHtml}</div>
+          </div>
+          <div class="diary-content">${this.renderContentWithMentions(d.content || '', this._parseMentionEmails(d.mentions))}</div>
+          ${photosHtml}
+          ${actions}
+          ${this.renderReactionsBar(d.id)}
+          ${this.renderCommentsSection(d.id)}
+        </div>
+      `;
+    }).join('');
+  },
+
+  // 表情反應列：6 個表情常駐顯示，有人按過的會帶數字 + 我按的會 highlight
+  renderReactionsBar(diaryId) {
+    if (typeof Reactions === 'undefined') return '';
+    const summary = Reactions.summary(diaryId);
+    const buttons = Reactions.EMOJIS.map(emoji => {
+      const info = summary[emoji];
+      const count = info ? info.count : 0;
+      const mine = info ? info.mine : false;
+      // tooltip 顯示誰按的（用暱稱）
+      const who = (info && info.authors.length)
+        ? info.authors.map(e => this.nameOf(e)).join('、')
+        : '';
+      const cls = `reaction-btn${mine ? ' reacted' : ''}${count > 0 ? ' has-count' : ''}`;
+      return `<button type="button" class="${cls}" data-action="toggle-reaction" `
+        + `data-id="${this.escapeAttr(diaryId)}" data-emoji="${this.escapeAttr(emoji)}"`
+        + `${who ? ` title="${this.escapeAttr(who)}"` : ''}>`
+        + `<span class="reaction-emoji">${emoji}</span>`
+        + `${count > 0 ? `<span class="reaction-count">${count}</span>` : ''}`
+        + `</button>`;
+    }).join('');
+    return `<div class="reactions-bar" data-diary-id="${this.escapeAttr(diaryId)}">${buttons}</div>`;
+  },
+
+  renderCommentsSection(diaryId) {
+    if (typeof Comments === 'undefined') return '';
+    const comments = Comments.getForDiary(diaryId);
+    return `
+      <div class="comments-section">
+        ${comments.length > 0 ? `
+          <div class="comments-list">
+            ${comments.map(c => {
+              const isMine = Auth.user && c.author === Auth.user.email;
+              return `
+                <div class="comment-item" data-comment-id="${this.escapeAttr(c.id)}">
+                  <div class="comment-header">
+                    <strong>${this.escapeHtml(this.nameOf(c.author))}</strong>
+                    <small class="comment-time">${this.formatRelativeTime(c.created_at)}</small>
+                    ${isMine ? `<button class="comment-delete" data-action="delete-comment" data-id="${this.escapeAttr(c.id)}" type="button" aria-label="刪除">×</button>` : ''}
+                  </div>
+                  <div class="comment-content">${this.renderContentWithMentions(c.content, this._parseMentionEmails(c.mentions))}</div>
+                </div>
+              `;
+            }).join('')}
+          </div>
+        ` : ''}
+        <div class="comment-input-wrap" data-diary-id="${this.escapeAttr(diaryId)}">
+          <input type="text" class="comment-input" placeholder="💬 留言（打「@」tag 人）..." maxlength="500">
+          <button type="button" class="comment-send">送出</button>
+        </div>
+      </div>
+    `;
+  },
+
+  formatRelativeTime(iso) {
+    if (!iso) return '';
+    const date = new Date(iso);
+    if (isNaN(date)) return '';
+    const diff = Date.now() - date.getTime();
+    const min = Math.floor(diff / 60000);
+    if (min < 1) return '剛剛';
+    if (min < 60) return `${min} 分鐘前`;
+    const hour = Math.floor(min / 60);
+    if (hour < 24) return `${hour} 小時前`;
+    const day = Math.floor(hour / 24);
+    if (day < 30) return `${day} 天前`;
+    return date.toISOString().slice(0, 10);
+  },
+
+  renderNicknamesUI() {
+    const el = document.getElementById('nicknames-list');
+    if (!el || typeof Nicknames === 'undefined') return;
+    el.innerHTML = Members.all().map((m) => {
+      const entry = Nicknames.getEntry(m.email);
+      const nick = entry ? entry.nickname : '';
+      const byInfo = (entry && entry.updated_by && entry.updated_by !== m.email)
+        ? `<small class="nick-by">（${this.escapeHtml(this.nameOf(entry.updated_by))} 改的）</small>`
+        : '';
+      return `
+        <div class="nickname-row">
+          <div class="nickname-info">
+            <div><strong>${this.escapeHtml(m.name)}</strong> <small style="color:var(--text-light);">${this.escapeHtml(m.email)}</small></div>
+            <div class="current-nick">${nick ? '「' + this.escapeHtml(nick) + '」' : '<span style="color:var(--text-light);">(無暱稱)</span>'} ${byInfo}</div>
+          </div>
+          <button class="btn-edit-nickname" data-email="${this.escapeAttr(m.email)}" type="button">改</button>
+        </div>
+      `;
+    }).join('');
+  },
+
+  // ===== Mentions =====
+
+  // 建立「所有已知名字 → email」對照表，給 @mention 比對用。
+  // 同一個人會有多種可能的稱呼（目前暱稱 / Members display_name / email 前綴 / Gmail 名），全部收進來，
+  //   並「長名字排前面」→ greedy 比對時先吃「Batnini Wei」再吃「Batnini」，含空白的名字也比對得到。
+  //   （舊版用 /@([^\s…]+)/ regex，遇到空白就斷掉，是「@Batnini Wei」變純文字的主因）
+  _mentionNameIndex() {
+    const idx = [];
+    const push = (name, email) => {
+      const n = (name || '').trim();
+      if (n && email) idx.push({ name: n, email });
+    };
+    const members = (typeof Members !== 'undefined') ? Members.all() : [];
+    members.forEach(m => {
+      push(this.nameOf(m.email), m.email);            // 目前顯示名（暱稱 > display_name > Gmail）
+      push(m.name, m.email);                           // Members display_name（穩定，改暱稱也不變）
+      push(m.email.split('@')[0], m.email);            // email 前綴
+      if (typeof Nicknames !== 'undefined') push(Nicknames.get(m.email), m.email); // 目前暱稱
+    });
+    if (typeof Auth !== 'undefined' && Auth.user) {
+      push(this.nameOf(Auth.user.email), Auth.user.email);
+      push(Auth.user.name, Auth.user.email);
+    }
+    // 去重 + 由長到短排序（greedy 要先比最長的名字）
+    const seen = new Set();
+    return idx
+      .filter(x => { const k = x.email + ' ' + x.name; if (seen.has(k)) return false; seen.add(k); return true; })
+      .sort((a, b) => b.name.length - a.name.length);
+  },
+
+  // 掃描 content 內的 @mention：用名字表 greedy 比對（可跨空白）。
+  // 回傳 { segments, emails }：segments 給 render 組 HTML、emails 是命中的 email（給 parse 存檔）。
+  // 沒比中已知名字的 @xxx 標成 'pending'，留給 render 用「發文當下存的 mentions」補救（改暱稱前的舊 tag）。
+  _scanMentions(content, index) {
+    const segments = [];
+    const emails = [];
+    let i = 0, plainStart = 0;
+    const flushPlain = end => { if (end > plainStart) segments.push({ type: 'text', text: content.slice(plainStart, end) }); };
+    while (i < content.length) {
+      if (content[i] === '@') {
+        const hit = index.find(c => content.startsWith('@' + c.name, i));
+        if (hit) {
+          flushPlain(i);
+          segments.push({ type: 'mention', email: hit.email });
+          emails.push(hit.email);
+          i += 1 + hit.name.length; plainStart = i;
+          continue;
+        }
+        // 沒命中 → 抓出這個 @token（到空白/標點為止）標 pending
+        const tok = content.slice(i).match(/^@[^\s@,。，！？!?]+/);
+        if (tok) {
+          flushPlain(i);
+          segments.push({ type: 'pending', text: tok[0] });
+          i += tok[0].length; plainStart = i;
+          continue;
+        }
+      }
+      i++;
+    }
+    flushPlain(content.length);
+    return { segments, emails };
+  },
+
+  // 安全解析 mentions 欄位（sheet 存的是 JSON 字串）→ email 陣列
+  _parseMentionEmails(mentionsField) {
+    if (!mentionsField) return [];
+    if (Array.isArray(mentionsField)) return mentionsField;
+    try { const a = JSON.parse(mentionsField); return Array.isArray(a) ? a : []; } catch { return []; }
+  },
+
+  // 解析 content 中的 @名字 → emails（發文/留言時存進 mentions 欄位）
+  parseMentions(content) {
+    if (!content) return [];
+    const { emails } = this._scanMentions(content, this._mentionNameIndex());
+    return Array.from(new Set(emails));
+  },
+
+  // 顯示 content + highlight @mentions
+  // 一律用「目前」暱稱顯示（即使原文打的是本名「@魏德睿」，現在暱稱「禿」就顯示「@禿」）
+  // knownEmails = 這篇發文當下存的 mention emails（穩定）→ 補救「發文後才改暱稱」造成文字對不上的舊 tag
+  renderContentWithMentions(content, knownEmails) {
+    if (!content) return '';
+    const { segments, emails } = this._scanMentions(content, this._mentionNameIndex());
+    const resolved = new Set(emails);
+    const leftover = (knownEmails || []).filter(e => !resolved.has(e));
+    let li = 0;
+    return segments.map(s => {
+      if (s.type === 'text') return this.escapeHtml(s.text);
+      if (s.type === 'mention') return `<span class="mention">@${this.escapeHtml(this.nameOf(s.email))}</span>`;
+      // pending：優先用剩下的 stored email 補回 chip（顯示目前暱稱），補不到才當純文字
+      if (li < leftover.length) return `<span class="mention">@${this.escapeHtml(this.nameOf(leftover[li++]))}</span>`;
+      return this.escapeHtml(s.text);
+    }).join('');
+  },
+
+  // 本地時區的今天 YYYY-MM-DD（toISOString 是 UTC，台灣 00:00–08:00 開表單會差一天）
+  localToday() {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  },
+
+  // ===== Mention autocomplete dropdown =====
+
+  // 偵測游標前是否有 @xxx，若有就 show dropdown
+  handleMentionInput(inputEl) {
+    const text = inputEl.value;
+    const pos = inputEl.selectionStart || 0;
+    const before = text.slice(0, pos);
+    const atIdx = before.lastIndexOf('@');
+    if (atIdx === -1) { this.closeMentionDropdown(); return; }
+    const between = before.slice(atIdx + 1);
+    // @ 跟游標之間如果有 space / 標點，已經結束 mention
+    if (/[\s,，。、!?！？]/.test(between)) { this.closeMentionDropdown(); return; }
+    if (between.length > 20) { this.closeMentionDropdown(); return; }
+    this.showMentionDropdown(inputEl, atIdx, between);
+  },
+
+  showMentionDropdown(inputEl, atIdx, query) {
+    this._mentionState = { inputEl, atIdx };
+    const dropdown = document.getElementById('mention-dropdown');
+    if (!dropdown) return;
+
+    const lowerQ = (query || '').toLowerCase();
+    const matches = Members.all().filter(m => {
+      if (!lowerQ) return true;
+      const display = this.nameOf(m.email).toLowerCase();
+      return display.includes(lowerQ) || (m.name || '').toLowerCase().includes(lowerQ);
+    });
+    if (matches.length === 0) { this.closeMentionDropdown(); return; }
+
+    dropdown.innerHTML = matches.map((m, i) => {
+      const display = this.nameOf(m.email);
+      return `<div class="mention-option ${i === 0 ? 'active' : ''}" data-name="${this.escapeAttr(display)}">@${this.escapeHtml(display)}</div>`;
+    }).join('');
+
+    // 定位在 input 下方
+    const rect = inputEl.getBoundingClientRect();
+    dropdown.style.left = `${rect.left + window.scrollX}px`;
+    dropdown.style.top = `${rect.bottom + window.scrollY + 4}px`;
+    dropdown.style.minWidth = `${Math.min(Math.max(rect.width, 160), 240)}px`;
+    dropdown.classList.remove('hidden');
+    dropdown.classList.add('show');
+
+    // Mousedown + touchstart 避免 blur 觸發
+    dropdown.querySelectorAll('.mention-option').forEach(opt => {
+      opt.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        this.applyMention(opt.dataset.name);
+      });
+      opt.addEventListener('touchstart', (e) => {
+        e.preventDefault();
+        this.applyMention(opt.dataset.name);
+      }, { passive: false });
+    });
+  },
+
+  closeMentionDropdown() {
+    const dropdown = document.getElementById('mention-dropdown');
+    if (dropdown) {
+      dropdown.classList.add('hidden');
+      dropdown.classList.remove('show');
+    }
+    this._mentionState = null;
+  },
+
+  applyMention(name) {
+    if (!this._mentionState) return;
+    const { inputEl, atIdx } = this._mentionState;
+    const pos = inputEl.selectionStart || 0;
+    const before = inputEl.value.slice(0, atIdx);
+    const after = inputEl.value.slice(pos);
+    const inserted = `@${name} `;
+    inputEl.value = before + inserted + after;
+    const newPos = atIdx + inserted.length;
+    inputEl.selectionStart = inputEl.selectionEnd = newPos;
+    inputEl.focus();
+    this.closeMentionDropdown();
+    inputEl.dispatchEvent(new Event('input', { bubbles: true }));
+  },
+
+  handleMentionKey(e) {
+    const dropdown = document.getElementById('mention-dropdown');
+    if (!dropdown || dropdown.classList.contains('hidden')) return;
+
+    if (e.key === 'Escape') { this.closeMentionDropdown(); e.preventDefault(); return; }
+
+    if (e.key === 'Enter' || e.key === 'Tab') {
+      const active = dropdown.querySelector('.mention-option.active');
+      if (active) {
+        e.preventDefault();
+        this.applyMention(active.dataset.name);
+      }
+      return;
+    }
+
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      const options = Array.from(dropdown.querySelectorAll('.mention-option'));
+      if (options.length === 0) return;
+      let activeIdx = options.findIndex(o => o.classList.contains('active'));
+      if (activeIdx === -1) activeIdx = 0;
+      if (e.key === 'ArrowDown') activeIdx = (activeIdx + 1) % options.length;
+      else activeIdx = (activeIdx - 1 + options.length) % options.length;
+      options.forEach((o, i) => o.classList.toggle('active', i === activeIdx));
+    }
+  },
+
+  escapeHtml(s) {
+    const div = document.createElement('div');
+    div.textContent = s == null ? '' : String(s);
+    return div.innerHTML;
+  },
+
+  escapeAttr(s) { return String(s).replace(/"/g, '&quot;'); },
+
+  // ===== Modals =====
+
+  openModal(id) { document.getElementById(id).classList.remove('hidden'); },
+  closeModal(id) { document.getElementById(id).classList.add('hidden'); },
+
+  // ===== Payer (多付款人) =====
+
+  renderPayerRows(payers) {
+    const el = document.getElementById('payer-rows');
+    if (!el) return;
+    el.innerHTML = payers.map((p, i) => this._payerRowHTML(p, i)).join('');
+  },
+
+  _payerRowHTML(payer, idx) {
+    const members = Trips.getMembers();
+    const memberOptions = members.map(m =>
+      `<option value="${this.escapeAttr(m)}" ${m === payer.email ? 'selected' : ''}>${this.nameOf(m)}</option>`
+    ).join('');
+    const amountVal = (payer.amount !== '' && payer.amount !== null && payer.amount !== undefined) ? payer.amount : '';
+    return `
+      <div class="payer-row">
+        <select class="payer-email">${memberOptions}</select>
+        <input type="number" class="payer-amount" placeholder="${idx === 0 ? '= 總額' : '金額'}" value="${amountVal}" step="0.01" min="0" inputmode="decimal">
+        ${idx > 0 ? '<button type="button" class="remove-payer" aria-label="刪除">×</button>' : ''}
+      </div>
+    `;
+  },
+
+  addPayerRow() {
+    const el = document.getElementById('payer-rows');
+    const idx = el.querySelectorAll('.payer-row').length;
+    const div = document.createElement('div');
+    div.innerHTML = this._payerRowHTML({ email: Auth.user.email, amount: '' }, idx);
+    el.appendChild(div.firstElementChild);
+    this.updatePayerPreview();
+  },
+
+  updatePayerPreview() {
+    const form = document.getElementById('expense-form');
+    if (!form) return;
+    const totalAmount = parseFloat(form.elements['amount'].value) || 0;
+    const rows = Array.from(document.querySelectorAll('#payer-rows .payer-row'));
+    let sumExplicit = 0;
+    let emptyRowFirst = null;
+    rows.forEach(r => {
+      const inp = r.querySelector('.payer-amount');
+      const v = parseFloat(inp.value);
+      if (!isNaN(v) && inp.value !== '') sumExplicit += v;
+      else if (!emptyRowFirst) emptyRowFirst = r;
+    });
+    if (emptyRowFirst) {
+      const remainder = Math.round((totalAmount - sumExplicit) * 100) / 100;
+      const inp = emptyRowFirst.querySelector('.payer-amount');
+      inp.placeholder = remainder > 0 ? `= ${remainder.toLocaleString()}` : '0';
+    }
+    const summary = document.getElementById('payer-summary');
+    if (summary) {
+      if (totalAmount === 0) { summary.textContent = ''; summary.classList.remove('error'); }
+      else if (!emptyRowFirst && Math.abs(sumExplicit - totalAmount) > 0.01) {
+        summary.textContent = `⚠️ 付款人合計 ${sumExplicit} ≠ 總額 ${totalAmount}`;
+        summary.classList.add('error');
+      } else {
+        summary.textContent = `付款人合計 ${(sumExplicit + (emptyRowFirst ? totalAmount - sumExplicit : 0)).toLocaleString()} / ${totalAmount.toLocaleString()} ✓`;
+        summary.classList.remove('error');
+      }
+    }
+  },
+
+  openExpenseModal(id = null) {
+    const form = document.getElementById('expense-form');
+    form.reset();
+    this._editingExpenseId = id;
+    this._expenseUnlockedFromSettled = false;  // reset flag
+    const headerTitle = document.querySelector('#modal-expense .modal-header h2');
+    headerTitle.textContent = id ? '編輯支出' : '新增支出';
+    const members = Trips.getMembers();
+    if (members.length === 0) { this.toast('當前 trip 沒有成員，請先編輯 trip'); return; }
+    form.elements['date'].value = this.localToday();
+
+    // 預設付款人（自己，空白會自動 = 總額）
+    let initialPayers = [{ email: Auth.user.email, amount: '' }];
+
+    // splits rows
+    const rowsEl = document.getElementById('split-rows');
+    rowsEl.innerHTML = members.map((m, idx) => `
+      <div class="split-row">
+        <input type="checkbox" id="split-${idx}" data-email="${this.escapeAttr(m)}" checked>
+        <label for="split-${idx}">${this.nameOf(m)}</label>
+        <input type="number" placeholder="自動均分" data-share-email="${this.escapeAttr(m)}" step="0.01" min="0" inputmode="decimal">
+      </div>
+    `).join('');
+
+    if (id) {
+      const e = Expenses.list.find(x => x.id === id);
+      if (!e) { this.toast('找不到該支出'); return; }
+      form.elements['date'].value = e.date;
+      form.elements['amount'].value = e.amount;
+      form.elements['currency'].value = e.currency;
+      const catSelect = form.elements['category'];
+      const catOption = Array.from(catSelect.options).find(o => o.value === e.category);
+      if (catOption) catSelect.value = e.category;
+      form.elements['description'].value = e.description;
+
+      // Parse payers
+      let parsedPayers;
+      try { parsedPayers = JSON.parse(e.payers || '[]'); } catch {}
+      if (Array.isArray(parsedPayers) && parsedPayers.length > 0) {
+        initialPayers = parsedPayers.map(p => ({ email: p.email, amount: p.amount }));
+      } else {
+        initialPayers = [{ email: e.payer, amount: parseFloat(e.amount) }];
+      }
+
+      // Parse splits
+      try {
+        const splits = JSON.parse(e.splits);
+        const splitMap = {};
+        splits.forEach(s => { splitMap[s.email] = s; });
+        members.forEach((m, idx) => {
+          const cb = document.getElementById(`split-${idx}`);
+          const amtInput = rowsEl.querySelector(`[data-share-email="${this.escapeAttr(m)}"]`);
+          if (splitMap[m]) {
+            cb.checked = true;
+            if (splitMap[m].share !== undefined) {
+              const share = parseFloat(splitMap[m].share);
+              // 負值或 0 視為空白（修舊 bug 的爛資料；submit 時會自動均分重算）
+              if (share > 0) amtInput.value = share;
+            } else if (splitMap[m].ratio !== undefined) {
+              const totalRatio = splits.reduce((s, x) => s + (parseFloat(x.ratio) || 0), 0);
+              if (totalRatio > 0) {
+                const share = parseFloat(e.amount) * (parseFloat(splitMap[m].ratio) || 0) / totalRatio;
+                if (share > 0) amtInput.value = Math.round(share * 100) / 100;
+              }
+            }
+          } else cb.checked = false;
+        });
+      } catch (err) { console.warn('Failed to parse splits', err); }
+    }
+
+    this.renderPayerRows(initialPayers);
+    this.updateSplitPreview();
+    this.updatePayerPreview();
+    // 鎖定狀態判定（優先序）：圍觀者整個唯讀 > 已結清那筆唯讀 > 正常可編輯
+    let lockState = 'normal';
+    if (!this.isCurrentTripMember()) {
+      lockState = 'viewer';   // v3.9.15: 非 trip 成員只能檢視，不能存
+    } else if (id) {
+      const e = Expenses.list.find(x => x.id === id);
+      if (e && String(e.settled).toUpperCase() === 'TRUE') lockState = 'locked';
+    }
+    this._toggleExpenseFormLock(lockState);
+    this.openModal('modal-expense');
+  },
+
+  // state: 'normal' / 'locked'（已結清那筆唯讀）/ 'unlocked-from-settled' / 'viewer'（圍觀者唯讀，v3.9.15）
+  _toggleExpenseFormLock(state) {
+    const form = document.getElementById('expense-form');
+    const banner = document.getElementById('expense-lock-banner');
+    const unlockBtn = document.getElementById('expense-unlock-btn');
+    const relockBtn = document.getElementById('expense-relock-btn');
+    const submitBtn = form.querySelector('[type="submit"]');
+
+    // locked(已結清) 和 viewer(圍觀者) 都是「唯讀」：欄位禁用 + 藏儲存鈕
+    const isReadonly = state === 'locked' || state === 'viewer';
+
+    // 鎖/解鎖所有 inputs/selects/textareas
+    form.querySelectorAll('input, select, textarea').forEach(el => { el.disabled = isReadonly; });
+    const addPayerBtn = document.getElementById('add-payer-btn');
+    if (addPayerBtn) addPayerBtn.disabled = isReadonly;
+    form.querySelectorAll('.remove-payer').forEach(b => b.disabled = isReadonly);
+
+    if (submitBtn) submitBtn.style.display = isReadonly ? 'none' : '';
+
+    if (banner) {
+      banner.classList.remove('unlocked');
+      if (state === 'normal') {
+        banner.classList.add('hidden');
+      } else if (state === 'viewer') {
+        banner.classList.remove('hidden');
+        banner.textContent = '👁 你不是這個 trip 的成員，只能檢視支出（不能修改）';
+      } else if (state === 'locked') {
+        banner.classList.remove('hidden');
+        banner.textContent = '🔒 這筆已結清，僅檢視。按「✏️ 解鎖修改」可改（會變回未結清）';
+      } else if (state === 'unlocked-from-settled') {
+        banner.classList.remove('hidden');
+        banner.classList.add('unlocked');
+        banner.textContent = '⚠️ 已解鎖修改中（儲存後變回未結清）。想取消？按「🔒 取消修改」恢復鎖定';
+      }
+    }
+
+    // 解鎖鈕只有「已結清」才給；圍觀者(viewer)解鎖也不能改，所以不顯示
+    if (unlockBtn) unlockBtn.classList.toggle('hidden', state !== 'locked');
+    if (relockBtn) relockBtn.classList.toggle('hidden', state !== 'unlocked-from-settled');
+  },
+
+  unlockExpense() {
+    if (!confirm('這筆已結清。\n\n確定要修改嗎？修改後會自動變回「未結清」狀態，重新算入結算。')) return;
+    this._expenseUnlockedFromSettled = true;
+    this._toggleExpenseFormLock('unlocked-from-settled');
+    this.toast('已解鎖，可修改（或按「🔒 取消修改」恢復鎖定）');
+  },
+
+  // 解鎖後反悔，恢復鎖定狀態（不改 sheet，只改 UI 跟 flag）
+  relockExpense() {
+    this._expenseUnlockedFromSettled = false;
+    this._toggleExpenseFormLock('locked');
+    this.toast('🔒 已恢復鎖定');
+  },
+
+  updateSplitPreview() {
+    const form = document.getElementById('expense-form');
+    const totalAmount = parseFloat(form.elements['amount'].value) || 0;
+    const rowsEl = document.getElementById('split-rows');
+    if (!rowsEl) return;
+    const rows = Array.from(rowsEl.querySelectorAll('.split-row'));
+    const checkedRows = rows.filter(r => r.querySelector('input[type="checkbox"]').checked);
+    let filledTotal = 0;
+    let emptyCount = 0;
+    checkedRows.forEach(r => {
+      const amtInput = r.querySelector('input[type="number"]');
+      const val = parseFloat(amtInput.value);
+      if (!isNaN(val) && amtInput.value !== '') filledTotal += val;
+      else emptyCount++;
+    });
+    const remaining = totalAmount - filledTotal;
+    const perEmpty = emptyCount > 0 ? remaining / emptyCount : 0;
+    checkedRows.forEach(r => {
+      const amtInput = r.querySelector('input[type="number"]');
+      if (amtInput.value === '' || isNaN(parseFloat(amtInput.value))) {
+        amtInput.placeholder = totalAmount > 0 ? `均分 ${(Math.round(perEmpty * 100) / 100).toLocaleString()}` : '自動均分';
+      }
+    });
+    rows.filter(r => !r.querySelector('input[type="checkbox"]').checked).forEach(r => {
+      const inp = r.querySelector('input[type="number"]');
+      inp.value = '';
+      inp.placeholder = '不分';
+    });
+    const summary = document.getElementById('split-summary');
+    if (summary) {
+      const computedTotal = filledTotal + (emptyCount * perEmpty);
+      const diff = Math.abs(computedTotal - totalAmount);
+      if (totalAmount === 0) { summary.textContent = ''; summary.classList.remove('error'); }
+      else if (checkedRows.length === 0) { summary.textContent = '⚠️ 請至少勾一個分帳人'; summary.classList.add('error'); }
+      else if (emptyCount === 0 && diff > 0.01) { summary.textContent = `⚠️ 已填 ${filledTotal.toLocaleString()}，總額 ${totalAmount.toLocaleString()}（差 ${(totalAmount - filledTotal).toLocaleString()}）`; summary.classList.add('error'); }
+      else if (remaining < -0.01) { summary.textContent = `⚠️ 已填超過總額`; summary.classList.add('error'); }
+      else { summary.textContent = `合計 ${computedTotal.toLocaleString()} / ${totalAmount.toLocaleString()} ✓`; summary.classList.remove('error'); }
+    }
+  },
+
+  async openDiaryModal(id = null) {
+    const form = document.getElementById('diary-form');
+    form.reset();
+    this._editingDiaryId = id;
+    this._selectedPlace = null;
+    this._pendingDiaryWishId = null; // v3.3.0 M6.2.3: 若選了 wish 暫存 id，submit 時用
+    document.querySelector('#modal-diary .modal-header h2').textContent = id ? '編輯日記' : '新增日記';
+    form.elements['date'].value = this.localToday();
+    const photosLabel = form.querySelector('input[name="photos"]').closest('label');
+    photosLabel.style.display = id ? 'none' : '';
+    const locInput = form.elements['location'];
+    try {
+      await Maps.load();
+      if (!locInput.dataset.acAttached) {
+        Maps.attachAutocomplete(locInput, (place) => { this._selectedPlace = place; });
+        locInput.dataset.acAttached = '1';
+      }
+    } catch (err) { console.warn('Places autocomplete 未啟用：', err.message); }
+
+    // v3.3.0 M6.2.3: 渲染「從 Wishlist 選」chips（只列 planned / promoted，已 visited 不重複選）
+    this._renderDiaryWishlistChips();
+
+    // v1.7.5: 取消 chip 列，改用 @autocomplete dropdown
+    if (id) {
+      const d = Diaries.list.find(x => x.id === id);
+      if (!d) { this.toast('找不到該日記'); return; }
+      form.elements['date'].value = d.date;
+      form.elements['mood'].value = d.mood;
+      form.elements['content'].value = d.content;
+      let locDisplay = d.location || '';
+      if (locDisplay.startsWith('{')) {
+        try { const info = JSON.parse(locDisplay); locDisplay = info.name || info.address || ''; } catch {}
+      }
+      form.elements['location'].value = locDisplay;
+    }
+    this.openModal('modal-diary');
+  },
+
+  openTripsModal() {
+    const el = document.getElementById('trip-list');
+    if (Trips.list.length === 0) el.innerHTML = '<div class="list-empty">還沒有任何 trip</div>';
+    else {
+      el.innerHTML = Trips.list.map(t => `
+        <div class="trip-item ${Trips.current && t.trip_id === Trips.current.trip_id ? 'current' : ''}">
+          <div class="trip-select" data-action="select-trip" data-trip-id="${this.escapeAttr(t.trip_id)}">
+            <div><strong>${this.escapeHtml(t.name)}</strong></div>
+            <div class="dates">${t.start_date} ~ ${t.end_date}</div>
+          </div>
+          <button data-action="edit-trip" data-trip-id="${this.escapeAttr(t.trip_id)}" type="button" title="編輯成員/日期" class="trip-edit-btn">✏️</button>
+          <button data-action="delete-trip" data-trip-id="${this.escapeAttr(t.trip_id)}" type="button" title="刪除整個 trip" class="trip-delete-btn">🗑</button>
+        </div>
+      `).join('');
+    }
+    this.openModal('modal-trips');
+  },
+
+  // v3.8.7: 新建 trip 預設「只勾自己」(舊版預設全勾，朋友容易誤把不該參加的全拉進來)
+  //   - 編輯既有 trip: 按 existingMembers 勾 (邏輯不變)
+  //   - 新建 trip (existingMembers 空): 只勾 Auth.user.email，其他全不勾
+  renderTripMemberCheckboxes(existingMembers) {
+    const el = document.getElementById('new-trip-members');
+    if (!el) return;
+    const isEditing = existingMembers.length > 0;
+    const myEmail = (Auth.user || {}).email;
+    el.innerHTML = Members.all().map((m, i) => {
+      const checked = isEditing
+        ? (existingMembers.includes(m.email) ? 'checked' : '')
+        : (m.email === myEmail ? 'checked' : '');
+      return `
+        <div class="member-check-row">
+          <input type="checkbox" id="ntmem-${i}" value="${this.escapeAttr(m.email)}" ${checked}>
+          <label for="ntmem-${i}">${this.escapeHtml(this.nameOf(m.email))}</label>
+        </div>
+      `;
+    }).join('');
+  },
+
+  openNewTripModal() {
+    const form = document.getElementById('new-trip-form');
+    form.reset();
+    this._editingTripId = null;
+    form.elements['trip_id'].disabled = false;
+    form.elements['start_date'].value = this.localToday();
+    delete form.elements['trip_id'].dataset.touched;
+    this.renderTripMemberCheckboxes([]);
+    document.querySelector('#modal-new-trip .modal-header h2').textContent = '新增 Trip';
+    document.querySelector('#modal-new-trip [type="submit"]').textContent = '建立';
+    this.openModal('modal-new-trip');
+  },
+
+  openEditTripModal(tripId) {
+    const t = Trips.list.find(x => x.trip_id === tripId);
+    if (!t) { this.toast('找不到該 trip'); return; }
+    const form = document.getElementById('new-trip-form');
+    form.reset();
+    this._editingTripId = tripId;
+    form.elements['trip_id'].value = t.trip_id;
+    form.elements['trip_id'].disabled = true;
+    form.elements['name'].value = t.name;
+    form.elements['start_date'].value = t.start_date;
+    form.elements['end_date'].value = t.end_date;
+    try {
+      const members = JSON.parse(t.members || '[]');
+      this.renderTripMemberCheckboxes(Array.isArray(members) ? members : []);
+    } catch { this.renderTripMemberCheckboxes([]); }
+    document.querySelector('#modal-new-trip .modal-header h2').textContent = '編輯 Trip';
+    document.querySelector('#modal-new-trip [type="submit"]').textContent = '儲存';
+    this.openModal('modal-new-trip');
+  },
+
+  // 刪除整個 trip（要兩次確認）
+  async confirmDeleteTrip(tripId) {
+    const trip = Trips.list.find(t => t.trip_id === tripId);
+    if (!trip) { this.toast('找不到該 trip'); return; }
+    // 統計連帶影響
+    const tripExpenses = (typeof Expenses !== 'undefined')
+      ? Expenses.allList.filter(e => e.trip_id === tripId) : [];
+    const tripDiaries = (typeof Diaries !== 'undefined')
+      ? Diaries.allList.filter(d => d.trip_id === tripId) : [];
+    const tripItineraries = (typeof Itineraries !== 'undefined')
+      ? Itineraries.allList.filter(i => i.trip_id === tripId) : [];
+    const stats = `📊 ${trip.name} (${trip.start_date} ~ ${trip.end_date})\n` +
+      `  • ${tripExpenses.length} 筆記帳\n` +
+      `  • ${tripDiaries.length} 篇日記\n` +
+      `  • ${tripItineraries.length} 條行程\n` +
+      `  • 留言/通知會連帶清掉\n` +
+      `  • 照片仍保留在 Drive`;
+    // 第 1 次確認
+    if (!confirm(`⚠️ 刪除 trip？\n\n${stats}\n\n(第 1 次確認)`)) return;
+    // 第 2 次確認
+    if (!confirm(`🚨 最後確認\n\n真的要刪「${trip.name}」嗎？\n\n此操作不可復原。`)) return;
+    this.closeModal('modal-trips');
+    this.toast('刪除中...請稍候');
+    try {
+      const counts = await Trips.delete(tripId);
+      const total = counts.expenses + counts.diaries + counts.comments + (counts.itineraries || 0) + (counts.settlements || 0) + counts.notifications;
+      this.toast(`✅ Trip「${trip.name}」已刪除（連 ${total} 筆相關資料）`, 5000);
+      if (Trips.list.length === 0) {
+        this.toast('沒有 trip 了，建一個新的吧');
+        this.openNewTripModal();
+      } else {
+        await this.refreshAll();
+      }
+    } catch (err) {
+      console.error('delete trip failed:', err);
+      this.toast('刪除失敗：' + (err.message || err), 6000);
+    }
+  },
+
+  // ===== Form handlers =====
+
+  async handleExpenseSubmit(e) {
+    e.preventDefault();
+    const form = e.target;
+    const submitBtn = form.querySelector('[type="submit"]');
+    submitBtn.disabled = true;
+    const origText = submitBtn.textContent;
+    submitBtn.textContent = '儲存中...';
+    try {
+      const totalAmount = parseFloat(form.elements['amount'].value) || 0;
+      if (totalAmount <= 0) { this.toast('總額要 > 0'); return; }
+
+      // === 收集 payers ===
+      const payerRows = Array.from(document.querySelectorAll('#payer-rows .payer-row'));
+      if (payerRows.length === 0) { this.toast('需要至少一位付款人'); return; }
+      let sumExplicit = 0;
+      const payersTmp = [];
+      let emptyIdx = -1;
+      payerRows.forEach((r, i) => {
+        const sel = r.querySelector('.payer-email');
+        const inp = r.querySelector('.payer-amount');
+        const email = sel.value;
+        const v = parseFloat(inp.value);
+        if (inp.value !== '' && !isNaN(v) && v > 0) {
+          sumExplicit += v;
+          payersTmp.push({ email, amount: v });
+        } else {
+          payersTmp.push({ email, amount: null });
+          if (emptyIdx === -1) emptyIdx = i;
+        }
+      });
+      if (emptyIdx >= 0) payersTmp[emptyIdx].amount = Math.round((totalAmount - sumExplicit) * 100) / 100;
+      const payers = payersTmp.filter(p => p.amount && p.amount > 0);
+      if (payers.length === 0) { this.toast('需要至少一位有效付款人'); return; }
+      const payersSum = payers.reduce((s, p) => s + p.amount, 0);
+      if (Math.abs(payersSum - totalAmount) > 0.01) {
+        this.toast(`付款人合計 ${payersSum} ≠ 總額 ${totalAmount}`);
+        return;
+      }
+
+      // === 收集 splits ===
+      const rowsEl = document.getElementById('split-rows');
+      const rows = Array.from(rowsEl.querySelectorAll('.split-row'));
+      const checkedRows = rows.filter(r => r.querySelector('input[type="checkbox"]').checked);
+      if (checkedRows.length === 0) { this.toast('至少勾一個分帳人'); return; }
+      let filledTotal = 0;
+      const emptyEmails = [];
+      const splits = [];
+      checkedRows.forEach(r => {
+        const cb = r.querySelector('input[type="checkbox"]');
+        const amtInp = r.querySelector('input[type="number"]');
+        const email = cb.dataset.email;
+        const val = parseFloat(amtInp.value);
+        if (!isNaN(val) && amtInp.value !== '' && val > 0) {
+          filledTotal += val;
+          splits.push({ email, share: Math.round(val * 100) / 100 });
+        } else emptyEmails.push(email);
+      });
+      const remaining = totalAmount - filledTotal;
+      if (remaining < -0.01) { this.toast(`分帳已填超過總額`); return; }
+      if (emptyEmails.length === 0 && Math.abs(remaining) > 0.01) { this.toast(`分帳合計 ${filledTotal} ≠ 總額 ${totalAmount}`); return; }
+      if (emptyEmails.length > 0) {
+        const perEmpty = remaining / emptyEmails.length;
+        emptyEmails.forEach((email, i) => {
+          let share;
+          if (i === emptyEmails.length - 1) {
+            // 最後一人吸收 rounding diff = 總額 - 其他已 push 的全部
+            // (splits 此刻已含 filled rows + 前面 i 個 empty rows)
+            const used = splits.reduce((s, x) => s + x.share, 0);
+            share = Math.round((totalAmount - used) * 100) / 100;
+          } else {
+            share = Math.round(perEmpty * 100) / 100;
+          }
+          splits.push({ email, share });
+        });
+      }
+
+      const data = {
+        date: form.elements['date'].value,
+        payer: payers[0].email,
+        payers,
+        amount: totalAmount,
+        currency: form.elements['currency'].value,
+        category: form.elements['category'].value,
+        description: form.elements['description'].value,
+        splits,
+      };
+
+      if (this._editingExpenseId) {
+        data.resetSettled = !!this._expenseUnlockedFromSettled;
+        await Expenses.update(this._editingExpenseId, data);
+        this.toast(data.resetSettled ? '✅ 已更新（變回未結清）' : '✅ 已更新支出');
+      } else {
+        await Expenses.create(data);
+        this.toast('✅ 已記錄支出');
+      }
+      this.closeModal('modal-expense');
+      // 成功才清編輯 ID — 驗證失敗/出錯時保留，重送才會走 update 而不是新增一筆
+      this._editingExpenseId = null;
+      this._expenseUnlockedFromSettled = false;
+      this.renderExpenses();
+      this.renderSettlement();
+    } catch (err) {
+      console.error(err);
+      this.toast('儲存失敗：' + err.message);
+    } finally {
+      submitBtn.disabled = false;
+      submitBtn.textContent = origText;
+    }
+  },
+
+  async handleDiarySubmit(e) {
+    e.preventDefault();
+    const form = e.target;
+    const submitBtn = form.querySelector('[type="submit"]');
+    submitBtn.disabled = true;
+    submitBtn.textContent = '處理中...';
+    try {
+      const files = Array.from(form.elements['photos'].files);
+      const content = form.elements['content'].value.trim();
+      const data = {
+        date: form.elements['date'].value,
+        mood: form.elements['mood'].value,
+        content,
+        location: form.elements['location'].value.trim(),
+        place: this._selectedPlace,
+        photos: files,
+        mentions: this.parseMentions(content),
+      };
+      if (!data.content) { this.toast('內容不能空白'); return; }
+      if (this._editingDiaryId) {
+        await Diaries.update(this._editingDiaryId, data);
+        this.toast('✅ 已更新日記');
+      } else {
+        await Diaries.create(data, (cur, total) => { submitBtn.textContent = `上傳照片 ${cur}/${total}...`; });
+        this.toast('✅ 已記錄日記' + (files.length ? `（${files.length} 張照片）` : ''));
+      }
+      // v3.3.0 M6.2.4: 如果這篇日記是從 Wishlist chip 選的 → 自動標 wish 已去過
+      if (this._pendingDiaryWishId && typeof Wishlist !== 'undefined') {
+        try {
+          const wish = Wishlist.allList.find(w => w.id === this._pendingDiaryWishId);
+          await Wishlist.markVisited(this._pendingDiaryWishId);
+          if (wish) this.toast(`💡 「${wish.name}」已自動標已去過`);
+        } catch (err) {
+          console.warn('markVisited from diary failed:', err);
+        }
+        this._pendingDiaryWishId = null;
+      }
+      this.closeModal('modal-diary');
+      // 成功才清編輯 ID — 失敗重送才會走 update 而不是新增一篇
+      this._editingDiaryId = null;
+      this.renderDiaryFilters();
+      this.renderDiaries();
+      this.updateNotifBadge();
+      // 如果在 wishlist tab → re-render
+      if (this.currentTab === 'wishlist') this.renderWishlist();
+    } catch (err) {
+      console.error(err);
+      this.toast('儲存失敗：' + err.message);
+    } finally {
+      submitBtn.disabled = false;
+      submitBtn.textContent = '儲存';
+    }
+  },
+
+  async handleNewTripSubmit(e) {
+    e.preventDefault();
+    const form = e.target;
+    const submitBtn = form.querySelector('[type="submit"]');
+    submitBtn.disabled = true;
+    const origText = submitBtn.textContent;
+    submitBtn.textContent = this._editingTripId ? '更新中...' : '建立中...';
+    try {
+      const members = Array.from(document.querySelectorAll('#new-trip-members input[type="checkbox"]:checked')).map(cb => cb.value);
+      if (members.length === 0) { this.toast('至少選一個成員'); return; }
+      if (this._editingTripId) {
+        await Trips.update(this._editingTripId, {
+          name: form.elements['name'].value.trim(),
+          start_date: form.elements['start_date'].value,
+          end_date: form.elements['end_date'].value,
+          members,
+        });
+        this.closeModal('modal-new-trip');
+        this.toast('✅ Trip 已更新');
+        // 成功才清編輯 ID + 解鎖 trip_id 欄 — 失敗重送才不會誤走「新建」撞 Trip ID 已存在
+        this._editingTripId = null;
+        form.elements['trip_id'].disabled = false;
+        await this.refreshAll();
+      } else {
+        const tripId = form.elements['trip_id'].value.trim().toLowerCase();
+        if (!/^[a-z0-9-]+$/.test(tripId)) { this.toast('Trip ID 只能用英文小寫、數字、減號'); return; }
+        if (Trips.list.find(t => t.trip_id === tripId)) { this.toast('Trip ID 已存在，換一個'); return; }
+        await Trips.create(tripId, form.elements['name'].value.trim(), form.elements['start_date'].value, form.elements['end_date'].value, members);
+        this.closeModal('modal-new-trip');
+        this.toast('✅ Trip 已建立');
+        await this.refreshAll();
+      }
+    } catch (err) {
+      console.error(err);
+      this.toast((this._editingTripId ? '更新' : '建立') + '失敗：' + err.message);
+    } finally {
+      submitBtn.disabled = false;
+      submitBtn.textContent = origText;
+    }
+  },
+
+  // ===== Actions =====
+
+  async deleteExpense(id) {
+    if (!confirm('確定刪除這筆支出？')) return;
+    try { this.toast('刪除中...'); await Expenses.delete(id); this.toast('✅ 已刪除'); this.renderExpenses(); this.renderSettlement(); }
+    catch (err) { console.error(err); this.toast('刪除失敗：' + err.message); }
+  },
+
+  async deleteDiary(id) {
+    if (!confirm('確定刪除這篇日記？（照片不會刪）')) return;
+    try { this.toast('刪除中...'); await Diaries.delete(id); this.toast('✅ 已刪除'); this.renderDiaryFilters(); this.renderDiaries(); }
+    catch (err) { console.error(err); this.toast('刪除失敗：' + err.message); }
+  },
+
+  async togglePin(id) {
+    try { const wasPinned = await Diaries.togglePinned(id); this.toast(wasPinned ? '⭐ 已置頂' : '☆ 取消置頂'); this.renderDiaries(); }
+    catch (err) { console.error(err); this.toast('操作失敗：' + err.message); }
+  },
+
+  async handleImgError(img) {
+    if (img.dataset.fallbackTried === '1') return;
+    img.dataset.fallbackTried = '1';
+    const id = img.dataset.photoId;
+    if (!id) return;
+    try { img.src = await API.fetchDriveBlobUrl(id); } catch (err) { console.warn('Image fallback failed:', err); }
+  },
+
+  // ===== Comments =====
+
+  async submitComment(diaryId, content, inputEl) {
+    content = (content || '').trim();
+    if (!content) return;
+    try {
+      const mentions = this.parseMentions(content);
+      await Comments.create(diaryId, content, mentions);
+      if (inputEl) inputEl.value = '';
+      this.refreshDiaryComments(diaryId);
+      this.updateNotifBadge();
+    } catch (err) { console.error(err); this.toast('留言失敗：' + err.message); }
+  },
+
+  async deleteComment(id) {
+    if (!confirm('確定刪除這則留言？')) return;
+    const c = Comments.list.find(x => x.id === id);
+    if (!c) return;
+    const diaryId = c.diary_id;
+    try { await Comments.delete(id); this.toast('✅ 已刪除留言'); this.refreshDiaryComments(diaryId); }
+    catch (err) { console.error(err); this.toast('刪除失敗：' + err.message); }
+  },
+
+  refreshDiaryComments(diaryId) {
+    const diaryEl = document.querySelector(`.diary-item[data-diary-id="${diaryId}"]`);
+    if (!diaryEl) return;
+    const section = diaryEl.querySelector('.comments-section');
+    if (!section) return;
+    const wrapper = document.createElement('div');
+    wrapper.innerHTML = this.renderCommentsSection(diaryId);
+    section.replaceWith(wrapper.firstElementChild);
+  },
+
+  // ===== Reactions（表情反應）=====
+
+  // 點表情：樂觀更新（Reactions.toggle 一進去就先改本地狀態），所以先重畫做到秒回饋，
+  //   再等 API 結果；失敗時 toggle 內已自動 revert，這裡再重畫一次回到原狀 + 提示
+  async toggleReaction(diaryId, emoji) {
+    const pending = Reactions.toggle(diaryId, emoji);  // 本地已同步更新
+    this.refreshDiaryReactions(diaryId);                // 立刻重畫
+    try {
+      await pending;
+    } catch (err) {
+      console.error(err);
+      this.toast('反應失敗：' + ((err && err.message) || err));
+      this.refreshDiaryReactions(diaryId);              // revert 後重畫
+    }
+  },
+
+  refreshDiaryReactions(diaryId) {
+    const diaryEl = document.querySelector(`.diary-item[data-diary-id="${diaryId}"]`);
+    if (!diaryEl) return;
+    const bar = diaryEl.querySelector('.reactions-bar');
+    if (!bar) return;
+    const wrapper = document.createElement('div');
+    wrapper.innerHTML = this.renderReactionsBar(diaryId);
+    bar.replaceWith(wrapper.firstElementChild);
+  },
+
+  // ===== Notifications =====
+
+  async openNotifModal() {
+    await Notifications.loadAll();
+    this.renderNotifList();
+    this.openModal('modal-notifications');
+  },
+
+  renderNotifList() {
+    const el = document.getElementById('notif-list');
+    const list = Notifications.getForMe();
+    if (list.length === 0) { el.innerHTML = '<div class="list-empty">沒有通知</div>'; return; }
+    el.innerHTML = list.slice(0, 50).map(n => {
+      const isUnread = Notifications.isUnread(n);
+      let typeIcon = '💬';
+      let text = '';
+      if (n.type === 'mention') { typeIcon = '🏷'; text = `<strong>${this.nameOf(n.from_email)}</strong> 在日記 tag 了你`; }
+      else if (n.type === 'comment') { typeIcon = '💬'; text = `<strong>${this.nameOf(n.from_email)}</strong> 在你的日記留言`; }
+      else if (n.type === 'comment-mention') { typeIcon = '🏷'; text = `<strong>${this.nameOf(n.from_email)}</strong> 在留言中 tag 了你`; }
+      else if (n.type === 'trip-add') {
+        const trip = Trips.list.find(t => t.trip_id === n.diary_id);
+        typeIcon = '✈️';
+        text = `<strong>${this.nameOf(n.from_email)}</strong> 把你加進 trip「${trip ? this.escapeHtml(trip.name) : this.escapeHtml(n.diary_id)}」`;
+      }
+      else if (n.type === 'expense-split') { typeIcon = '💰'; text = `<strong>${this.nameOf(n.from_email)}</strong> 新增/編輯了支出，你也要分`; }
+      else if (n.type === 'expense-settle') { typeIcon = '🏁'; text = `<strong>${this.nameOf(n.from_email)}</strong> 結清了和你有關的支出`; }
+      else if (n.type === 'itinerary-add') {
+        const itin = (typeof Itineraries !== 'undefined') ? Itineraries.allList.find(x => x.id === n.diary_id) : null;
+        typeIcon = '📋';
+        text = `<strong>${this.nameOf(n.from_email)}</strong> 規劃了新行程「${itin ? this.escapeHtml(itin.name) : '行程'}」`;
+      }
+      else if (n.type === 'settlement-claim') {
+        const s = (typeof Settlements !== 'undefined') ? Settlements.allList.find(x => x.id === n.diary_id) : null;
+        typeIcon = '💳';
+        const amt = s ? `${s.currency || 'TWD'} ${parseFloat(s.amount).toLocaleString()}` : '';
+        text = `<strong>${this.nameOf(n.from_email)}</strong> 說已給你 ${amt}，請去結算確認`;
+      }
+      else if (n.type === 'settlement-confirm') {
+        const s = (typeof Settlements !== 'undefined') ? Settlements.allList.find(x => x.id === n.diary_id) : null;
+        typeIcon = '✅';
+        const amt = s ? `${s.currency || 'TWD'} ${parseFloat(s.amount).toLocaleString()}` : '';
+        text = `<strong>${this.nameOf(n.from_email)}</strong> 確認收到你的 ${amt}`;
+      }
+      else if (n.type === 'settlement-reject') {
+        typeIcon = '⚠️';
+        text = `<strong>${this.nameOf(n.from_email)}</strong> 回報「沒收到你說已付的款」，請確認後再試`;
+      }
+      // v3.4.0 M6.4: wishlist 投票相關通知
+      else if (n.type === 'wish-vote') {
+        typeIcon = '👎';
+        const wish = (typeof Wishlist !== 'undefined') ? Wishlist.allList.find(w => w.id === n.diary_id) : null;
+        const wishName = wish ? wish.name : '(找不到該 wish)';
+        text = `<strong>${this.nameOf(n.from_email)}</strong> 否決了你加的「${this.escapeHtml(wishName)}」`;
+      }
+      else if (n.type === 'wish-rejected') {
+        typeIcon = '🙈';
+        const wish = (typeof Wishlist !== 'undefined') ? Wishlist.allList.find(w => w.id === n.diary_id) : null;
+        const wishName = wish ? wish.name : '(找不到該 wish)';
+        text = `你加的「${this.escapeHtml(wishName)}」被否決達門檻 ⚠️ 點此查看（可強行恢復）`;
+      }
+      else if (n.type === 'wish-force-restore') {
+        typeIcon = '💪';
+        const wish = (typeof Wishlist !== 'undefined') ? Wishlist.allList.find(w => w.id === n.diary_id) : null;
+        const wishName = wish ? wish.name : '(找不到該 wish)';
+        text = `<strong>${this.nameOf(n.from_email)}</strong> 強行恢復了「${this.escapeHtml(wishName)}」（覆寫你的否決票）`;
+      }
+      else text = '通知';
+      return `
+        <div class="notif-item ${isUnread ? 'unread' : ''}" data-type="${this.escapeAttr(n.type)}" data-ref-id="${this.escapeAttr(n.diary_id)}">
+          <span class="notif-icon">${typeIcon}</span>
+          <div class="notif-content">
+            <div class="notif-text">${text}</div>
+            <small class="notif-time">${this.formatRelativeTime(n.created_at)}</small>
+          </div>
+        </div>
+      `;
+    }).join('');
+  },
+
+  updateNotifBadge() {
+    if (typeof Notifications === 'undefined') return;
+    const count = Notifications.unreadCount();
+    const badge = document.getElementById('notif-badge');
+    if (!badge) return;
+    if (count > 0) {
+      badge.textContent = count > 99 ? '99+' : String(count);
+      badge.classList.remove('hidden');
+    } else badge.classList.add('hidden');
+  },
+
+  toast(msg, ms = 3000) {
+    const el = document.getElementById('toast');
+    el.textContent = msg;
+    el.classList.remove('hidden');
+    clearTimeout(this._toastTimer);
+    this._toastTimer = setTimeout(() => el.classList.add('hidden'), ms);
+  },
+};
+
+window.addEventListener('DOMContentLoaded', () => App.init());

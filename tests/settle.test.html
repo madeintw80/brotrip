@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <title>BroTrip settle() 單元測試</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 24px; background:#fafafa; }
+    #summary { font-size: 20px; font-weight: 700; padding: 12px 16px; border-radius: 8px; }
+    #summary.pass { background:#e6f7e6; color:#1a7f1a; }
+    #summary.fail { background:#fde8e8; color:#c0341d; }
+    pre { background:#fff; border:1px solid #ddd; border-radius:8px; padding:16px; line-height:1.55; white-space:pre-wrap; }
+  </style>
+</head>
+<body>
+  <h1>BroTrip <code>Expenses.settle()</code> 單元測試</h1>
+  <div id="summary">執行中…</div>
+  <pre id="out"></pre>
+
+  <!-- 載入「真正的」程式碼（加 ?t 繞過 Service Worker 快取，確保跑的是最新檔） -->
+  <script src="../js/settlements.js?t=settletest"></script>
+  <script src="../js/expenses.js?t=settletest"></script>
+  <script>
+  (function () {
+    const out = [];
+    let pass = 0, fail = 0;
+
+    // 防呆：確認載入的是「已退役 settled 旗標」的新版 settle()，不是 SW 快取的舊版
+    const isNewCode = typeof Expenses !== 'undefined'
+      && Expenses.settle.toString().includes('回歸單一模型');
+
+    // 把某幣別的 transfers 正規化成可比較字串（排序後比，不在意順序）
+    function norm(transfers) {
+      return (transfers || []).map(t => `${t.from}->${t.to}:${t.amount}`).sort().join(' , ');
+    }
+
+    // 跑一個情境：設好 Expenses.list + Settlements.list，呼叫真實 settle()，比對每幣別轉帳清單
+    function run(name, expenses, settlements, expectedByCcy) {
+      Expenses.list = expenses;
+      Settlements.list = settlements;
+      const got = Expenses.settle();
+
+      let ok = true;
+      const details = [];
+      const ccys = new Set([...Object.keys(expectedByCcy), ...Object.keys(got)]);
+      for (const c of ccys) {
+        const a = norm(got[c]);
+        const e = norm(expectedByCcy[c] || []);
+        if (a !== e) { ok = false; details.push(`    [${c}] 期望「${e || '(打平)'}」 → 實得「${a || '(打平)'}」`); }
+        else { details.push(`    [${c}] ${a || '(打平)'} ✓`); }
+      }
+      if (ok) { pass++; out.push(`✅ PASS  ${name}`); }
+      else { fail++; out.push(`❌ FAIL  ${name}`); }
+      details.forEach(d => out.push(d));
+      out.push('');
+    }
+
+    const A = 'alice@x', B = 'bob@x', C = 'carol@x';
+    // 預設值：TWD + settled 空字串（= 未結清）
+    const exp = (o) => Object.assign({ currency: 'TWD', settled: '' }, o);
+
+    // 1) 基本分帳：Alice 付 1000，Alice/Bob 各分攤 500 → Bob 欠 Alice 500
+    run('1) 基本分帳：Bob 欠 Alice 500',
+      [exp({ payer: A, amount: 1000, payers: JSON.stringify([{ email: A, amount: 1000 }]),
+             splits: JSON.stringify([{ email: A, share: 500 }, { email: B, share: 500 }]) })],
+      [],
+      { TWD: [{ from: B, to: A, amount: 500 }] });
+
+    // 2) 帳單 + 已確認還款 → 全部打平
+    run('2) 帳單 + 已確認還款 → 打平',
+      [exp({ payer: A, amount: 1000, payers: JSON.stringify([{ email: A, amount: 1000 }]),
+             splits: JSON.stringify([{ email: A, share: 500 }, { email: B, share: 500 }]) })],
+      [{ trip_id: 't', from_email: B, to_email: A, amount: 500, currency: 'TWD', status: 'confirmed' }],
+      { TWD: [] });
+
+    // 3) ★關鍵回歸★ settled=TRUE 帳單 + 已確認還款（舊地雷）
+    //    修正前：帳單被跳過、還款照算 → 反向假債務（A 變欠 B 500）
+    //    修正後：帳單照算 + 還款抵銷 → 打平
+    run('3) [回歸] settled=TRUE + 還款 → 打平（修正前會反向假債務）',
+      [Object.assign(exp({ payer: A, amount: 1000, payers: JSON.stringify([{ email: A, amount: 1000 }]),
+             splits: JSON.stringify([{ email: A, share: 500 }, { email: B, share: 500 }]) }), { settled: 'TRUE' })],
+      [{ trip_id: 't', from_email: B, to_email: A, amount: 500, currency: 'TWD', status: 'confirmed' }],
+      { TWD: [] });
+
+    // 4) 舊 ratio 格式：Alice 付 900，比例 A:1 B:2 → A 分 300 / B 分 600 → Bob 欠 Alice 600
+    run('4) 舊 ratio 格式分帳：Bob 欠 Alice 600',
+      [exp({ payer: A, amount: 900, payers: JSON.stringify([{ email: A, amount: 900 }]),
+             splits: JSON.stringify([{ email: A, ratio: 1 }, { email: B, ratio: 2 }]) })],
+      [],
+      { TWD: [{ from: B, to: A, amount: 600 }] });
+
+    // 5) 多付款人三人方向：Alice 付 600 + Bob 付 400，分攤 A400/B300/C300
+    //    → A 淨 +200、B 淨 +100、C 淨 -300 → Carol→Alice 200、Carol→Bob 100
+    run('5) 多付款人三人方向：Carol→Alice 200, Carol→Bob 100',
+      [exp({ payer: A, amount: 1000,
+             payers: JSON.stringify([{ email: A, amount: 600 }, { email: B, amount: 400 }]),
+             splits: JSON.stringify([{ email: A, share: 400 }, { email: B, share: 300 }, { email: C, share: 300 }]) })],
+      [],
+      { TWD: [{ from: C, to: A, amount: 200 }, { from: C, to: B, amount: 100 }] });
+
+    // 6) pending 還款「不可」被計入（只有 confirmed 才抵銷）→ 仍是 Bob 欠 Alice 500
+    run('6) pending 還款不影響餘額（仍 Bob 欠 Alice 500）',
+      [exp({ payer: A, amount: 1000, payers: JSON.stringify([{ email: A, amount: 1000 }]),
+             splits: JSON.stringify([{ email: A, share: 500 }, { email: B, share: 500 }]) })],
+      [{ trip_id: 't', from_email: B, to_email: A, amount: 500, currency: 'TWD', status: 'pending' }],
+      { TWD: [{ from: B, to: A, amount: 500 }] });
+
+    // 輸出
+    const summaryEl = document.getElementById('summary');
+    if (!isNewCode) {
+      summaryEl.className = 'fail';
+      summaryEl.textContent = '⚠️ 載入的是舊版 settle()（可能是 Service Worker 快取）— 測試結果不可信，請清快取重載';
+    } else if (fail === 0) {
+      summaryEl.className = 'pass';
+      summaryEl.textContent = `🎉 全部 ${pass} 項 PASS（跑的是新版 settle()）`;
+    } else {
+      summaryEl.className = 'fail';
+      summaryEl.textContent = `❌ ${pass} PASS / ${fail} FAIL`;
+    }
+    document.getElementById('out').textContent = out.join('\n');
+    // 給 preview_eval 讀
+    window.__testSummary = summaryEl.textContent;
+    window.__testFail = fail;
+    window.__isNewCode = isNewCode;
+  })();
+  </script>
+</body>
+</html>
